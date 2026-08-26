@@ -1,0 +1,107 @@
+# Standard official-server maintenance routine. The launcher runs it once
+# before the guarded sanity-farming phase. Ordinary task rewards live in the
+# isolated award-only task and run last. Keep the launcher-owned Waydroid
+# session alive for Annihilation, Depot, Fight, and that final Award phase.
+client_type = "Official"
+startup = true
+closedown = false
+
+[[tasks]]
+name = "Base collection and non-dorm shifts"
+type = "Infrast"
+
+[tasks.params]
+mode = 0
+# Dorm is deliberately absent as well as Training. Default-mode Dorm may draw
+# low-mood operators directly from another facility, so it cannot provide the
+# training-room isolation contract. The protected custom Dorm phase below runs
+# only after these shifts have made ordinary tired workers unstationed.
+facility = ["Mfg", "Trade", "Control", "Power", "Reception", "Office"]
+threshold = 0.3
+replenish = false
+dorm_notstationed_enabled = true
+dorm_trust_enabled = false
+reception_message_board = true
+reception_clue_exchange = true
+reception_send_clue = true
+
+# The launcher answers this Select from the run's single pre-daily Depot snapshot:
+# Pure Gold item 3003 < 150 -> PureGold, otherwise -> Money. Batch/default is
+# deliberately _NotUse so missing or invalid inventory never spends drones.
+[tasks.params.drones]
+alternatives = ["_NotUse", "PureGold", "Money"]
+default_index = 1
+description = "Deterministic drone target (_NotUse, PureGold, Money)"
+
+[[tasks]]
+name = "Protected dorm recovery"
+type = "Infrast"
+
+[tasks.params]
+# Custom mode executes only the explicitly listed Dorm phase. Every dorm room
+# has an empty operator list plus autofill in config/infrast/protected-dorm.json.
+# Combined with the mandatory game-side "Not Stationed" filter, this can rest
+# operators removed by the preceding shifts without selecting anyone who is
+# still assigned to Training (or any other facility).
+mode = 10000
+facility = ["Dorm"]
+threshold = 0.3
+dorm_notstationed_enabled = true
+dorm_trust_enabled = false
+filename = "protected-dorm.json"
+plan_index = 0
+
+[[tasks]]
+name = "Public recruitment (3-5 star)"
+type = "Recruit"
+
+[tasks.params]
+refresh = true
+# Handle ordinary recruitment first. Support Robot is protected from refresh
+# and confirmation here so the dedicated pass below can select it at 03:50.
+# Six-star combinations are absent from confirm and remain untouched.
+select = [5, 4]
+confirm = [5, 4, 3]
+times = 4
+set_time = true
+expedite = false
+preserve_tags = ["支援机械"]
+recruitment_time = { 3 = 540, 4 = 540, 5 = 540 }
+server = "CN"
+
+[[tasks]]
+name = "Support Robot recruitment"
+type = "Recruit"
+
+[tasks.params]
+# The stock Recruit task exposes recruitment times for levels >= 3 only. Its
+# preferred-3-star path is therefore used to select Support Robot explicitly,
+# with that bucket fixed to 03:50. The first pass has already occupied every
+# ordinary slot. If a robot slot also contains a guaranteed 4/5-star result,
+# MAA keeps its normal higher-rarity preference; only 6-star remains manual.
+refresh = false
+force_refresh = false
+select = [5, 4, 1]
+confirm = [5, 4, 3, 1]
+first_tags = ["支援机械"]
+times = 4
+set_time = true
+expedite = false
+# An explicit empty list disables the deprecated implicit skip_robot fallback.
+preserve_tags = []
+recruitment_time = { 3 = 230, 4 = 540, 5 = 540 }
+server = "CN"
+
+[[tasks]]
+name = "Friend credits and credit store"
+type = "Mall"
+
+[tasks.params]
+visit_friends = true
+shopping = true
+buy_first = ["招聘许可", "龙门币"]
+blacklist = ["家具零件"]
+force_shopping_if_credit_full = true
+only_buy_discount = false
+reserve_max_credit = false
+credit_fight = false

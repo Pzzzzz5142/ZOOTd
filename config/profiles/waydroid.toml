@@ -1,0 +1,14 @@
+# The outer launcher owns the Waydroid session lifecycle. This preset supplies
+# the runtime-managed ADB address while every task reuses that running session.
+[connection]
+preset = "Waydroid"
+adb_path = "/usr/bin/adb"
+
+[instance_options]
+touch_mode = "MaaTouch"
+deployment_with_pause = false
+adb_lite_enabled = false
+kill_adb_on_exit = false
+
+[behavior]
+auto_reconnect = true

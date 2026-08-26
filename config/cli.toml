@@ -1,0 +1,21 @@
+# Keep MaaCore and its bundled resource on the same stable release. Hot
+# resources are promoted separately only after all service tasks pass a
+# resource-load dry-run; task execution must never mutate the live runtime.
+[core]
+channel = "Stable"
+test_time = 0
+
+[core.components]
+library = true
+resource = true
+
+[resource]
+auto_update = false
+warn_on_update_failure = true
+backend = "libgit2"
+
+[hot_update]
+# maa-cli 0.7.5 always invokes its API tasks updater before every task. The
+# live cache is populated only by the isolated validator, so ordinary runs
+# treat that promoted snapshot as fresh instead of fetching into production.
+check_interval = 3153600000

@@ -1,0 +1,11 @@
+# Project-local binaries and mutable MAA data.
+/.local/
+/var/
+
+# Local overrides and editor noise.
+/config/host.local.env
+*.swp
+*.swo
+.DS_Store
+__pycache__/
+*.py[cod]

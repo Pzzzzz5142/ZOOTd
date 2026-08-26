@@ -1,0 +1,20 @@
+# Dynamic material-stage execution. The launcher writes the solver-selected
+# stage to stdin; every other sanity-spending parameter is fixed here so the
+# current MaaCore receives the non-deprecated expiry policy directly.
+client_type = "Official"
+startup = false
+closedown = false
+
+[[tasks]]
+name = "Spend sanity and all medicine expiring within two days"
+type = "Fight"
+
+[tasks.params]
+medicine = 0
+medicine_expire_days = 2
+stone = 0
+series = 0
+
+[tasks.params.stage]
+description = "Deterministically selected stage"
+

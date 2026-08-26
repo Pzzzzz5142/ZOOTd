@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the post-reset MAA Waydroid task
+
+[Timer]
+# CN server resets at 04:00 Asia/Shanghai. This is the new-game-day run.
+OnCalendar=*-*-* 07:30:00 Asia/Shanghai
+Persistent=true
+AccuracySec=1s
+RandomizedDelaySec=0
+Unit=maa-waydroid.service
+
+[Install]
+WantedBy=timers.target

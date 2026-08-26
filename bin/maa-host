@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+maa="${project_root}/bin/maa"
+planner="${project_root}/bin/maa-planner"
+advisor_adapter="${project_root}/bin/maa-codex-advisor"
+daily_launcher="${project_root}/scripts/run-daily.sh"
+runtime_updater="${project_root}/scripts/update-maa-runtime.sh"
+host_config="${project_root}/config/host.env"
+local_config="${project_root}/config/host.local.env"
+
+# Managed runs and doctor must validate and execute the same task directory.
+export MAA_CONFIG_DIR="${project_root}/config"
+export MAA_DATA_DIR="${MAA_DATA_DIR:-${project_root}/var/data}"
+export MAA_CACHE_DIR="${MAA_CACHE_DIR:-${MAA_DATA_DIR}/cache}"
+export MAA_STATE_DIR="${MAA_STATE_DIR:-${project_root}/var/state}"
+
+if [[ -r "${host_config}" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "${host_config}"
+    set +a
+fi
+if [[ -r "${local_config}" ]]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "${local_config}"
+    set +a
+fi
+
+# Reassert after host.local.env so managed runs cannot redirect the validated
+# task, core/resource, hot-cache, or evidence directories.
+export MAA_CONFIG_DIR="${project_root}/config"
+export MAA_DATA_DIR="${project_root}/var/data"
+export MAA_CACHE_DIR="${MAA_DATA_DIR}/cache"
+export MAA_STATE_DIR="${project_root}/var/state"
+
+: "${MAA_HOST_PROFILE:=waydroid}"
+: "${MAA_HOST_TASK:=daily}"
+: "${MAA_HOST_CLEANUP_ON_FAILURE:=true}"
+: "${MAA_LOG:=info}"
+export MAA_LOG
+
+info() {
+    printf '[maa-host] %s\n' "$*"
+}
+
+die() {
+    printf '[maa-host] error: %s\n' "$*" >&2
+    exit 1
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+import_desktop_environment() {
+    local key value
+
+    command -v systemctl >/dev/null 2>&1 || return 0
+    while IFS='=' read -r key value; do
+        case "${key}" in
+            DBUS_SESSION_BUS_ADDRESS|DISPLAY|WAYLAND_DISPLAY|XDG_CURRENT_DESKTOP|XDG_RUNTIME_DIR|XDG_SESSION_TYPE)
+                if [[ -n "${value}" ]]; then
+                    printf -v "${key}" '%s' "${value}"
+                    export "${key}"
+                fi
+                ;;
+        esac
+    done < <(systemctl --user show-environment 2>/dev/null || true)
+}
+
+check_wayland() {
+    local runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+    [[ -n "${WAYLAND_DISPLAY:-}" ]] || die "WAYLAND_DISPLAY is unavailable; log in to the Wayland desktop first"
+    [[ -S "${runtime_dir}/${WAYLAND_DISPLAY}" ]] || die "Wayland socket is unavailable: ${runtime_dir}/${WAYLAND_DISPLAY}"
+}
+
+waydroid_session_is_running() {
+    waydroid status 2>/dev/null | grep -Eq '^Session:[[:space:]]+RUNNING$'
+}
+
+probe_device() {
+    local address adb_state packages
+    local official_package=com.hypergryph.arknights
+
+    if ! waydroid_session_is_running; then
+        printf '[maa-host] live probe needs a running Waydroid session\n' >&2
+        printf '[maa-host] open it with: waydroid show-full-ui\n' >&2
+        return 1
+    fi
+
+    waydroid adb connect || return 1
+    address="$(waydroid status | awk '/^IP address:/ { print $3 ":5555"; exit }')"
+    [[ -n "${address}" ]] || {
+        printf '[maa-host] Waydroid did not report an IP address\n' >&2
+        return 1
+    }
+
+    adb_state="$(adb devices | awk -v serial="${address}" '$1 == serial { print $2; exit }')"
+    case "${adb_state}" in
+        device)
+            info "ADB is authorized: ${address}"
+            ;;
+        unauthorized)
+            printf '[maa-host] ADB is unauthorized; accept the debugging dialog in Waydroid and select Always allow\n' >&2
+            return 1
+            ;;
+        *)
+            printf '[maa-host] ADB device is not ready: %s (%s)\n' "${address}" "${adb_state:-missing}" >&2
+            return 1
+            ;;
+    esac
+
+    packages="$(waydroid app list)"
+    if grep -Fq "packageName: ${official_package}" <<<"${packages}"; then
+        info "found official CN Arknights package: ${official_package}"
+        return 0
+    fi
+
+    printf '[maa-host] official CN Arknights package is not installed: %s\n' \
+        "${official_package}" >&2
+    return 1
+}
+
+run_raw_task() {
+    local task="${1:-${MAA_HOST_TASK}}"
+    local profile="${2:-${MAA_HOST_PROFILE}}"
+    local lock_dir="${project_root}/var/run"
+    local log_dir="${MAA_STATE_DIR}/host"
+    local log_file status session_was_running=false
+
+    require_command adb
+    require_command flock
+    require_command waydroid
+    [[ -x "${maa}" ]] || die "MAA wrapper is not executable: ${maa}"
+
+    import_desktop_environment
+    check_wayland
+    mkdir -p -- "${lock_dir}" "${log_dir}"
+
+    exec 9>"${lock_dir}/maa-host.lock"
+    flock -n 9 || die "another maa-host run is already active"
+
+    if waydroid_session_is_running; then
+        session_was_running=true
+    fi
+
+    log_file="${log_dir}/$(date '+%Y%m%d-%H%M%S').log"
+    info "running task=${task} profile=${profile}"
+    info "MAA log: ${log_file}"
+
+    set +e
+    "${maa}" --batch --log-file="${log_file}" run "${task}" --profile "${profile}"
+    status=$?
+    set -e
+
+    if (( status != 0 )); then
+        if [[ "${MAA_HOST_CLEANUP_ON_FAILURE}" == true && "${session_was_running}" == false ]]; then
+            info "run failed; stopping the Waydroid session started for this run"
+            waydroid session stop >/dev/null 2>&1 || true
+        fi
+        die "task failed with status ${status}; inspect ${log_file}"
+    fi
+
+    info "task completed"
+}
+
+doctor() {
+    local failed=0
+    local codex_bin="${MAA_CODEX_BIN:-codex}"
+
+    import_desktop_environment
+    info "project: ${project_root}"
+
+    for command_name in adb flock gamescope jq loginctl stat systemctl timeout waydroid; do
+        if command -v "${command_name}" >/dev/null 2>&1; then
+            info "found ${command_name}: $(command -v "${command_name}")"
+        else
+            printf '[maa-host] missing: %s\n' "${command_name}" >&2
+            failed=1
+        fi
+    done
+
+    if [[ -x "${project_root}/.local/bin/maa" ]]; then
+        "${maa}" version || failed=1
+    else
+        printf '[maa-host] missing project-local maa-cli\n' >&2
+        failed=1
+    fi
+
+    if [[ -x "${advisor_adapter}" ]]; then
+        info "found read-only advisor adapter: ${advisor_adapter}"
+    else
+        printf '[maa-host] advisor adapter is not executable: %s\n' \
+            "${advisor_adapter}" >&2
+        failed=1
+    fi
+    if command -v "${codex_bin}" >/dev/null 2>&1; then
+        "${codex_bin}" --version || failed=1
+        "${codex_bin}" login status || failed=1
+    else
+        printf '[maa-host] configured Codex executable is unavailable: %s\n' \
+            "${codex_bin}" >&2
+        failed=1
+    fi
+
+    waydroid status || failed=1
+
+    if [[ -n "${WAYLAND_DISPLAY:-}" && -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/${WAYLAND_DISPLAY}" ]]; then
+        info "Wayland socket is ready: ${WAYLAND_DISPLAY}"
+    else
+        info "no desktop Wayland socket is active; managed runs will use Gamescope headless"
+    fi
+
+    if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" == yes ]]; then
+        info "systemd user lingering is enabled for unattended timers"
+    else
+        printf '[maa-host] systemd user lingering is disabled; run sudo loginctl enable-linger %s\n' \
+            "$(id -un)" >&2
+        failed=1
+    fi
+
+    if [[ -d "/usr/lib/modules/$(uname -r)" ]]; then
+        info "running kernel has matching modules: $(uname -r)"
+    else
+        printf '[maa-host] running kernel modules are unavailable for %s; reboot after the kernel upgrade\n' \
+            "$(uname -r)" >&2
+        failed=1
+    fi
+
+    if [[ -r /etc/docker/daemon.json ]] &&
+       jq -e '."ip-forward-no-drop" == true' /etc/docker/daemon.json >/dev/null 2>&1; then
+        info "Docker ip-forward-no-drop is configured"
+    else
+        printf '[maa-host] persistent Docker forwarding config is missing; run sudo ./scripts/install-network-fix.sh\n' >&2
+        failed=1
+    fi
+
+    if [[ -x "${planner}" ]]; then
+        "${planner}" validate-service-readiness || failed=1
+        jq -n -f "${project_root}/config/fight-decision.jq" >/dev/null || failed=1
+        jq -n -f "${project_root}/config/annihilation-decision.jq" >/dev/null || failed=1
+    else
+        printf '[maa-host] farming planner is not executable: %s\n' "${planner}" >&2
+        failed=1
+    fi
+
+    if waydroid_session_is_running; then
+        probe_device || failed=1
+    else
+        info "live ADB/package checks skipped while Waydroid is stopped"
+    fi
+
+    (( failed == 0 )) || die "doctor found one or more problems"
+    info "doctor checks passed"
+}
+
+usage() {
+    cat <<'EOF'
+Usage: bin/maa-host <command> [arguments]
+
+Commands:
+  run [options]         Run the unified daily launcher (automatic farming by default)
+  raw-run [task] [profile]
+                        Run one MAA task directly, without launcher orchestration
+  doctor                Check dependencies and the promoted runtime receipt
+  advisor-check         Run and archive one bounded real-model connectivity probe
+  runtime-update        Validate stable Core plus staged resources, then atomically promote them
+  resource-update       Compatibility alias for runtime-update
+  probe                 Check live ADB authorization and the game package
+  install-core          Install the first validated stable runtime
+  update                Alias for the transactional stable runtime update
+  status                Show Waydroid and systemd timer status
+  logs                  Follow logs from the user service
+EOF
+}
+
+command_name="${1:-}"
+case "${command_name}" in
+    run)
+        shift
+        [[ -x "${daily_launcher}" ]] || die "daily launcher is not executable: ${daily_launcher}"
+        exec "${daily_launcher}" "$@"
+        ;;
+    raw-run)
+        shift
+        run_raw_task "$@"
+        ;;
+    doctor)
+        doctor
+        ;;
+    advisor-check)
+        shift
+        exec "${planner}" advisor-check "$@"
+        ;;
+    runtime-update|resource-update)
+        shift
+        [[ -x "${runtime_updater}" ]] || die "runtime updater is not executable: ${runtime_updater}"
+        exec "${runtime_updater}" "$@"
+        ;;
+    probe)
+        import_desktop_environment
+        probe_device
+        ;;
+    install-core)
+        exec "${runtime_updater}"
+        ;;
+    update)
+        exec "${runtime_updater}"
+        ;;
+    status)
+        waydroid status
+        systemctl --user status \
+            maa-waydroid-runtime-update.timer \
+            maa-waydroid-prereset.timer maa-waydroid.timer --no-pager || true
+        ;;
+    logs)
+        exec journalctl \
+            --user-unit=maa-waydroid-runtime-update.service \
+            --user-unit=maa-waydroid-prereset.service \
+            --user-unit=maa-waydroid.service --follow
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac

@@ -1,0 +1,17 @@
+[Unit]
+Description=Run the pre-reset MAA Waydroid task with daily first
+Documentation=https://github.com/MaaAssistantArknights/maa-cli
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/Projects/maa-waydroid/bin/maa-host
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/maa-waydroid
+ExecStart=%h/Projects/maa-waydroid/bin/maa-host run --pre-reset-slot
+# Starting is guarded to 03:00-03:04. Force cleanup before the 04:00 reset.
+TimeoutStartSec=50m
+TimeoutStopSec=4m
+KillSignal=SIGINT
+Nice=5
+IOSchedulingClass=idle

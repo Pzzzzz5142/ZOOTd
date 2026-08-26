@@ -1,0 +1,14 @@
+[Unit]
+Description=Stage and validate the MAA stable runtime before the daily run
+
+[Timer]
+# Leave an hour between runtime validation and the 07:30 game task.
+OnCalendar=*-*-* 06:30:00 Asia/Shanghai
+# Do not delay a boot-time game task with a missed network update.
+Persistent=false
+AccuracySec=1m
+RandomizedDelaySec=0
+Unit=maa-waydroid-runtime-update.service
+
+[Install]
+WantedBy=timers.target

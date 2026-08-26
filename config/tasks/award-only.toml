@@ -1,0 +1,17 @@
+# Final service phase and lightweight E2E task. Keep this isolated from base,
+# recruitment, shopping, mail, combat, and optional Award subflows.
+client_type = "Official"
+startup = true
+closedown = false
+
+[[tasks]]
+name = "Claim ordinary task rewards only"
+type = "Award"
+
+[tasks.params]
+award = true
+mail = false
+recruit = false
+orundum = false
+mining = false
+specialaccess = false

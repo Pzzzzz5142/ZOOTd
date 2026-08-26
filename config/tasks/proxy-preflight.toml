@@ -1,0 +1,26 @@
+# One read-only client preflight in one MaaCore process. Fight with times=0
+# navigates to the selected stage and stops before starting a battle; the
+# following Custom task checks the PRTS checkbox on that same screen.
+client_type = "Official"
+startup = false
+closedown = false
+
+[[tasks]]
+name = "Navigate without starting a battle"
+type = "Fight"
+
+[tasks.params]
+medicine = 0
+stone = 0
+times = 0
+series = -1
+
+[tasks.params.stage]
+description = "Stage whose saved PRTS proxy state must be checked"
+
+[[tasks]]
+name = "Read-only saved-proxy check"
+type = "Custom"
+
+[tasks.params]
+task_names = ["UsePrtsSuccessCheck"]

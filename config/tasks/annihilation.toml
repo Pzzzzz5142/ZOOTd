@@ -1,0 +1,20 @@
+# One checked Annihilation transaction. Native MAA Fight handling first uses a
+# PRTS full-delegation card when present, then falls back to ordinary saved
+# proxy play when no card is available. The launcher therefore keeps a full
+# 30-minute transaction allowance and repeats only after parsing fresh client
+# weekly-progress evidence from the previous transaction.
+client_type = "Official"
+startup = false
+closedown = false
+
+[[tasks]]
+name = "Current weekly Annihilation"
+type = "Fight"
+
+[tasks.params]
+stage = "Annihilation"
+medicine = 0
+medicine_expire_days = 2
+stone = 0
+times = 1
+series = 1

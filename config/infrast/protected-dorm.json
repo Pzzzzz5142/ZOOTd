@@ -1,0 +1,28 @@
+{
+  "title": "Protected dorm recovery from unstationed operators only",
+  "plans": [
+    {
+      "name": "Unstationed-only autofill",
+      "rooms": {
+        "dormitory": [
+          {
+            "operators": [],
+            "autofill": true
+          },
+          {
+            "operators": [],
+            "autofill": true
+          },
+          {
+            "operators": [],
+            "autofill": true
+          },
+          {
+            "operators": [],
+            "autofill": true
+          }
+        ]
+      }
+    }
+  ]
+}

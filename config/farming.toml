@@ -1,0 +1,83 @@
+schema_version = 1
+client_type = "Official"
+account = "official-main"
+mode = "auto"
+
+[activity]
+require_sources = ["official", "maa"]
+end_safety_margin_minutes = 15
+window_tolerance_seconds = 60
+
+[annihilation]
+# A future slot is considered activity-free only when this whole execution
+# budget does not overlap a confirmed activity window.
+execution_budget_minutes = 120
+# A transaction starts only when this entire ordinary-proxy allowance remains;
+# a short tail is never allowed to spend sanity and then be interrupted.
+transaction_timeout_minutes = 30
+# Keep each client-controlled Annihilation run isolated so weekly progress and
+# proxy quality are checked before another transaction is authorized.
+max_transactions_per_run = 10
+
+[freshness]
+official_seconds = 1800
+maa_activity_seconds = 1800
+yituliu_stage_seconds = 86400
+yituliu_matrix_seconds = 259200
+yituliu_value_seconds = 86400
+# Automatic execution takes at most one Depot snapshot in the current launcher
+# run. The post-reset slot takes it before daily for drones and reuses it for
+# farming; this is the maximum delay allowed between that scan and the decision.
+inventory_seconds = 1800
+
+[policy]
+when_satisfied = "best_event"
+# Every T3/blue material offered by the active event gets this target in blue
+# equivalents (direct T3 plus deterministically craftable lower tiers).
+# A more specific [[targets]] entry below overrides it for that item.
+default_target = 200
+minimum_drop_samples = 300
+series = 0
+medicine = 0
+# Consume every Sanity Potion in MaaCore's two-day expiry bucket. Normal
+# medicine remains forbidden, and drop targets never stop a run early.
+medicine_expire_days = 2
+stone = 0
+large_deficit_runs = 6
+
+[inventory_equivalence]
+# Kept separate and strictly validated so recipe changes are reviewable and an
+# updated MAA item index cannot silently reinterpret an item ID.
+recipes_file = "material-recipes.toml"
+
+[sources.maa]
+activity_url = "https://api.maa.plus/MaaAssistantArknights/api/gui/StageActivityV2.json"
+
+[sources.official]
+# First-party, unauthenticated in-game bulletin endpoints. The planner accepts
+# only the explicitly labelled activity-stage window from SideStory bulletins.
+list_url = "https://ak-webview.hypergryph.com/api/game/bulletinList?target=Android"
+article_url = "https://ak-webview.hypergryph.com/api/game/bulletin/{cid}"
+max_articles = 20
+article_lookback_days = 120
+
+[sources.yituliu]
+stage_url = "https://backend.yituliu.cn/stage/info"
+matrix_url = "https://cos.yituliu.cn/arknights/stage-drop/matrix.json"
+value_url = "https://backend.yituliu.cn/item/v7/value"
+
+[agent]
+# An advisor reads an evidence JSON object on stdin and returns the schema
+# documented in README. It is advisory-only and can never authorize execution.
+enabled = true
+command = ["/home/pzzzzz/Projects/maa-waydroid/bin/maa-codex-advisor"]
+timeout_seconds = 60
+
+# Optional per-item overrides for the dynamic target of 200. Missing observed
+# items are never interpreted as zero.
+# [[targets]]
+# item_id = "30053"
+# low = 30
+# target = 80
+# reserved = 0
+# priority = 1.0

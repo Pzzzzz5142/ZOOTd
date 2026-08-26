@@ -1,0 +1,19 @@
+# One native-parameter Fight used only by --verify-proxy before the launcher
+# hands the selected stage to the unlimited sanity-fight task.
+client_type = "Official"
+startup = false
+closedown = false
+
+[[tasks]]
+name = "Verify one saved-proxy result"
+type = "Fight"
+
+[tasks.params]
+medicine = 0
+medicine_expire_days = 2
+stone = 0
+times = 1
+series = 1
+
+[tasks.params.stage]
+description = "Deterministically selected stage to verify"

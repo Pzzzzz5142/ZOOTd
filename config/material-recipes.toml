@@ -1,0 +1,66 @@
+# Deterministic CN workshop chains used only to express inventory in T3/blue
+# units. These rules never initiate crafting and never count random byproducts.
+# Ratios correspond to the workshop formulas in CN building_data.json; item
+# names/IDs are cross-checked against the MAA resource generation at validation.
+schema_version = 1
+unit = "t3-blue-material"
+
+[[chains]]
+t3_item_id = "30013"
+t3_name = "固源岩组"
+t2_item_id = "30012"
+t2_name = "固源岩"
+t2_per_t3 = 5
+t1_item_id = "30011"
+t1_name = "源岩"
+t1_per_t2 = 3
+
+[[chains]]
+t3_item_id = "30023"
+t3_name = "糖组"
+t2_item_id = "30022"
+t2_name = "糖"
+t2_per_t3 = 4
+t1_item_id = "30021"
+t1_name = "代糖"
+t1_per_t2 = 3
+
+[[chains]]
+t3_item_id = "30033"
+t3_name = "聚酸酯组"
+t2_item_id = "30032"
+t2_name = "聚酸酯"
+t2_per_t3 = 4
+t1_item_id = "30031"
+t1_name = "酯原料"
+t1_per_t2 = 3
+
+[[chains]]
+t3_item_id = "30043"
+t3_name = "异铁组"
+t2_item_id = "30042"
+t2_name = "异铁"
+t2_per_t3 = 4
+t1_item_id = "30041"
+t1_name = "异铁碎片"
+t1_per_t2 = 3
+
+[[chains]]
+t3_item_id = "30053"
+t3_name = "酮凝集组"
+t2_item_id = "30052"
+t2_name = "酮凝集"
+t2_per_t3 = 4
+t1_item_id = "30051"
+t1_name = "双酮"
+t1_per_t2 = 3
+
+[[chains]]
+t3_item_id = "30063"
+t3_name = "全新装置"
+t2_item_id = "30062"
+t2_name = "装置"
+t2_per_t3 = 4
+t1_item_id = "30061"
+t1_name = "破损装置"
+t1_per_t2 = 3

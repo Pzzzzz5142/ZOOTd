@@ -1,0 +1,499 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Any, Iterable, Literal, Mapping
+from zoneinfo import ZoneInfo
+
+from .models import Activity, OfficialWindow
+from .policy import _official_confirmation
+from .util import isoformat, parse_iso_datetime
+
+
+SERVER_TIMEZONE = ZoneInfo("Asia/Shanghai")
+GAME_DAY_RESET = timedelta(hours=4)
+
+
+@dataclass(frozen=True)
+class GameWeek:
+    start_game_day: date
+    start: datetime
+    end: datetime
+
+    @property
+    def key(self) -> str:
+        return self.start_game_day.isoformat()
+
+
+@dataclass(frozen=True)
+class OccupancyWindow:
+    start: datetime
+    end: datetime
+    sources: tuple[str, ...]
+    activity_name: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "start": isoformat(self.start),
+            "end": isoformat(self.end),
+            "sources": list(self.sources),
+            "activity_name": self.activity_name,
+        }
+
+
+def game_week(now: datetime) -> GameWeek:
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    local = now.astimezone(SERVER_TIMEZONE)
+    game_day = (local - GAME_DAY_RESET).date()
+    monday = game_day - timedelta(days=game_day.weekday())
+    start = datetime.combine(monday, time(4), tzinfo=SERVER_TIMEZONE)
+    return GameWeek(monday, start, start + timedelta(days=7))
+
+
+def _overlaps(
+    left_start: datetime,
+    left_end: datetime,
+    right_start: datetime,
+    right_end: datetime,
+) -> bool:
+    return left_start < right_end and right_start < left_end
+
+
+def _clip_to_week(
+    start: datetime, end: datetime, week: GameWeek
+) -> tuple[datetime, datetime] | None:
+    clipped_start = max(start.astimezone(UTC), week.start.astimezone(UTC))
+    clipped_end = min(end.astimezone(UTC), week.end.astimezone(UTC))
+    if clipped_start >= clipped_end:
+        return None
+    return clipped_start, clipped_end
+
+
+def _source_occupancy(
+    *,
+    week: GameWeek,
+    activities: Iterable[Activity],
+    official_windows: Iterable[OfficialWindow],
+    client: str,
+    tolerance: timedelta,
+) -> tuple[list[OccupancyWindow], list[str]]:
+    activities = [
+        item
+        for item in activities
+        if item.client == client
+        and _overlaps(item.start, item.end, week.start, week.end)
+    ]
+    official_windows = [
+        item
+        for item in official_windows
+        if _overlaps(item.start, item.end, week.start, week.end)
+    ]
+    occupancy: list[OccupancyWindow] = []
+    uncertainty: list[str] = []
+    matched_official: set[tuple[str, datetime, datetime]] = set()
+
+    for activity in activities:
+        official, rejection = _official_confirmation(
+            activity, official_windows, tolerance
+        )
+        if official is None:
+            uncertainty.append(
+                f"{activity.instance_id}:{rejection or 'OFFICIAL_ACTIVITY_MISSING'}"
+            )
+            clipped = _clip_to_week(activity.start, activity.end, week)
+            if clipped is not None:
+                occupancy.append(OccupancyWindow(*clipped, ("maa",), activity.name))
+            continue
+
+        matched_official.add((official.article_id, official.start, official.end))
+        clipped = _clip_to_week(
+            min(activity.start, official.start),
+            max(activity.end, official.end),
+            week,
+        )
+        if clipped is not None:
+            occupancy.append(
+                OccupancyWindow(*clipped, ("maa", "official"), activity.name)
+            )
+
+    for official in official_windows:
+        if (official.article_id, official.start, official.end) in matched_official:
+            continue
+        uncertainty.append(f"official:{official.article_id}:MAA_ACTIVITY_MISSING")
+        clipped = _clip_to_week(official.start, official.end, week)
+        if clipped is not None:
+            occupancy.append(
+                OccupancyWindow(*clipped, ("official",), official.activity_name)
+            )
+
+    occupancy.sort(key=lambda item: (item.start, item.end, item.activity_name))
+    return occupancy, sorted(set(uncertainty))
+
+
+def _window_is_free(
+    start: datetime,
+    end: datetime,
+    occupancy: Iterable[OccupancyWindow],
+) -> bool:
+    return not any(
+        _overlaps(start, end, occupied.start, occupied.end)
+        for occupied in occupancy
+    )
+
+
+def _full_week_is_covered(
+    week: GameWeek, occupancy: Iterable[OccupancyWindow]
+) -> bool:
+    cursor = week.start.astimezone(UTC)
+    end = week.end.astimezone(UTC)
+    for occupied in occupancy:
+        if occupied.end <= cursor:
+            continue
+        if occupied.start > cursor:
+            return False
+        cursor = max(cursor, occupied.end)
+        if cursor >= end:
+            return True
+    return cursor >= end
+
+
+def _post_reset_slots(week: GameWeek) -> list[datetime]:
+    return [
+        datetime.combine(
+            week.start_game_day + timedelta(days=offset),
+            time(7, 30),
+            tzinfo=SERVER_TIMEZONE,
+        ).astimezone(UTC)
+        for offset in range(7)
+    ]
+
+
+def valid_annihilation_state(
+    state: object,
+    *,
+    client: str,
+    account: str,
+    week: GameWeek,
+) -> Mapping[str, Any] | None:
+    if not isinstance(state, dict) or state.get("schema_version") != 1:
+        return None
+    if (
+        state.get("client") != client
+        or state.get("account") != account
+        or state.get("week_start_game_day") != week.key
+    ):
+        return None
+    current = state.get("current")
+    total = state.get("total")
+    if (
+        isinstance(current, bool)
+        or not isinstance(current, int)
+        or current < 0
+        or current > 1_000_000
+        or isinstance(total, bool)
+        or not isinstance(total, int)
+        or total <= 0
+        or total > 1_000_000
+        or current > total
+    ):
+        return None
+    status = state.get("status")
+    if status == "complete" and current != total:
+        return None
+    if status in {"progress", "unstable"} and current >= total:
+        return None
+    if status not in {"complete", "progress", "unstable"}:
+        return None
+    try:
+        observed_at = parse_iso_datetime(state.get("observed_at")).astimezone(UTC)
+    except (TypeError, ValueError):
+        return None
+    if not week.start.astimezone(UTC) <= observed_at < week.end.astimezone(UTC):
+        return None
+    if state.get("week_start") != isoformat(week.start) or state.get(
+        "week_end"
+    ) != isoformat(week.end):
+        return None
+    completed_at = state.get("completed_at")
+    if status == "complete":
+        try:
+            parsed_completed_at = parse_iso_datetime(completed_at).astimezone(UTC)
+        except (TypeError, ValueError):
+            return None
+        if not week.start.astimezone(UTC) <= parsed_completed_at < week.end.astimezone(
+            UTC
+        ):
+            return None
+    elif completed_at is not None:
+        return None
+    evidence = state.get("evidence")
+    if not isinstance(evidence, dict):
+        return None
+    task_id = evidence.get("task_id")
+    since_byte = evidence.get("since_byte")
+    log_device = evidence.get("log_device")
+    log_inode = evidence.get("log_inode")
+    log_was_missing = evidence.get("log_was_missing")
+    valid_log_cursor = (
+        isinstance(since_byte, int)
+        and not isinstance(since_byte, bool)
+        and since_byte >= 0
+        and isinstance(log_was_missing, bool)
+        and (
+            (
+                log_was_missing
+                and since_byte == 0
+                and log_device is None
+                and log_inode is None
+            )
+            or (
+                not log_was_missing
+                and isinstance(log_device, int)
+                and not isinstance(log_device, bool)
+                and log_device >= 0
+                and isinstance(log_inode, int)
+                and not isinstance(log_inode, bool)
+                and log_inode > 0
+            )
+        )
+    )
+    if (
+        evidence.get("source") != "maa-annihilation-log"
+        or evidence.get("current") != current
+        or evidence.get("total") != total
+        or isinstance(evidence.get("stars"), bool)
+        or not isinstance(evidence.get("stars"), int)
+        or evidence.get("stars") not in {0, 2, 3}
+        or not isinstance(evidence.get("complete"), bool)
+        or evidence.get("complete") != (current == total)
+        or evidence.get("completed_by")
+        not in {"TaskChainCompleted", "AllTasksCompleted"}
+        or not isinstance(evidence.get("uuid"), str)
+        or not evidence["uuid"]
+        or isinstance(task_id, bool)
+        or not isinstance(task_id, (int, str))
+        or (isinstance(task_id, str) and not task_id)
+        or not isinstance(evidence.get("log_suffix_sha256"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", evidence["log_suffix_sha256"])
+        or not valid_log_cursor
+    ):
+        return None
+    stars = evidence.get("stars")
+    if status == "unstable" and stars != 2:
+        return None
+    if status == "progress" and stars == 2:
+        return None
+    return state
+
+
+def plan_annihilation(
+    *,
+    now: datetime,
+    activities: Iterable[Activity],
+    official_windows: Iterable[OfficialWindow],
+    client: str,
+    account: str,
+    state: object = None,
+    source_available: bool = True,
+    source_error: str | None = None,
+    window_tolerance: timedelta = timedelta(seconds=60),
+    execution_budget: timedelta = timedelta(hours=2),
+    transaction_timeout: timedelta = timedelta(minutes=30),
+    max_transactions_per_run: int = 10,
+    medicine_expire_days: int = 2,
+) -> dict[str, Any]:
+    """Plan weekly Annihilation without granting execution to an LLM."""
+
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    if execution_budget <= timedelta(0):
+        raise ValueError("execution_budget must be positive")
+    if transaction_timeout < timedelta(minutes=10):
+        raise ValueError("transaction_timeout must be at least ten minutes")
+    if transaction_timeout > min(execution_budget, timedelta(hours=1)):
+        raise ValueError(
+            "transaction_timeout must not exceed the execution budget or one hour"
+        )
+    if not 1 <= max_transactions_per_run <= 20:
+        raise ValueError("max_transactions_per_run must be between 1 and 20")
+    if medicine_expire_days != 2:
+        raise ValueError("medicine_expire_days must be 2")
+    now = now.astimezone(UTC)
+    week = game_week(now)
+    deadline = week.end.astimezone(UTC)
+    budget_seconds = int(execution_budget.total_seconds())
+    transaction_seconds = int(transaction_timeout.total_seconds())
+
+    def bounded_execution_end(start: datetime) -> datetime:
+        return min(start + execution_budget, deadline)
+
+    saved = valid_annihilation_state(
+        state, client=client, account=account, week=week
+    )
+    base: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "annihilation-plan",
+        "generated_at": isoformat(now),
+        "client": client,
+        "account": account,
+        "week_start_game_day": week.key,
+        "week_start": isoformat(week.start),
+        "week_end": isoformat(week.end),
+        "stage": "Annihilation",
+        "medicine": 0,
+        "medicine_expire_days": medicine_expire_days,
+        "stone": 0,
+        "times_per_transaction": 1,
+        "series": 1,
+        "max_transactions_per_run": max_transactions_per_run,
+        "execution_budget_seconds": budget_seconds,
+        "transaction_timeout_seconds": transaction_seconds,
+        "authorization": "game-client-weekly-annihilation",
+    }
+
+    if saved is not None and saved["status"] == "complete":
+        return {
+            **base,
+            "decision": "COMPLETE",
+            "reason": "CLIENT_WEEKLY_CAP_RECORDED",
+            "due_at": None,
+            "execute_before": None,
+            "evidence": {
+                "execution_budget_seconds": budget_seconds,
+                "state": dict(saved),
+            },
+        }
+
+    if saved is not None and saved["status"] == "unstable":
+        return {
+            **base,
+            "decision": "BLOCKED",
+            "reason": "CLIENT_ANNIHILATION_PROXY_UNSTABLE",
+            "due_at": None,
+            "execute_before": None,
+            "evidence": {
+                "execution_budget_seconds": budget_seconds,
+                "state": dict(saved),
+            },
+        }
+
+    occupancy, uncertainty = _source_occupancy(
+        week=week,
+        activities=activities,
+        official_windows=official_windows,
+        client=client,
+        tolerance=window_tolerance,
+    )
+    if not source_available:
+        uncertainty.append(f"SOURCE_UNAVAILABLE:{source_error or 'unspecified'}")
+    uncertainty = sorted(set(uncertainty))
+    monday = _post_reset_slots(week)[0]
+    evidence: dict[str, Any] = {
+        "source_policy": "official-and-maa-consensus-conservative-union",
+        "source_uncertainty": uncertainty,
+        "occupancy": [item.as_dict() for item in occupancy],
+        "execution_budget_seconds": budget_seconds,
+        "full_week_activity_coverage": _full_week_is_covered(week, occupancy),
+        "state": dict(saved) if saved is not None else None,
+    }
+
+    if now + transaction_timeout > deadline:
+        return {
+            **base,
+            "decision": "MISSED",
+            "reason": "INSUFFICIENT_WEEK_WINDOW",
+            "due_at": None,
+            "execute_before": None,
+            "evidence": evidence,
+        }
+
+    # The 03:00 civil-time run is the old game week's final recovery slot.
+    if now >= deadline - timedelta(hours=1):
+        return {
+            **base,
+            "decision": "RUN",
+            "reason": "WEEK_DEADLINE_CATCH_UP",
+            "due_at": isoformat(now),
+            "execute_before": isoformat(deadline),
+            "evidence": evidence,
+        }
+
+    if evidence["full_week_activity_coverage"]:
+        is_due = now >= monday
+        return {
+            **base,
+            "decision": "RUN" if is_due else "WAIT",
+            "reason": (
+                "FULL_WEEK_ACTIVITY_MONDAY_CATCH_UP"
+                if is_due
+                else "FULL_WEEK_ACTIVITY_MONDAY"
+            ),
+            "due_at": isoformat(monday),
+            "execute_before": isoformat(
+                bounded_execution_end(now if is_due else monday)
+            ),
+            "evidence": evidence,
+        }
+
+    if uncertainty:
+        decision: Literal["RUN", "WAIT"] = "RUN" if now >= monday else "WAIT"
+        return {
+            **base,
+            "decision": decision,
+            "reason": (
+                "SOURCE_UNCERTAIN_MONDAY_CATCH_UP"
+                if decision == "RUN"
+                else "SOURCE_UNCERTAIN_WAIT_FOR_MONDAY"
+            ),
+            "due_at": isoformat(monday),
+            "execute_before": isoformat(
+                bounded_execution_end(now if decision == "RUN" else monday)
+            ),
+            "evidence": evidence,
+        }
+
+    current_end = now + execution_budget
+    if current_end <= deadline and _window_is_free(now, current_end, occupancy):
+        return {
+            **base,
+            "decision": "RUN",
+            "reason": "CURRENT_WINDOW_HAS_NO_ACTIVITY",
+            "due_at": isoformat(now),
+            "execute_before": isoformat(current_end),
+            "evidence": evidence,
+        }
+
+    future_free = [
+        slot
+        for slot in _post_reset_slots(week)
+        if slot > now
+        and slot + execution_budget <= deadline
+        and _window_is_free(slot, slot + execution_budget, occupancy)
+    ]
+    if future_free:
+        return {
+            **base,
+            "decision": "WAIT",
+            "reason": "FUTURE_NO_ACTIVITY_WINDOW",
+            "due_at": isoformat(future_free[0]),
+            "execute_before": isoformat(future_free[0] + execution_budget),
+            "evidence": evidence,
+        }
+
+    is_due = now >= monday
+    return {
+        **base,
+        "decision": "RUN" if is_due else "WAIT",
+        "reason": (
+            "NO_SAFE_FREE_SLOT_MONDAY_CATCH_UP"
+            if is_due
+            else "NO_SAFE_FREE_SLOT_MONDAY"
+        ),
+        "due_at": isoformat(monday),
+        "execute_before": isoformat(
+            bounded_execution_end(now if is_due else monday)
+        ),
+        "evidence": evidence,
+    }

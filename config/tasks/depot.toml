@@ -1,0 +1,10 @@
+client_type = "Official"
+# Let maa-cli prepend StartUp inside this same task chain. The launcher used to
+# start a separate MaaCore process immediately before Depot, even though Depot
+# is the only consumer of that preparation.
+startup = true
+closedown = false
+
+[[tasks]]
+name = "Single inventory scan for drone and farming planners"
+type = "Depot"

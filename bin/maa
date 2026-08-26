@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+export MAA_CONFIG_DIR="${MAA_CONFIG_DIR:-${project_root}/config}"
+export MAA_DATA_DIR="${MAA_DATA_DIR:-${project_root}/var/data}"
+export MAA_CACHE_DIR="${MAA_CACHE_DIR:-${MAA_DATA_DIR}/cache}"
+export MAA_STATE_DIR="${MAA_STATE_DIR:-${project_root}/var/state}"
+
+cli_config="${MAA_CONFIG_DIR}/cli.toml"
+candidate_mode=false
+candidate_base="${MAA_CONFIG_DIR%/config}"
+if [[ "${candidate_base}" == "${project_root}"/var/cache/maa-runtime-candidate.* &&
+      "${MAA_DATA_DIR}" == "${candidate_base}/data" &&
+      "${MAA_CACHE_DIR}" == "${candidate_base}/data/cache" ]]; then
+    candidate_mode=true
+fi
+if [[ "${candidate_mode}" == true ]]; then
+    expected_hot_update_interval=3600
+else
+    expected_hot_update_interval=3153600000
+fi
+
+if [[ ! -r "${cli_config}" ]] || ! awk \
+    -v expected_hot_update_interval="${expected_hot_update_interval}" '
+    /^[[:space:]]*\[/ {
+        section = $0
+        sub(/[[:space:]]*[#;].*$/, "", section)
+        gsub(/[[:space:]]/, "", section)
+    }
+    section == "[resource]" &&
+    $0 ~ /^[[:space:]]*auto_update[[:space:]]*=/ {
+        found++
+        if ($0 ~ /^[[:space:]]*auto_update[[:space:]]*=[[:space:]]*false([[:space:]]*([#;].*)?)?$/) {
+            disabled++
+        }
+    }
+    section == "[hot_update]" &&
+    $0 ~ /^[[:space:]]*check_interval[[:space:]]*=/ {
+        hot_found++
+        line = $0
+        sub(/[[:space:]]*([#;].*)?$/, "", line)
+        sub(/^[^=]*=[[:space:]]*/, "", line)
+        if (line == expected_hot_update_interval) {
+            hot_valid++
+        }
+    }
+    END {
+        exit !(found == 1 && disabled == 1 &&
+               hot_found == 1 && hot_valid == 1)
+    }
+' "${cli_config}"; then
+    printf 'Refusing to run: %s violates the validated runtime-update policy.\n' \
+        "${cli_config}" >&2
+    printf 'Use bin/maa-host runtime-update for validated runtime updates.\n' >&2
+    exit 78
+fi
+
+for argument in "$@"; do
+    if [[ "${argument}" == hot-update ]]; then
+        printf 'Direct maa hot-update is disabled; use bin/maa-host runtime-update.\n' >&2
+        exit 78
+    fi
+done
+
+maa_command=""
+skip_next=false
+for argument in "$@"; do
+    if [[ "${skip_next}" == true ]]; then
+        skip_next=false
+        continue
+    fi
+    case "${argument}" in
+        --log-file)
+            skip_next=true
+            ;;
+        --batch|-v|-vv|-vvv|-q|-qq|-qqq|--log-file=*|--version|-h|--help)
+            ;;
+        --)
+            ;;
+        -*)
+            ;;
+        *)
+            maa_command="${argument}"
+            break
+            ;;
+    esac
+done
+
+if [[ "${candidate_mode}" != true ]]; then
+    case "${maa_command}" in
+        install|update)
+            printf 'Direct live Core installation/update is disabled; use bin/maa-host runtime-update.\n' >&2
+            exit 78
+            ;;
+    esac
+fi
+
+case "${maa_command}" in
+    ""|help|version|dir|install|update|self|complete|list|import|init)
+        ;;
+    *)
+        if [[ "${candidate_mode}" != true ]] &&
+           { [[ ! -s "${MAA_CACHE_DIR}/StageActivityV2.json" ]] ||
+             [[ ! -s "${MAA_CACHE_DIR}/StageActivityV2.json.etag" ]] ||
+             [[ ! -s "${MAA_CACHE_DIR}/resource/tasks/tasks.json" ]] ||
+             [[ ! -s "${MAA_CACHE_DIR}/resource/tasks/tasks.json.etag" ]]; }; then
+            printf 'Refusing to run task=%s: validated MAA hot cache is incomplete.\n' \
+                "${maa_command}" >&2
+            printf 'Run bin/maa-host runtime-update first.\n' >&2
+            exit 78
+        fi
+        ;;
+esac
+
+maa_binary="${project_root}/.local/bin/maa"
+if [[ ! -x "${maa_binary}" ]]; then
+    printf 'maa-cli is missing. Run %s/scripts/bootstrap.sh first.\n' "${project_root}" >&2
+    exit 127
+fi
+
+exec "${maa_binary}" "$@"

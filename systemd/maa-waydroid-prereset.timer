@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the pre-reset MAA Waydroid task
+
+[Timer]
+# 03:00 still belongs to the game day that ends at 04:00 Asia/Shanghai.
+OnCalendar=*-*-* 03:00:00 Asia/Shanghai
+# The launcher also rejects suspend catch-up outside 03:00-03:04.
+Persistent=false
+AccuracySec=1s
+RandomizedDelaySec=0
+Unit=maa-waydroid-prereset.service
+
+[Install]
+WantedBy=timers.target
