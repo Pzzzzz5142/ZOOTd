@@ -393,7 +393,7 @@ jq . var/state/supervisor/latest-probe.json
 
 ## 修改与运行历史
 
-仓库在引入异常监督器前先建立了 `4baa479`（`chore: preserve validated automation baseline`）基线提交，完整保留此前已经通过真实 E2E 的实现。后续功能和修复使用新的普通 commit，不 amend、不 squash、不 rebase；用 `git log --oneline --decorate` 可以恢复代码演进。managed run 启动前要求 Git 工作树为 clean；未提交的代码修改会直接阻止无人值守任务，避免执行一个无法从历史恢复的版本。无人值守运行也不会让 LLM 自动改工作树，避免定时任务在没有验证和审阅时自我改写安全策略。
+仓库在引入异常监督器前先建立了 `4baa479`（`chore: preserve validated automation baseline`）基线提交；监督器实现另存为 `3249301`（`feat: add exception-driven LLM phase supervision`），没有覆盖此前已经通过真实 E2E 的实现。后续功能和修复继续使用新的普通 commit，不 amend、不 squash、不 rebase；用 `git log --oneline --decorate` 可以恢复代码演进。managed run 启动前要求 Git 工作树为 clean；未提交的代码修改会直接阻止无人值守任务，避免执行一个无法从历史恢复的版本。无人值守运行也不会让 LLM 自动改工作树，避免定时任务在没有验证和审阅时自我改写安全策略。
 
 代码历史与运行历史分开保存：Git 记录可执行代码和文档；`var/state/supervisor/runs/` 记录本地游戏运行证据，不提交可能含账号状态的日志。每个 run 起始事件固定当时的 Git HEAD、dirty 标志、status 哈希和 tracked diff 哈希；每个后续事件包含前一事件 SHA-256 且以 exclusive-create 写入，既不能覆盖旧阶段，也不能给同一阶段补写第二个“更好看”的终态。`latest-run.json` 只是可变索引，不是历史真相。
 
@@ -428,6 +428,8 @@ jq . var/state/supervisor/latest-probe.json
 2026-08-27 的真实 headless 验收先运行 Award-only，日志只有 StartUp 与 Award。随后 runtime 更新拒绝了仍与 stable Core 不兼容的最新 MaaResource，并把兼容 live overlay、fresh API cache 和当前受管配置密封为 schema 3。完整流程恰好产生 Depot、daily、单笔 Annihilation、单进程 proxy-preflight、Fight、最终 Award 六份 MAA 日志：Depot 在一个 Core 内完成 StartUp 并读取 79 项库存；daily 有两次 Infrast、四间 Dorm、两次 Recruit、一次 Mall 和零次 Training；Core 对四间受保护 Dorm 实际记录了四个 `m_notstationed_filter_enabled: 1`、零个 `0`。来源只联网刷新一轮；剿灭缺少周进度强证据时保留 unknown 并继续普通刷关；AT-6 的客户端 PRTS preflight 和八连三星 Fight 成功；最终 Award 日志没有任何基建、公招、商店、Depot 或 Fight 标记。流程结束后 schema 3 receipt 仍通过校验。
 
 同日随后建立 Git 基线并加入异常驱动的 LLM 监督：正常强证据路径不请求模型；所有 launcher 阶段进入追加式哈希链，任一失败、降级、缺失或非零退出只在 cleanup 后请求一次只读诊断，并保持整轮失败。这样 LLM 接入可被真实探针证明，又不会让正常 daily 为九个阶段重复产生模型调用，也不会取得重跑 daily 或修改安全策略的权限。
+
+该监督器的真实合成异常探针先发现 Codex 结构化输出不接受 `uniqueItems`，失败 probe 被保留；把唯一性改为 Python 二次校验后，下一次真实模型探针成功返回 `safe_to_retry_whole_run=false`。随后在 commit `3249301` 的 clean 工作树上完成两轮 headless 验收：Award-only 账本包含 runtime、device、Award、cleanup 四个 `succeeded`，日志只有 StartUp、Award 和总链完成；完整链路的九个阶段依次为 runtime/device/Depot/daily/source `succeeded`、剿灭 `policy-resolved(weekly-state-unknown)`、farming/Award/cleanup `succeeded`。Depot 仍为 79 项；daily 为 2/2 Infrast、4 Dorm、2 Recruit、1 Mall、0 Training，Core 对四间 Dorm 均记录 `m_notstationed_filter_enabled: 1`；活动候选没有新鲜三星证明时没有猜成功，AP-5 preflight 失败后由 1-7 三次三星回退取得实际掉落证明；最终 Award 无任何基建、公招、商店、Depot 或 Fight marker。两轮最终事件均为 `llm.invoked=false`，证明正常强证据路径没有模型开销；cleanup 后 Waydroid 为 STOPPED，schema-3 readiness 仍有效。
 
 ```bash
 systemctl --user start maa-waydroid.service
