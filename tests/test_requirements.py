@@ -4,6 +4,7 @@ import copy
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -21,6 +22,10 @@ from maa_planner.capability import (
 )
 from maa_planner.cli import _read_log_suffix
 from maa_planner.codex_advisor import CodexAdvisorError, run_codex_advisor
+from maa_planner.codex_supervisor import (
+    CodexSupervisorError,
+    run_codex_supervisor,
+)
 from maa_planner.inventory import (
     InventorySnapshot,
     InventoryValidationError,
@@ -43,6 +48,13 @@ from maa_planner.sources import (
     build_yituliu_efficiencies,
     fetch_official_bulletin_windows,
     parse_maa_activities,
+)
+from maa_planner.supervisor import (
+    SupervisorError,
+    finish_run,
+    load_run_events,
+    record_phase,
+    start_run,
 )
 from maa_planner.util import (
     atomic_write_bytes,
@@ -345,6 +357,12 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn('"${planner}" validate-service-readiness --value-only', launcher)
         self.assertNotIn('--profile "${MAA_HOST_PROFILE}" --dry-run', launcher)
         self.assertIn('[[ "${MAA_HOST_PROFILE}" == waydroid ]]', launcher)
+        self.assertEqual(launcher.count(" supervisor-start --mode "), 1)
+        self.assertEqual(launcher.count(" supervisor-finish --run-id "), 1)
+        self.assertIn("llm_policy", (ROOT / "maa_planner/supervisor.py").read_text())
+        farming_config = tomllib.loads((ROOT / "config/farming.toml").read_text())
+        self.assertTrue(farming_config["supervisor"]["enabled"])
+        self.assertTrue(farming_config["supervisor"]["required_on_exception"])
 
         proxy = tomllib.loads(
             (ROOT / "config/tasks/proxy-preflight.toml").read_text()
@@ -773,7 +791,7 @@ class HighLevelRequirementTests(unittest.TestCase):
                     request_body=request,
                 )
 
-    def test_llm_advisor_is_read_only_and_cannot_authorize_gameplay(self) -> None:
+    def test_llm_is_read_only_exception_only_and_cannot_authorize_gameplay(self) -> None:
         evidence = json.dumps(
             {
                 "schema_version": 1,
@@ -874,6 +892,188 @@ class HighLevelRequirementTests(unittest.TestCase):
                     environ={"HOME": directory, "MAA_CODEX_BIN": str(fake_codex)},
                     runner=invented_runner,
                 )
+
+            supervisor_evidence = {
+                "schema_version": 1,
+                "kind": "exception-diagnosis",
+                "run_id": "20260827T000000.000000Z-12345678",
+                "process_status": 1,
+                "expected_phases": ["daily", "cleanup"],
+                "missing_phases": [],
+                "unacceptable_phases": ["daily"],
+                "start": {"mode": "full", "llm_policy": "exception-only"},
+                "phase_results": [
+                    {
+                        "phase": "daily",
+                        "result": "failed",
+                        "outcome": "completion-proof-missing",
+                    },
+                    {
+                        "phase": "cleanup",
+                        "result": "succeeded",
+                        "outcome": "resources-released",
+                    },
+                ],
+                "chain_head_sha256": "0" * 64,
+                "hard_safety_rules": ["never replay a stateful daily"],
+            }
+
+            def supervisor_runner(
+                argv: list[str], **kwargs: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                seen["supervisor_argv"] = argv
+                seen["supervisor_env"] = kwargs["env"]
+                output = {
+                    "schema_version": 1,
+                    "run_id": supervisor_evidence["run_id"],
+                    "classification": "evidence",
+                    "summary": "Daily lacks deterministic completion proof.",
+                    "affected_phases": ["daily"],
+                    "evidence_refs": ["phase_results[0]"],
+                    "recommended_actions": ["Inspect the archived daily log."],
+                    "safe_to_retry_whole_run": False,
+                }
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(output).encode(), b""
+                )
+
+            supervisor_result = json.loads(
+                run_codex_supervisor(
+                    json.dumps(supervisor_evidence).encode(),
+                    environ={
+                        "HOME": directory,
+                        "PATH": directory,
+                        "DISPLAY": ":0",
+                        "MAA_SECRET": "must-not-leak",
+                        "MAA_CODEX_BIN": str(fake_codex),
+                    },
+                    runner=supervisor_runner,
+                )
+            )
+            supervisor_argv = seen["supervisor_argv"]
+            assert isinstance(supervisor_argv, list)
+            self.assertEqual(
+                supervisor_argv[supervisor_argv.index("--sandbox") + 1],
+                "read-only",
+            )
+            supervisor_env = seen["supervisor_env"]
+            assert isinstance(supervisor_env, dict)
+            self.assertNotIn("DISPLAY", supervisor_env)
+            self.assertNotIn("MAA_SECRET", supervisor_env)
+            self.assertFalse(supervisor_result["safe_to_retry_whole_run"])
+            self.assertNotIn("authorization", supervisor_result)
+
+            successful_evidence = copy.deepcopy(supervisor_evidence)
+            successful_evidence["process_status"] = 0
+            successful_evidence["unacceptable_phases"] = []
+            with self.assertRaisesRegex(
+                CodexSupervisorError, "refuses successful runs"
+            ):
+                run_codex_supervisor(
+                    json.dumps(successful_evidence).encode(),
+                    environ={"HOME": directory, "MAA_CODEX_BIN": str(fake_codex)},
+                    runner=supervisor_runner,
+                )
+
+            repo = Path(directory) / "history-repo"
+            repo.mkdir()
+            subprocess.run(("git", "init", "-q"), cwd=repo, check=True)
+            subprocess.run(
+                ("git", "config", "user.name", "Test"), cwd=repo, check=True
+            )
+            subprocess.run(
+                ("git", "config", "user.email", "test@example.invalid"),
+                cwd=repo,
+                check=True,
+            )
+            (repo / "baseline.txt").write_text("baseline\n", encoding="utf-8")
+            (repo / ".gitignore").write_text("/var/\n", encoding="utf-8")
+            subprocess.run(
+                ("git", "add", "baseline.txt", ".gitignore"), cwd=repo, check=True
+            )
+            subprocess.run(
+                ("git", "commit", "-qm", "baseline"), cwd=repo, check=True
+            )
+
+            clean_run = start_run(repo, "dry-run", now=START)
+            record_phase(
+                repo,
+                clean_run,
+                phase="runtime-readiness",
+                result="succeeded",
+                outcome="receipt-accepted",
+            )
+            record_phase(
+                repo,
+                clean_run,
+                phase="cleanup",
+                result="succeeded",
+                outcome="resources-released",
+            )
+            clean_finish = finish_run(
+                repo,
+                clean_run,
+                process_status=0,
+                supervisor_enabled=True,
+                supervisor_required=True,
+                command=("/definitely/not/invoked",),
+                timeout_seconds=1,
+            )
+            self.assertEqual(clean_finish.status, "success")
+            self.assertFalse(clean_finish.llm_invoked)
+            self.assertEqual(len(load_run_events(repo, clean_run)), 4)
+
+            adapter = Path(directory) / "exception-adapter.py"
+            adapter.write_text(
+                """import json, sys
+evidence = json.load(sys.stdin)
+print(json.dumps({
+    'schema_version': 1,
+    'run_id': evidence['run_id'],
+    'classification': 'evidence',
+    'summary': 'The runtime receipt was rejected.',
+    'affected_phases': ['runtime-readiness'],
+    'evidence_refs': ['unacceptable_phases'],
+    'recommended_actions': ['Run the transactional runtime updater.'],
+    'safe_to_retry_whole_run': False,
+}))
+""",
+                encoding="utf-8",
+            )
+            failed_run = start_run(repo, "dry-run", now=START + timedelta(seconds=1))
+            record_phase(
+                repo,
+                failed_run,
+                phase="runtime-readiness",
+                result="failed",
+                outcome="receipt-rejected",
+            )
+            record_phase(
+                repo,
+                failed_run,
+                phase="cleanup",
+                result="succeeded",
+                outcome="resources-released",
+            )
+            failed_finish = finish_run(
+                repo,
+                failed_run,
+                process_status=1,
+                supervisor_enabled=True,
+                supervisor_required=True,
+                command=(sys.executable, str(adapter)),
+                timeout_seconds=5,
+            )
+            self.assertEqual(failed_finish.status, "failed")
+            self.assertTrue(failed_finish.llm_invoked)
+            self.assertIsNotNone(failed_finish.diagnosis)
+
+            first_phase = repo / (
+                f"var/state/supervisor/runs/{failed_run}/events/0001-phase-finished.json"
+            )
+            first_phase.write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(SupervisorError, "hash chain"):
+                load_run_events(repo, failed_run)
 
 
 if __name__ == "__main__":

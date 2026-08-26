@@ -5,6 +5,7 @@ project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 maa="${project_root}/bin/maa"
 planner="${project_root}/bin/maa-planner"
 advisor_adapter="${project_root}/bin/maa-codex-advisor"
+supervisor_adapter="${project_root}/bin/maa-codex-supervisor"
 daily_launcher="${project_root}/scripts/run-daily.sh"
 runtime_updater="${project_root}/scripts/update-maa-runtime.sh"
 host_config="${project_root}/config/host.env"
@@ -198,6 +199,13 @@ doctor() {
             "${advisor_adapter}" >&2
         failed=1
     fi
+    if [[ -x "${supervisor_adapter}" ]]; then
+        info "found exception-only supervisor adapter: ${supervisor_adapter}"
+    else
+        printf '[maa-host] supervisor adapter is not executable: %s\n' \
+            "${supervisor_adapter}" >&2
+        failed=1
+    fi
     if command -v "${codex_bin}" >/dev/null 2>&1; then
         "${codex_bin}" --version || failed=1
         "${codex_bin}" login status || failed=1
@@ -268,6 +276,7 @@ Commands:
                         Run one MAA task directly, without launcher orchestration
   doctor                Check dependencies and the promoted runtime receipt
   advisor-check         Run and archive one bounded real-model connectivity probe
+  supervisor-check      Send one synthetic failure to the exception-only LLM supervisor
   runtime-update        Validate stable Core plus staged resources, then atomically promote them
   resource-update       Compatibility alias for runtime-update
   probe                 Check live ADB authorization and the game package
@@ -295,6 +304,10 @@ case "${command_name}" in
     advisor-check)
         shift
         exec "${planner}" advisor-check "$@"
+        ;;
+    supervisor-check)
+        shift
+        exec "${planner}" supervisor-check "$@"
         ;;
     runtime-update|resource-update)
         shift

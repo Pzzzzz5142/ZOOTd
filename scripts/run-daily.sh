@@ -80,18 +80,70 @@ inventory_snapshot_ready=false
 depot_scan_outcome=not-attempted
 core_log_cursor_args=()
 planner_source_args=()
+source_refresh_outcome=not-applicable
+source_refresh_evidence=""
+farming_phase_result=not-applicable
+farming_phase_outcome=not-applicable
+farming_evidence_log=""
+depot_evidence_log=""
+daily_evidence_log=""
+award_evidence_log=""
+supervisor_run_id=""
+supervisor_active_phase=""
+supervisor_active_evidence=""
+supervisor_audit_error=false
+supervisor_finishing=false
 
 info() {
     printf '[maa-daily] %s\n' "$*"
 }
 
 die() {
+    local message="$*"
+
+    if [[ -n "${supervisor_run_id}" && -n "${supervisor_active_phase}" &&
+          "${supervisor_finishing}" != true ]]; then
+        if [[ -n "${supervisor_active_evidence}" &&
+              -f "${supervisor_active_evidence}" ]]; then
+            supervisor_record_phase "${supervisor_active_phase}" failed \
+                launcher-error --detail "error=${message}" \
+                --evidence-file "${supervisor_active_evidence}" || true
+        else
+            supervisor_record_phase "${supervisor_active_phase}" failed \
+                launcher-error --detail "error=${message}" || true
+        fi
+    fi
     printf '[maa-daily] error: %s\n' "$*" >&2
     exit 1
 }
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+supervisor_begin_phase() {
+    supervisor_active_phase="$1"
+    supervisor_active_evidence=""
+}
+
+supervisor_record_phase() {
+    local phase="$1"
+    local result="$2"
+    local outcome="$3"
+    shift 3
+
+    [[ -n "${supervisor_run_id}" ]] || return 0
+    if ! "${planner}" supervisor-phase --run-id "${supervisor_run_id}" \
+        --phase "${phase}" --result "${result}" --outcome "${outcome}" \
+        "$@" 8>&- 9>&- >/dev/null; then
+        supervisor_audit_error=true
+        info "could not append the ${phase} phase audit; the run will fail closed after final Award"
+        return 1
+    fi
+    if [[ "${supervisor_active_phase}" == "${phase}" ]]; then
+        supervisor_active_phase=""
+        supervisor_active_evidence=""
+    fi
 }
 
 usage() {
@@ -265,8 +317,23 @@ waydroid_session_is_running() {
 cleanup() {
     local status=$?
     local attempt
+    local cleanup_ok=true
+    local finish_status
+    local -a cleanup_evidence=()
 
     trap - EXIT INT TERM HUP
+
+    if [[ -n "${supervisor_run_id}" && -n "${supervisor_active_phase}" ]]; then
+        if [[ -n "${supervisor_active_evidence}" &&
+              -f "${supervisor_active_evidence}" ]]; then
+            supervisor_record_phase "${supervisor_active_phase}" failed \
+                unhandled-shell-error --detail "exit_status=${status}" \
+                --evidence-file "${supervisor_active_evidence}" || true
+        else
+            supervisor_record_phase "${supervisor_active_phase}" failed \
+                unhandled-shell-error --detail "exit_status=${status}" || true
+        fi
+    fi
 
     if [[ -n "${waydroid_serial}" ]]; then
         timeout --signal=TERM --kill-after=2s 5s \
@@ -275,7 +342,13 @@ cleanup() {
 
     if [[ "${session_started_by_launcher}" == true ]] && waydroid_session_is_running; then
         info "stopping the Waydroid session started by this launcher"
-        timeout --signal=TERM --kill-after=5s 15s waydroid session stop >/dev/null 2>&1 || true
+        if ! timeout --signal=TERM --kill-after=5s 15s \
+            waydroid session stop >/dev/null 2>&1; then
+            cleanup_ok=false
+        fi
+        if waydroid_session_is_running; then
+            cleanup_ok=false
+        fi
     fi
 
     if [[ -n "${waydroid_ui_pid}" ]] && kill -0 "${waydroid_ui_pid}" 2>/dev/null; then
@@ -299,6 +372,34 @@ cleanup() {
         fi
         if ! kill -0 "${waydroid_ui_pid}" 2>/dev/null; then
             wait "${waydroid_ui_pid}" 2>/dev/null || true
+        else
+            cleanup_ok=false
+        fi
+    fi
+
+    if [[ -n "${supervisor_run_id}" ]]; then
+        supervisor_begin_phase cleanup
+        if [[ -n "${waydroid_ui_log}" && -f "${waydroid_ui_log}" ]]; then
+            cleanup_evidence=(--evidence-file "${waydroid_ui_log}")
+        fi
+        if [[ "${cleanup_ok}" == true ]]; then
+            supervisor_record_phase cleanup succeeded resources-released \
+                --detail "launcher_started_session=${session_started_by_launcher}" \
+                "${cleanup_evidence[@]}" || true
+        else
+            supervisor_record_phase cleanup failed resource-cleanup-incomplete \
+                --detail "launcher_started_session=${session_started_by_launcher}" \
+                "${cleanup_evidence[@]}" || true
+        fi
+
+        finish_status="${status}"
+        if [[ "${supervisor_audit_error}" == true ]]; then
+            finish_status=1
+        fi
+        supervisor_finishing=true
+        if ! "${planner}" supervisor-finish --run-id "${supervisor_run_id}" \
+            --process-status "${finish_status}" 8>&- 9>&-; then
+            status=1
         fi
     fi
 
@@ -446,6 +547,8 @@ scan_depot_inventory_once() {
     local log_file="$1"
     local command_succeeded=false
 
+    depot_evidence_log="${log_file}"
+    supervisor_active_evidence="${log_file}"
     if [[ "${depot_scan_attempted}" == true ]]; then
         info "refusing a second Depot scan in the same launcher run"
         return 1
@@ -492,6 +595,8 @@ game_client_has_saved_proxy() {
     local log_prefix="$2"
     local preflight_log="${log_prefix}-proxy-preflight-${stage_code}.log"
 
+    farming_evidence_log="${preflight_log}"
+    supervisor_active_evidence="${preflight_log}"
     info "checking ${stage_code} navigation and saved proxy in one zero-battle MAA task"
     if ! printf '%s\n' "${stage_code}" |
        run_farming_soft_with_timeout 1080 "${maa}" \
@@ -514,6 +619,8 @@ run_sanity_fight() {
     local maximum_seconds="${3:-14400}"
     local duration_seconds
 
+    farming_evidence_log="${log_file}"
+    supervisor_active_evidence="${log_file}"
     info "running ${stage_code} with all medicine expiring within two days; normal medicine and Originite Prime remain disabled"
     if ! duration_seconds="$(farming_timeout_seconds "${maximum_seconds}")"; then
         info "pre-reset Fight window is closed; preserving time for final Award"
@@ -530,6 +637,8 @@ run_verify_fight() {
     local log_file="$2"
     local duration_seconds
 
+    farming_evidence_log="${log_file}"
+    supervisor_active_evidence="${log_file}"
     info "verifying one ${stage_code} proxy result with native two-day medicine parameters"
     if ! duration_seconds="$(farming_timeout_seconds 5400)"; then
         info "pre-reset Fight window is closed; skipping proxy verification"
@@ -629,6 +738,8 @@ run_award_only() {
 
     stamp="$(date '+%Y%m%d-%H%M%S-%N')"
     log_file="${project_root}/var/state/host/${stamp}-${log_suffix}.log"
+    award_evidence_log="${log_file}"
+    supervisor_active_evidence="${log_file}"
     info "running the Award-only ${purpose}"
     info "MAA log: ${log_file}"
     run_with_timeout 30m "${maa}" --log-file="${log_file}" \
@@ -651,6 +762,8 @@ run_daily_routine() {
     info "running the daily routine for game day ${started_game_day} (04:00 reset)"
     daily_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
     daily_log="${project_root}/var/state/host/${daily_stamp}-daily.log"
+    daily_evidence_log="${daily_log}"
+    supervisor_active_evidence="${daily_log}"
     info "MAA log: ${daily_log}"
     if printf '%s\n' "${drone_input_index}" |
        run_soft_with_timeout "${daily_attempt_timeout}" "${maa}" --log-file="${daily_log}" \
@@ -662,6 +775,8 @@ run_daily_routine() {
             die "daily lost completion proof after stateful work started; refusing to replay base, recruitment, or shop; inspect ${daily_log}"
         fi
         retry_log="${project_root}/var/state/host/${daily_stamp}-daily-retry.log"
+        daily_evidence_log="${retry_log}"
+        supervisor_active_evidence="${retry_log}"
         info "daily stopped before any stateful phase; retrying once is safe"
         info "MAA retry log: ${retry_log}"
         printf '%s\n' "${drone_input_index}" |
@@ -1015,6 +1130,8 @@ run_planned_activity_candidates() {
 refresh_planner_sources_if_needed() {
     local refresh_succeeded=false
 
+    source_refresh_outcome=not-applicable
+    source_refresh_evidence=""
     if [[ "${check_device}" == true || "${planner_helpers_ready}" != true ]]; then
         return 0
     fi
@@ -1031,11 +1148,13 @@ refresh_planner_sources_if_needed() {
     if [[ "${pre_reset_slot}" == true || -n "${stage}" ||
           "${auto_farm_ready}" != true ]]; then
         info "refreshing the shared activity calendar once; this path does not need a new efficiency download"
+        source_refresh_evidence="${project_root}/var/state/planner/latest-activity-calendar.json"
         if run_farming_soft_with_timeout 300 "${planner}" sync-calendar; then
             refresh_succeeded=true
         fi
     else
         info "refreshing all planner sources once for this launcher run"
+        source_refresh_evidence="${project_root}/var/state/planner/latest-sources.json"
         if run_soft_with_timeout 15m "${planner}" sync --skip-maa-hot-update; then
             refresh_succeeded=true
         fi
@@ -1046,7 +1165,10 @@ refresh_planner_sources_if_needed() {
     # or incomplete cache deterministically fails closed to NOOP/fallback.
     planner_source_args=(--offline)
     if [[ "${refresh_succeeded}" != true ]]; then
+        source_refresh_outcome=failed
         info "the one source refresh attempt failed; downstream planners will inspect cache offline without a network retry storm"
+    else
+        source_refresh_outcome=ready
     fi
 }
 
@@ -1172,6 +1294,7 @@ require_command systemctl
 require_command timeout
 require_command waydroid
 [[ -x "${maa}" ]] || die "MAA wrapper is not executable: ${maa}"
+[[ -x "${planner}" ]] || die "planner wrapper is not executable: ${planner}"
 [[ -x "${scaled_ui}" ]] || die "scaled Waydroid launcher is not executable: ${scaled_ui}"
 
 if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]; then
@@ -1199,8 +1322,21 @@ flock -n 9 || die "another one-click daily run is already active"
 exec 8>"${project_root}/var/run/maa-host.lock"
 flock -n 8 || die "another MAA run is already active"
 
+if [[ "${dry_run}" == true ]]; then
+    supervisor_mode=dry-run
+elif [[ "${check_device}" == true ]]; then
+    supervisor_mode=device
+elif [[ "${e2e_award}" == true ]]; then
+    supervisor_mode=award
+else
+    supervisor_mode=full
+fi
+supervisor_run_id="$("${planner}" supervisor-start --mode "${supervisor_mode}" 8>&- 9>&-)" ||
+    die "could not start the append-only phase supervisor"
+info "phase audit: var/state/supervisor/runs/${supervisor_run_id}"
+
 if [[ "${check_device}" != true ]]; then
-    [[ -x "${planner}" ]] || die "planner wrapper is not executable: ${planner}"
+    supervisor_begin_phase runtime-readiness
     info "checking the promoted runtime generation receipt without starting MaaCore"
     readiness_fields="$("${planner}" validate-service-readiness --value-only 8>&- 9>&-)" ||
         die "live runtime/config no longer matches a validated generation; run bin/maa-host runtime-update"
@@ -1214,6 +1350,9 @@ if [[ "${check_device}" != true ]]; then
         annihilation_ready=false
         info "optional Depot, Annihilation and sanity Fight phases are disabled; daily and final Award remain enabled"
     fi
+    supervisor_record_phase runtime-readiness succeeded receipt-accepted \
+        --detail "receipt_mode=${receipt_mode}" \
+        --detail "farming_contracts_ready=${farming_contracts_ready}" || true
 else
     info "device-only mode skips MAA runtime validation"
 fi
@@ -1252,6 +1391,7 @@ if [[ "${dry_run}" == true ]]; then
     exit 0
 fi
 
+supervisor_begin_phase device-readiness
 import_desktop_environment
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 runtime_dir="${XDG_RUNTIME_DIR}"
@@ -1319,69 +1459,160 @@ network_is_ready ||
     die "Waydroid cannot reach ${network_test_url}; run scripts/install-network-fix.sh once"
 info "Waydroid network is ready"
 
+supervisor_record_phase device-readiness succeeded device-ready \
+    --detail "serial=${waydroid_serial}" \
+    --detail "resolution=${display_width}x${display_height}" \
+    --detail "package=${official_package}" \
+    --detail "network_test_url=${network_test_url}" || true
+
 if [[ "${check_device}" == true ]]; then
     info "device checks passed"
     exit 0
 fi
 
 if [[ "${e2e_award}" == true ]]; then
+    supervisor_begin_phase award
     run_award_only "end-to-end probe" "e2e-award"
+    supervisor_record_phase award succeeded isolated-award-complete \
+        --detail "purpose=e2e-award" --evidence-file "${award_evidence_log}" || true
     exit 0
 fi
 
 info "daily-first mode: protecting the game day that ends at 04:00 ${server_timezone}"
+supervisor_begin_phase depot
 prepare_daily_drone_policy
+if [[ "${pre_reset_slot}" == true ]]; then
+    supervisor_record_phase depot not-applicable pre-reset-auxiliary-scan-skipped \
+        --detail "drone_mode=${drone_mode}" || true
+elif [[ "${farming_contracts_ready}" != true ]]; then
+    supervisor_record_phase depot degraded managed-task-contract-invalid \
+        --detail "drone_mode=${drone_mode}" || true
+elif [[ "${depot_scan_outcome}" == ready && -f "${depot_evidence_log}" ]]; then
+    supervisor_record_phase depot succeeded inventory-snapshot-ready \
+        --detail "drone_mode=${drone_mode}" \
+        --evidence-file "${depot_evidence_log}" || true
+else
+    if [[ -n "${depot_evidence_log}" && -f "${depot_evidence_log}" ]]; then
+        supervisor_record_phase depot degraded "${depot_scan_outcome}" \
+            --detail "drone_mode=${drone_mode}" \
+            --evidence-file "${depot_evidence_log}" || true
+    else
+        supervisor_record_phase depot degraded "${depot_scan_outcome}" \
+            --detail "drone_mode=${drone_mode}" || true
+    fi
+fi
+
+supervisor_begin_phase daily
 run_daily_routine
+supervisor_record_phase daily succeeded protected-daily-complete \
+    --detail "game_day=${daily_completed_game_day}" \
+    --detail "drone_mode=${drone_mode}" \
+    --evidence-file "${daily_evidence_log}" || true
+
+supervisor_begin_phase source-refresh
 refresh_planner_sources_if_needed
+case "${source_refresh_outcome}" in
+    ready)
+        if [[ -n "${source_refresh_evidence}" && -f "${source_refresh_evidence}" ]]; then
+            supervisor_record_phase source-refresh succeeded sources-refreshed \
+                --evidence-file "${source_refresh_evidence}" || true
+        else
+            supervisor_record_phase source-refresh failed source-snapshot-missing || true
+        fi
+        ;;
+    failed)
+        supervisor_record_phase source-refresh policy-resolved refresh-failed-cache-only || true
+        ;;
+    *)
+        supervisor_record_phase source-refresh not-applicable planner-network-not-needed || true
+        ;;
+esac
 
 # Weekly Annihilation consumes sanity, so it is always planned after the
 # protected daily pass and before material farming.
+supervisor_begin_phase annihilation
 run_weekly_annihilation_if_due
+
+case "${annihilation_phase_outcome}" in
+    weekly-cap-confirmed|partial-progress)
+        supervisor_record_phase annihilation succeeded "${annihilation_phase_outcome}" || true
+        ;;
+    waiting|deferred|weekly-state-unknown|blocked)
+        supervisor_record_phase annihilation policy-resolved "${annihilation_phase_outcome}" || true
+        ;;
+    not-applicable)
+        if [[ "${farm_mode}" == auto && "${annihilation_ready}" != true ]]; then
+            supervisor_record_phase annihilation degraded contracts-or-helper-unavailable || true
+        else
+            supervisor_record_phase annihilation not-applicable farming-disabled || true
+        fi
+        ;;
+    *)
+        supervisor_record_phase annihilation degraded "${annihilation_phase_outcome}" || true
+        ;;
+esac
 
 if [[ -z "${stage}" && "${farm_mode}" == auto ]]; then
     info "weekly Annihilation phase outcome: ${annihilation_phase_outcome}; continuing to normal material farming"
 fi
 
+supervisor_begin_phase farming
 if [[ -n "${stage}" && "${farming_contracts_ready}" == true ]]; then
     fight_stamp="$(date '+%Y%m%d-%H%M%S')"
+    manual_fight_log="${project_root}/var/state/host/${fight_stamp}-fight.log"
+    farming_phase_result=degraded
+    farming_phase_outcome=explicit-stage-unverified
     info "spending sanity on ${stage}; all medicine expiring within two days is enabled"
     if ! game_client_has_saved_proxy "${stage}" \
         "${project_root}/var/state/host/${fight_stamp}-manual"; then
+        farming_phase_outcome=proxy-preflight-failed
         info "explicit stage farming skipped because the game client did not confirm saved proxy play"
+    elif ! capture_core_log_cursor; then
+        farming_phase_outcome=core-log-cursor-unavailable
+        info "explicit stage farming skipped because a fresh MaaCore log cursor could not be captured"
     else
-        if ! capture_core_log_cursor; then
-            info "explicit stage farming skipped because a fresh MaaCore log cursor could not be captured"
-        else
-            if ! run_sanity_fight "${stage}" \
-            "${project_root}/var/state/host/${fight_stamp}-fight.log"; then
-                info "explicit stage farming failed; continuing with final Award"
-            elif [[ "${planner_helpers_ready}" == true ]]; then
-                manual_activity_instance="$(active_activity_instance_for_stage "${stage}" 2>/dev/null || true)"
-                if [[ "${manual_activity_instance}" =~ ^[0-9a-f]{24}$ ]]; then
-                    if ! run_soft_with_timeout 1m "${planner}" record-fight \
-                        --log "${core_log}" --since-byte "${fight_core_offset}" \
-                        "${core_log_cursor_args[@]}" \
-                        --stage "${stage}" --activity-instance "${manual_activity_instance}"; then
-                        info "manual fight completed, but its proxy capability could not be recorded"
-                    fi
-                else
-                    info "manual fight completed; no unique active activity instance was found to record"
+        if ! run_sanity_fight "${stage}" "${manual_fight_log}"; then
+            info "explicit stage farming command failed; checking fresh client evidence before final Award"
+        fi
+        if [[ "${planner_helpers_ready}" == true ]] &&
+           timeout --signal=TERM --kill-after=2s 1m "${planner}" check-fight \
+               --log "${core_log}" --since-byte "${fight_core_offset}" \
+               "${core_log_cursor_args[@]}" --stage "${stage}" \
+               8>&- 9>&- >/dev/null 2>&1; then
+            farming_phase_result=succeeded
+            farming_phase_outcome=explicit-stage-three-star-verified
+            manual_activity_instance="$(active_activity_instance_for_stage "${stage}" 2>/dev/null || true)"
+            if [[ "${manual_activity_instance}" =~ ^[0-9a-f]{24}$ ]]; then
+                if ! run_soft_with_timeout 1m "${planner}" record-fight \
+                    --log "${core_log}" --since-byte "${fight_core_offset}" \
+                    "${core_log_cursor_args[@]}" \
+                    --stage "${stage}" --activity-instance "${manual_activity_instance}"; then
+                    info "manual fight completed, but its proxy capability could not be recorded"
                 fi
+            else
+                info "manual fight completed; no unique active activity instance was found to record"
             fi
+        else
+            farming_phase_outcome=explicit-stage-proof-missing
+            info "explicit stage produced no fresh three-star proof; final audit will request diagnosis"
         fi
     fi
 elif [[ -z "${stage}" && "${farm_mode}" == auto && "${auto_farm_ready}" == true ]]; then
+    farming_phase_result=degraded
+    farming_phase_outcome=no-authorized-fight
     farm_stamp="$(date '+%Y%m%d-%H%M%S')"
     depot_log="${project_root}/var/state/host/${farm_stamp}-depot.log"
     decision_file="${project_root}/var/state/planner/launcher-${farm_stamp}.json"
 
     if ! ensure_farming_inventory_snapshot "${depot_log}"; then
-        :
+        farming_phase_outcome=inventory-unavailable
     elif ! run_farming_soft_with_timeout 300 "${planner}" plan \
         "${planner_source_args[@]}" --skip-maa-hot-update \
         --output "${decision_file}"; then
+        farming_phase_outcome=planner-failed
         info "automatic farming skipped because the planner failed"
     elif [[ ! -s "${decision_file}" ]]; then
+        farming_phase_outcome=decision-missing
         info "automatic farming skipped because the planner wrote no decision"
     else
         decision_fields="$(jq -er '[
@@ -1392,26 +1623,64 @@ elif [[ -z "${stage}" && "${farm_mode}" == auto && "${auto_farm_ready}" == true 
         IFS=$'\t' read -r decision_schema planner_decision planner_reason \
             <<<"${decision_fields}"
         if [[ "${decision_schema}" != 1 ]]; then
+            farming_phase_outcome=decision-invalid
             info "automatic farming skipped because the planner decision schema is invalid"
         elif [[ "${planner_decision}" != FIGHT ]]; then
+            farming_phase_result=policy-resolved
+            farming_phase_outcome="planner-noop-${planner_reason}"
             info "automatic farming NOOP: ${planner_reason}"
         elif ! activity_decision_is_safe "${decision_file}"; then
+            farming_phase_outcome=unsafe-fight-decision
             info "automatic farming skipped because the FIGHT decision failed launcher validation"
         else
             info "automatic farming decision: ${decision_file}"
             run_planned_activity_candidates "${decision_file}" "${farm_stamp}" || true
         fi
     fi
+elif [[ -n "${stage}" ]]; then
+    farming_phase_result=degraded
+    farming_phase_outcome=farming-contract-invalid
+elif [[ "${farm_mode}" == off ]]; then
+    farming_phase_result=not-applicable
+    farming_phase_outcome=farming-disabled
+else
+    farming_phase_result=degraded
+    farming_phase_outcome=automatic-farming-unavailable
 fi
 
 if [[ "${pre_reset_slot}" == true && "${fight_attempted}" == true ]]; then
     info "pre-reset Fight was attempted; skipping fallback and proceeding to final Award"
+    if [[ "${activity_fight_completed}" == true ]]; then
+        farming_phase_result=succeeded
+        farming_phase_outcome=activity-fight-three-star-verified
+    elif [[ -z "${stage}" ]]; then
+        farming_phase_result=policy-resolved
+        farming_phase_outcome=pre-reset-cutoff-after-fight-attempt
+    fi
 elif [[ -z "${stage}" && "${farm_mode}" == auto &&
         "${activity_fight_completed}" != true ]]; then
     info "no activity-stage fight was completed; entering AP-5 -> 1-7 fallback"
-    if ! run_regular_fallback; then
+    if run_regular_fallback; then
+        farming_phase_result=succeeded
+        farming_phase_outcome=regular-fallback-three-star-verified
+    else
+        farming_phase_result=degraded
+        farming_phase_outcome=regular-fallback-proof-missing
         info "regular-stage fallback produced no fresh fight proof; continuing with final Award"
     fi
+fi
+
+if [[ "${activity_fight_completed}" == true ]]; then
+    farming_phase_result=succeeded
+    farming_phase_outcome=activity-fight-three-star-verified
+fi
+if [[ -n "${farming_evidence_log}" && -f "${farming_evidence_log}" ]]; then
+    supervisor_record_phase farming "${farming_phase_result}" "${farming_phase_outcome}" \
+        --detail "farm_mode=${farm_mode}" --detail "stage=${stage:-automatic}" \
+        --evidence-file "${farming_evidence_log}" || true
+else
+    supervisor_record_phase farming "${farming_phase_result}" "${farming_phase_outcome}" \
+        --detail "farm_mode=${farm_mode}" --detail "stage=${stage:-automatic}" || true
 fi
 
 current_game_day="$(server_game_day_now)"
@@ -1422,7 +1691,11 @@ fi
 # Ordinary task rewards are intentionally the final MAA phase. It is isolated
 # from daily.toml so post-fight reconciliation can never re-enter the base.
 award_started_game_day="${current_game_day}"
+supervisor_begin_phase award
 run_award_only "final service phase" "award-final"
 award_completed_game_day="$(server_game_day_now)"
 [[ "${award_completed_game_day}" == "${award_started_game_day}" ]] ||
     die "Award-only final phase crossed the 04:00 game-day boundary"
+supervisor_record_phase award succeeded isolated-award-complete \
+    --detail "game_day=${award_completed_game_day}" \
+    --evidence-file "${award_evidence_log}" || true

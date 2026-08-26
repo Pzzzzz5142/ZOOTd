@@ -76,6 +76,14 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class SupervisorConfig:
+    enabled: bool
+    required_on_exception: bool
+    command: tuple[str, ...]
+    timeout_seconds: int
+
+
+@dataclass(frozen=True)
 class PlannerConfig:
     schema_version: int
     client_type: str
@@ -87,6 +95,7 @@ class PlannerConfig:
     policy: PolicyConfig
     sources: SourceConfig
     agent: AgentConfig
+    supervisor: SupervisorConfig
     blue_material_chains: dict[str, BlueMaterialChain]
     targets: dict[str, StockTarget]
 
@@ -324,6 +333,34 @@ def load_config(path: Path) -> PlannerConfig:
     if agent.enabled and not agent.command:
         raise ConfigError("agent.command is required when the agent is enabled")
 
+    supervisor_raw = _table(payload, "supervisor")
+    supervisor_enabled = supervisor_raw.get("enabled", False)
+    supervisor_required = supervisor_raw.get("required_on_exception", False)
+    supervisor_command = supervisor_raw.get("command", [])
+    if (
+        not isinstance(supervisor_enabled, bool)
+        or not isinstance(supervisor_required, bool)
+        or not isinstance(supervisor_command, list)
+        or not all(isinstance(x, str) and x for x in supervisor_command)
+    ):
+        raise ConfigError("supervisor enabled/required/command values have invalid types")
+    supervisor = SupervisorConfig(
+        enabled=supervisor_enabled,
+        required_on_exception=supervisor_required,
+        command=tuple(supervisor_command),
+        timeout_seconds=_integer(
+            supervisor_raw, "timeout_seconds", 90, minimum=1
+        ),
+    )
+    if supervisor.enabled and not supervisor.command:
+        raise ConfigError(
+            "supervisor.command is required when the supervisor is enabled"
+        )
+    if supervisor.required_on_exception and not supervisor.enabled:
+        raise ConfigError(
+            "supervisor.required_on_exception requires supervisor.enabled"
+        )
+
     targets_raw = payload.get("targets", [])
     if not isinstance(targets_raw, list):
         raise ConfigError("targets must be an array of tables")
@@ -362,6 +399,7 @@ def load_config(path: Path) -> PlannerConfig:
         policy=policy,
         sources=sources,
         agent=agent,
+        supervisor=supervisor,
         blue_material_chains=blue_material_chains,
         targets=targets,
     )

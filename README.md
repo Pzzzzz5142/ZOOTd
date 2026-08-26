@@ -26,6 +26,9 @@ flowchart LR
     D -->|NOOP| A[可选 LLM 诊断顾问]
     A --> R[只写审计建议<br/>不授予执行权限]
     E --> Q[本次 MaaCore 日志证明<br/>成功更新 / 异常隔离]
+    Q --> S[逐阶段确定性账本<br/>追加写入 + SHA-256 哈希链]
+    S -->|全部有强证据| Z[整轮成功<br/>不调用 LLM]
+    S -->|失败 / 降级 / 缺证据| L[只读 LLM 异常诊断<br/>整轮仍保持失败]
 ```
 
 各输入只承担单一职责：
@@ -38,6 +41,7 @@ flowchart LR
 | 本次 Depot 扫描 | 提供当前会话的库存观测；经典材料按确定性合成链换算蓝材料等价库存 | 未识别到的目标蓝材料是“未知”；下级材料缺失只是不计入，绝不虚构库存 |
 | 能力账本 | 保存三星成功审计和本活动实例中明确观测到的非三星隔离 | 不能替代客户端判断是否保存代理；缺少本地记录不是拒绝理由 |
 | LLM 顾问 | 诊断来源冲突、结构变化和可能的映射问题 | 不能把 `NOOP` 改成 `FIGHT`，不能登记代理能力 |
+| LLM 异常监督器 | 只在阶段失败、降级、缺失或 launcher 非零退出时读取整轮账本并给出诊断 | 不能把失败改成成功，不能自动重放 daily，不能放宽任何安全规则 |
 
 外部来源仅允许预设 HTTPS 域名。响应有大小限制、严格 JSON/结构校验、重复键和非有限数拒绝、请求体身份、SHA-256、条件请求与原子缓存；网络失败时只接受 freshness 范围内且哈希仍一致的缓存。官方公告和 MAA 的活动名称、起止时间必须同时匹配，且当前时刻必须确实位于两者窗口内。
 
@@ -46,8 +50,9 @@ flowchart LR
 - `bin/maa`：使用项目隔离目录的 maa-cli 入口。
 - `bin/maa-planner`：来源同步、库存解析、规划和能力账本 CLI。
 - `bin/maa-host`：统一宿主入口；`run` 转入完整启动器。
+- `bin/maa-codex-advisor` / `bin/maa-codex-supervisor`：分别承载规划 NOOP 诊断和整轮异常诊断；两者均为只读结构化 adapter。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
-- `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存及 LLM 顾问边界。
+- `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存、阶段账本及 LLM 权限边界。
 - `config/farming.toml`：活动、freshness、选关和库存目标策略。
 - `config/material-recipes.toml`：严格校验的经典 T1→T2→T3 合成链，只用于蓝材料等价库存计算，不执行合成。
 - `config/fight-decision.jq`：启动器对规划器 `FIGHT` JSON 的独立执行契约。
@@ -68,7 +73,7 @@ flowchart LR
 
 ## 测试策略
 
-仓库刻意只保留 8 条高层需求测试，而不为每个内部 helper 维护大量重复单元测试。它们覆盖：无人登录的 service 与任务边界、单进程 Depot 和单次来源刷新、来源和库存共同授权刷图、不安全输入 fail closed、剿灭可跨多轮且不阻塞普通刷图、只有本轮完整客户端证据才能改变能力状态、Depot/HTTP 缓存完整性、LLM 只读隔离，以及 Core＋资源整代原子更新、generation receipt 与回滚。前 7 条集中在 `tests/test_requirements.py`，更新事务场景位于 `tests/test_runtime_updater.py`。
+仓库刻意只保留 8 条高层需求测试，而不为每个内部 helper 维护大量重复单元测试。它们覆盖：无人登录的 service 与任务边界、单进程 Depot 和单次来源刷新、来源和库存共同授权刷图、不安全输入 fail closed、剿灭可跨多轮且不阻塞普通刷图、只有本轮完整客户端证据才能改变能力状态、Depot/HTTP 缓存完整性、LLM 只读/异常才调用/不能授权重放、阶段历史哈希链，以及 Core＋资源整代原子更新、generation receipt 与回滚。前 7 条集中在 `tests/test_requirements.py`，更新事务场景位于 `tests/test_runtime_updater.py`。
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
@@ -228,6 +233,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 8. 只有客户端 preflight 成功才执行真实 Fight；没有可用代理或普通执行失败时尝试下一候选，只有本次日志明确出现目标关非三星结果才隔离该活动实例的关卡。
 9. 所有活动候选均没有新鲜三星完成证明时，依次尝试 `AP-5`、`1-7`；只有本次 MaaCore 日志证明对应关卡三星完成才停止回退。这样 AP-5 的开放判断来自实际 MAA 导航，也能兼容临时资源本全开放。
 10. 无论前面的可选刷图是否成功，最后只运行独立的 `award-only`，领取普通任务奖励；它不能进入基建、公招、商店、邮件或战斗。
+11. runtime、设备、Depot、daily、来源、剿灭、刷图、Award 和 cleanup 各写一个终态事件。`succeeded`、有明确策略依据的 `policy-resolved` 与 `not-applicable` 才能形成绿色整轮；`degraded`、`failed`、缺阶段或非零退出都会在清理设备后触发一次 LLM 异常诊断，并保持 service 非零，绝不会把部分成功包装为成功。
 
 整轮编排只启动并持有一个 Waydroid 会话。各条 maa-cli 子命令复用同一个运行中的 Waydroid/ADB 设备；daily 和 award-only 都不负责关闭会话，启动器只在全部阶段结束或异常退出时统一清理一次。
 
@@ -315,6 +321,9 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 - `var/state/planner/launcher-<timestamp>.json`：启动器本次使用的决策。
 - `var/state/planner/decisions/`：按生成时间归档的历史决策。
 - `var/state/planner/latest-advisor-probe.json` 与 `advisor-probes/`：最近一次及历史 LLM 真实连通性探针；探针不启动 Waydroid 或游戏。
+- `var/state/supervisor/runs/<run-id>/events/`：每轮阶段终态、证据文件路径/大小/哈希、代码 Git HEAD 与工作树身份；事件只允许新增并由 `previous_event_sha256` 串成哈希链。
+- `var/state/supervisor/latest-run.json`：最近一轮索引；完整历史始终以对应 `runs/<run-id>` 目录为准。
+- `var/state/supervisor/latest-probe.json` 与 `probes/`：异常监督器的合成连通性探针，不启动 Waydroid、MAA 或游戏。
 - `var/state/runtime/maa-resource.json`：最近候选/当前 Core 版本、资源提交、组合选择、验证结果、generation fingerprint 及回滚原因。
 - `var/cache/planner/http/`：响应正文和带请求身份、ETag、时间及 SHA-256 的 metadata。
 - `var/state/host/*-pre-daily-depot.log`：07:30 在 daily 前取得、同时用于无人机和材料规划的本轮唯一 Depot 日志。
@@ -339,9 +348,14 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 ## LLM 诊断兜底
 
-活动更新、时间解析、双来源一致性、周剿灭排程与完成证明、库存、效率计算、选关、参数校验和代理能力判断全部是确定性 Python/Shell 程序，不需要 LLM 才能运行。当前配置已启用只读 Codex 顾问；禁用它只需把 `[agent].enabled` 改为 `false`。
+活动更新、时间解析、双来源一致性、周剿灭排程与完成证明、库存、效率计算、选关、参数校验、代理能力判断和每个阶段的成功条件全部是确定性 Python/Shell 程序。LLM 不在正常热路径中；脚本已经取得完整强证据时，本轮模型调用次数严格为零。
 
-LLM 仅是诊断旁路，不在执行授权路径中。只有确定性规划已经得到 `NOOP`，并且原因指向上游来源不可用、schema 变化、官方/MAA 活动冲突、MAA 导航或一图流关卡映射缺失时，顾问才会从 stdin 收到该决策和证据。没有活动、处于结束安全边界、库存不可用、目标已满足、客户端没有代理或本地隔离等预期业务结果不会调用 LLM。stdout 必须是一个受限 JSON：
+这里有两个彼此独立的只读入口：
+
+- `[agent]` 是规划器的局部顾问。只有确定性 `plan` 已得到 `NOOP`，并且原因指向上游来源不可用、schema 变化、官方/MAA 活动冲突、MAA 导航或一图流关卡映射缺失时才调用。它不能把 `NOOP` 改成 `FIGHT`。
+- `[supervisor]` 是 launcher 的整轮异常监督器。每轮先把预期阶段和 Git 版本写入不可覆盖的起始事件，随后只追加阶段终态。只有出现 `degraded`、`failed`、缺阶段或进程非零退出时，cleanup 才调用它一次；正常整轮不调用。`required_on_exception = true` 保证异常时模型没接通也不能得到绿色 service 状态。
+
+规划顾问 stdout 是受限 JSON：
 
 ```json
 {
@@ -360,18 +374,28 @@ LLM 仅是诊断旁路，不在执行授权路径中。只有确定性规划已�
 }
 ```
 
-`classification` 只能是 `stage_mapping`、`source_schema`、`source_conflict` 或 `unknown`；建议中的关卡必须来自确定性候选集。每次 `plan` 都会写入 `decision.evidence.agent`，用 `disabled`、`not_applicable`、`success`、`error` 或 `configuration_unavailable` 明确说明是否启用、是否符合调用条件、是否真的调用。成功结果另写入 `agent_advice`，失败详情写入 `agent_error`，两者都绝不改变本次 `NOOP`。
+`classification` 只能是 `stage_mapping`、`source_schema`、`source_conflict` 或 `unknown`；建议中的关卡必须来自确定性候选集。每次 `plan` 都会写入 `decision.evidence.agent`，明确说明是否符合调用条件、是否真的调用。成功建议和错误都只写审计，不改变本次 `NOOP`。
 
-需要区分“本次规划不适用 LLM”和“LLM 没有接通”时，运行显式探针：
+异常监督器收到的只是本轮阶段结果、有限 detail、证据文件的项目内相对路径/大小/SHA-256、哈希链头和硬安全规则，不会读取任意宿主文件。输出只能分类为 environment、runtime、configuration、upstream、game-state、evidence 或 unknown，并给出受影响阶段、证据引用和下一步建议。无论它输出什么，确定性的失败状态都不会被改写；代码也不会执行它建议的命令。尤其只要 daily 已经有终态事件，监督器就没有整轮重放授权；daily 自身仍只使用“尚未出现任何状态任务 marker”这一条确定性安全重试规则。
+
+需要分别验证两个 adapter 的真实连通性时，运行合成探针：
 
 ```bash
 ./bin/maa-host advisor-check
+./bin/maa-host supervisor-check
 jq . var/state/planner/latest-advisor-probe.json
+jq . var/state/supervisor/latest-probe.json
 ```
 
-探针只向已配置的 adapter 发送一个带 `game_action_authorized=false` 的合成来源故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。`doctor` 只检查 adapter、Codex 版本和本地登录态，不自动发起模型请求。`config/host.env` 用 `${HOME}/.local/bin/codex` 固定无人登录时的可执行文件解析，不依赖交互 shell 的 PATH。
+两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。`doctor` 只检查两个 adapter、Codex 版本和本地登录态，不自动发起模型请求。`config/host.env` 用 `${HOME}/.local/bin/codex` 固定无人登录时的可执行文件解析，不依赖交互 shell 的 PATH。
 
-随项目提供的 adapter 使用 Codex `exec` 的显式 stdin prompt、ephemeral session、只读 sandbox 和空临时工作区，关闭执行/浏览器/桌面/plugin/subagent 工具，并在返回后再次校验结构化 JSON；超时、非法输出或虚构关卡均按失败关闭。
+两个 adapter 共用同一套 Codex `exec` 边界：显式 stdin prompt、ephemeral session、JSON Schema 结构化输出、只读 sandbox 和空临时工作区，并关闭执行、浏览器、桌面、plugin 与 subagent 工具。返回后 Python 再验证 run id、阶段集合、候选关卡和字段上限；超时、非法输出或虚构对象均按失败关闭。
+
+## 修改与运行历史
+
+仓库在引入异常监督器前先建立了 `4baa479`（`chore: preserve validated automation baseline`）基线提交，完整保留此前已经通过真实 E2E 的实现。后续功能和修复使用新的普通 commit，不 amend、不 squash、不 rebase；用 `git log --oneline --decorate` 可以恢复代码演进。managed run 启动前要求 Git 工作树为 clean；未提交的代码修改会直接阻止无人值守任务，避免执行一个无法从历史恢复的版本。无人值守运行也不会让 LLM 自动改工作树，避免定时任务在没有验证和审阅时自我改写安全策略。
+
+代码历史与运行历史分开保存：Git 记录可执行代码和文档；`var/state/supervisor/runs/` 记录本地游戏运行证据，不提交可能含账号状态的日志。每个 run 起始事件固定当时的 Git HEAD、dirty 标志、status 哈希和 tracked diff 哈希；每个后续事件包含前一事件 SHA-256 且以 exclusive-create 写入，既不能覆盖旧阶段，也不能给同一阶段补写第二个“更好看”的终态。`latest-run.json` 只是可变索引，不是历史真相。
 
 ## systemd 定时托管
 
@@ -402,6 +426,8 @@ jq . var/state/planner/latest-advisor-probe.json
 同日的进程审计还发现，03:00/07:30 正式 service 在接触设备前分别启动 7 个 MaaCore dry-run，而代理 preflight 又为导航和画面确认各启动一次；daily 缺少完整证明时还可能在已经进入基建、公招或商店后整段重放。现在完整 Core 兼容验证只属于 06:30 更新事务，正式 service 和 `doctor` 使用持久化 generation receipt；代理两步合并为一个 Core 任务链；daily retry 则由“尚无任何状态任务标记”的日志证明门控。后续同一轮审计又移除了 Depot 前独立的 StartUp Core，并把最多三轮相同来源联网刷新收敛为一次。正常单活动关路径下，03:00 约为 5 次 MaaCore（daily、Depot、proxy-preflight、Fight、Award）；07:30 若另含一笔剿灭约为 6 次（再加 Annihilation）。额外进程只来自有证据门控的 daily 重试、逐笔剿灭或候选/常驻关回退。
 
 2026-08-27 的真实 headless 验收先运行 Award-only，日志只有 StartUp 与 Award。随后 runtime 更新拒绝了仍与 stable Core 不兼容的最新 MaaResource，并把兼容 live overlay、fresh API cache 和当前受管配置密封为 schema 3。完整流程恰好产生 Depot、daily、单笔 Annihilation、单进程 proxy-preflight、Fight、最终 Award 六份 MAA 日志：Depot 在一个 Core 内完成 StartUp 并读取 79 项库存；daily 有两次 Infrast、四间 Dorm、两次 Recruit、一次 Mall 和零次 Training；Core 对四间受保护 Dorm 实际记录了四个 `m_notstationed_filter_enabled: 1`、零个 `0`。来源只联网刷新一轮；剿灭缺少周进度强证据时保留 unknown 并继续普通刷关；AT-6 的客户端 PRTS preflight 和八连三星 Fight 成功；最终 Award 日志没有任何基建、公招、商店、Depot 或 Fight 标记。流程结束后 schema 3 receipt 仍通过校验。
+
+同日随后建立 Git 基线并加入异常驱动的 LLM 监督：正常强证据路径不请求模型；所有 launcher 阶段进入追加式哈希链，任一失败、降级、缺失或非零退出只在 cleanup 后请求一次只读诊断，并保持整轮失败。这样 LLM 接入可被真实探针证明，又不会让正常 daily 为九个阶段重复产生模型调用，也不会取得重跑 daily 或修改安全策略的权限。
 
 ```bash
 systemctl --user start maa-waydroid.service

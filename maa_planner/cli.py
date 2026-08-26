@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import stat
 import sys
 import time
@@ -56,6 +57,17 @@ from .runtime_receipt import (
     validate_runtime_receipt,
 )
 from .sources import SourceError
+from .supervisor import (
+    PHASE_RESULTS,
+    PHASES,
+    RUN_MODES,
+    SupervisorError,
+    describe_evidence_files,
+    finish_run,
+    record_phase,
+    run_diagnostic,
+    start_run,
+)
 from .util import (
     atomic_write_json,
     canonical_json,
@@ -402,6 +414,168 @@ def command_advisor_check(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     return return_code
+
+
+def _supervisor_probe_path(root: Path, payload: dict[str, object], now: datetime) -> Path:
+    stamp = now.astimezone(UTC).strftime("%Y%m%d-%H%M%S-%f")
+    archive = root / f"var/state/supervisor/probes/{stamp}.json"
+    latest = root / "var/state/supervisor/latest-probe.json"
+    atomic_write_json(archive, payload)
+    atomic_write_json(latest, payload)
+    return latest
+
+
+def command_supervisor_check(args: argparse.Namespace) -> int:
+    """Exercise the exception adapter without touching Waydroid or game state."""
+
+    root = Path(args.project_root).resolve()
+    now = parse_iso_datetime(args.now).astimezone(UTC) if args.now else utc_now()
+    run_id = f"{now.strftime('%Y%m%dT%H%M%S.%fZ')}-{secrets.token_hex(4)}"
+    evidence: dict[str, object] = {
+        "schema_version": 1,
+        "kind": "exception-diagnosis",
+        "run_id": run_id,
+        "process_status": 1,
+        "expected_phases": ["runtime-readiness"],
+        "missing_phases": ["runtime-readiness"],
+        "unacceptable_phases": [],
+        "start": {
+            "mode": "synthetic-probe",
+            "llm_policy": "exception-only",
+        },
+        "phase_results": [],
+        "chain_head_sha256": "0" * 64,
+        "hard_safety_rules": [
+            "synthetic probe cannot authorize or execute a game action"
+        ],
+    }
+    payload: dict[str, object] = {
+        "schema_version": 1,
+        "generated_at": isoformat(now),
+        "status": "configuration-error",
+        "run_id": run_id,
+        "invoked": False,
+        "authorization": "diagnostic-only",
+        "game_action_authorized": False,
+        "evidence_sha256": sha256_bytes(canonical_json(evidence)),
+    }
+    return_code = 1
+    try:
+        config = _config(root, args.config)
+        payload["enabled"] = config.supervisor.enabled
+        if not config.supervisor.enabled:
+            payload["status"] = "disabled"
+            payload["error"] = "the configured exception supervisor is disabled"
+        else:
+            payload["invoked"] = True
+            try:
+                diagnosis = run_diagnostic(
+                    config.supervisor.command,
+                    evidence,
+                    run_id=run_id,
+                    expected_phases=("runtime-readiness",),
+                    timeout_seconds=config.supervisor.timeout_seconds,
+                )
+            except SupervisorError as exc:
+                payload["status"] = "error"
+                payload["error"] = str(exc)
+            else:
+                payload["status"] = "success"
+                payload["diagnosis"] = diagnosis.as_dict()
+                return_code = 0
+    except ConfigError as exc:
+        payload["error"] = str(exc)
+
+    try:
+        path = _supervisor_probe_path(root, payload, now)
+    except OSError as exc:
+        print(f"cannot write supervisor probe: {exc}", file=sys.stderr)
+        return 1
+    if return_code == 0:
+        print(f"exception supervisor probe succeeded: {path}")
+    else:
+        print(
+            f"exception supervisor probe failed ({payload['status']}): {path}",
+            file=sys.stderr,
+        )
+    return return_code
+
+
+def command_supervisor_start(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    try:
+        config = _config(root, args.config)
+        if config.supervisor.required_on_exception and not config.supervisor.enabled:
+            raise SupervisorError("required exception supervisor is disabled")
+        run_id = start_run(root, args.mode)
+    except (ConfigError, OSError, SupervisorError) as exc:
+        print(f"cannot start phase supervisor: {exc}", file=sys.stderr)
+        return 1
+    print(run_id)
+    return 0
+
+
+def _phase_details(raw_values: Sequence[str]) -> dict[str, str]:
+    details: dict[str, str] = {}
+    for raw in raw_values:
+        if "=" not in raw:
+            raise SupervisorError("phase detail must use KEY=VALUE")
+        key, value = raw.split("=", 1)
+        if key in details:
+            raise SupervisorError(f"duplicate phase detail: {key}")
+        details[key] = value
+    return details
+
+
+def command_supervisor_phase(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    try:
+        path = record_phase(
+            root,
+            args.run_id,
+            phase=args.phase,
+            result=args.result,
+            outcome=args.outcome,
+            details=_phase_details(args.detail),
+            evidence_files=describe_evidence_files(root, args.evidence_file),
+        )
+    except (OSError, SupervisorError) as exc:
+        print(f"cannot record supervisor phase: {exc}", file=sys.stderr)
+        return 1
+    print(path)
+    return 0
+
+
+def command_supervisor_finish(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    try:
+        config = _config(root, args.config)
+        outcome = finish_run(
+            root,
+            args.run_id,
+            process_status=args.process_status,
+            supervisor_enabled=config.supervisor.enabled,
+            supervisor_required=config.supervisor.required_on_exception,
+            command=config.supervisor.command,
+            timeout_seconds=config.supervisor.timeout_seconds,
+        )
+    except (ConfigError, OSError, SupervisorError) as exc:
+        print(f"cannot finish phase supervisor: {exc}", file=sys.stderr)
+        return 1
+    if outcome.status == "success":
+        print(
+            f"all deterministic phases succeeded; LLM not needed: {outcome.event_path}"
+        )
+        return 0
+    if outcome.diagnosis is not None:
+        print(
+            f"run failed; LLM diagnosed {outcome.diagnosis.classification}: "
+            f"{outcome.diagnosis.summary}; audit: {outcome.event_path}",
+            file=sys.stderr,
+        )
+    else:
+        print(f"run failed; inspect supervisor audit: {outcome.event_path}", file=sys.stderr)
+    return 1
 
 
 def _run_sync(root: Path, config: PlannerConfig, *, offline: bool, skip_hot_update: bool) -> SourceBundle:
@@ -1129,6 +1303,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     advisor_check.add_argument("--now", help="override the audit clock with an ISO timestamp")
     advisor_check.set_defaults(func=command_advisor_check)
+
+    supervisor_check = subparsers.add_parser(
+        "supervisor-check",
+        help="run one synthetic exception through the read-only LLM supervisor",
+    )
+    supervisor_check.add_argument(
+        "--now", help="override the audit clock with an ISO timestamp"
+    )
+    supervisor_check.set_defaults(func=command_supervisor_check)
+
+    supervisor_start = subparsers.add_parser(
+        "supervisor-start", help="start an append-only launcher phase audit"
+    )
+    supervisor_start.add_argument("--mode", choices=tuple(RUN_MODES), required=True)
+    supervisor_start.set_defaults(func=command_supervisor_start)
+
+    supervisor_phase = subparsers.add_parser(
+        "supervisor-phase", help="append one terminal phase result to a launcher audit"
+    )
+    supervisor_phase.add_argument("--run-id", required=True)
+    supervisor_phase.add_argument("--phase", choices=PHASES, required=True)
+    supervisor_phase.add_argument(
+        "--result", choices=tuple(sorted(PHASE_RESULTS)), required=True
+    )
+    supervisor_phase.add_argument("--outcome", required=True)
+    supervisor_phase.add_argument("--detail", action="append", default=[])
+    supervisor_phase.add_argument("--evidence-file", action="append", default=[])
+    supervisor_phase.set_defaults(func=command_supervisor_phase)
+
+    supervisor_finish = subparsers.add_parser(
+        "supervisor-finish",
+        help="close a phase audit and diagnose only if deterministic checks failed",
+    )
+    supervisor_finish.add_argument("--run-id", required=True)
+    supervisor_finish.add_argument("--process-status", type=int, required=True)
+    supervisor_finish.set_defaults(func=command_supervisor_finish)
 
     validate = subparsers.add_parser("validate-config", help="validate planner configuration")
     validate.set_defaults(func=lambda args: command_validate(args))
