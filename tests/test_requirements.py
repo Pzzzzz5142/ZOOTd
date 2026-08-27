@@ -12,7 +12,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from maa_planner.annihilation import plan_annihilation
+from maa_planner.annihilation import (
+    game_week,
+    operator_annihilation_confirmation,
+    plan_annihilation,
+    valid_annihilation_state,
+)
 from maa_planner.capability import (
     CapabilityKey,
     CapabilityLedger,
@@ -629,14 +634,51 @@ class HighLevelRequirementTests(unittest.TestCase):
         complete = plan_annihilation(
             **base, state=weekly_state(1800, 1800, "complete")
         )
+        operator_state = operator_annihilation_confirmation(
+            now=now,
+            client="Official",
+            account="main",
+            expected_week_start_game_day="2026-08-24",
+            reason="operator verified the in-game weekly cap",
+            confirmation_id="b" * 32,
+        )
+        operator_complete = plan_annihilation(**base, state=operator_state)
         unstable = plan_annihilation(
             **base, state=weekly_state(365, 1800, "unstable", stars=2)
         )
         self.assertEqual(first["decision"], "RUN")
         self.assertEqual(partial["decision"], "RUN")
         self.assertEqual(complete["decision"], "COMPLETE")
+        self.assertEqual(operator_complete["decision"], "COMPLETE")
+        self.assertEqual(
+            operator_complete["reason"], "OPERATOR_WEEKLY_CAP_CONFIRMED"
+        )
         self.assertEqual(unstable["decision"], "BLOCKED")
         self.assertTrue(jq_accepts(ROOT / "config/annihilation-decision.jq", first))
+        self.assertTrue(
+            jq_accepts(
+                ROOT / "config/annihilation-decision.jq", operator_complete
+            )
+        )
+        self.assertIsNotNone(
+            valid_annihilation_state(
+                operator_state,
+                client="Official",
+                account="main",
+                week=game_week(now),
+            )
+        )
+
+        tampered_operator_state = copy.deepcopy(operator_state)
+        tampered_operator_state["evidence"]["source"] = "maa-annihilation-log"
+        self.assertIsNone(
+            valid_annihilation_state(
+                tampered_operator_state,
+                client="Official",
+                account="main",
+                week=game_week(now),
+            )
+        )
 
         unsafe = copy.deepcopy(first)
         unsafe["times_per_transaction"] = 2

@@ -32,13 +32,14 @@ and (.execution_budget_seconds | type == "number" and . == floor and . >= 60 and
 and .transaction_timeout_seconds == 1800
 and .authorization == "game-client-weekly-annihilation"
 and (if .decision == "COMPLETE" or .decision == "BLOCKED" or .decision == "MISSED" then
-        .reason == (if .decision == "COMPLETE" then
-                        "CLIENT_WEEKLY_CAP_RECORDED"
-                    elif .decision == "MISSED" then
-                        "INSUFFICIENT_WEEK_WINDOW"
-                    else
-                        "CLIENT_ANNIHILATION_PROXY_UNSTABLE"
-                    end)
+        (if .decision == "COMPLETE" then
+             (.reason == "CLIENT_WEEKLY_CAP_RECORDED"
+              or .reason == "OPERATOR_WEEKLY_CAP_CONFIRMED")
+         elif .decision == "MISSED" then
+             .reason == "INSUFFICIENT_WEEK_WINDOW"
+         else
+             .reason == "CLIENT_ANNIHILATION_PROXY_UNSTABLE"
+         end)
         and .due_at == null
         and .execute_before == null
      elif .decision == "RUN" then

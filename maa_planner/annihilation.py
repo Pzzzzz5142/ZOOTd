@@ -177,7 +177,60 @@ def valid_annihilation_state(
     account: str,
     week: GameWeek,
 ) -> Mapping[str, Any] | None:
-    if not isinstance(state, dict) or state.get("schema_version") != 1:
+    if not isinstance(state, dict):
+        return None
+
+    if state.get("schema_version") == 2:
+        if (
+            state.get("kind") != "annihilation-operator-confirmation"
+            or state.get("client") != client
+            or state.get("account") != account
+            or state.get("week_start_game_day") != week.key
+            or state.get("week_start") != isoformat(week.start)
+            or state.get("week_end") != isoformat(week.end)
+            or state.get("status") != "complete"
+            or "current" in state
+            or "total" in state
+            or "observed_at" in state
+        ):
+            return None
+        confirmed_at_raw = state.get("confirmed_at")
+        if state.get("completed_at") != confirmed_at_raw:
+            return None
+        try:
+            confirmed_at = parse_iso_datetime(confirmed_at_raw).astimezone(UTC)
+        except (TypeError, ValueError):
+            return None
+        if not week.start.astimezone(UTC) <= confirmed_at < week.end.astimezone(UTC):
+            return None
+        evidence = state.get("evidence")
+        if not isinstance(evidence, dict):
+            return None
+        reason = evidence.get("reason")
+        previous_state_sha256 = evidence.get("previous_state_sha256")
+        if (
+            evidence.get("source") != "operator-confirmation"
+            or evidence.get("assertion") != "weekly-annihilation-complete"
+            or evidence.get("actor") != "local-operator"
+            or not isinstance(reason, str)
+            or not reason
+            or reason != reason.strip()
+            or len(reason) > 512
+            or any(ord(character) < 32 for character in reason)
+            or not isinstance(evidence.get("confirmation_id"), str)
+            or re.fullmatch(r"[0-9a-f]{32}", evidence["confirmation_id"]) is None
+            or (
+                previous_state_sha256 is not None
+                and (
+                    not isinstance(previous_state_sha256, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", previous_state_sha256) is None
+                )
+            )
+        ):
+            return None
+        return state
+
+    if state.get("schema_version") != 1:
         return None
     if (
         state.get("client") != client
@@ -288,6 +341,83 @@ def valid_annihilation_state(
     return state
 
 
+def operator_annihilation_confirmation(
+    *,
+    now: datetime,
+    client: str,
+    account: str,
+    expected_week_start_game_day: str,
+    reason: str,
+    confirmation_id: str,
+    previous_state_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Build a week-scoped operator assertion without inventing client progress."""
+
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    if not isinstance(client, str) or not client or client != client.strip():
+        raise ValueError("client must be a non-empty trimmed string")
+    if not isinstance(account, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", account
+    ) is None:
+        raise ValueError("invalid account")
+    if not isinstance(expected_week_start_game_day, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}", expected_week_start_game_day
+    ) is None:
+        raise ValueError("invalid expected game-week key")
+    week = game_week(now)
+    if expected_week_start_game_day != week.key:
+        raise ValueError(
+            "operator confirmation is not for the current game week "
+            f"({expected_week_start_game_day} -> {week.key})"
+        )
+    if (
+        not isinstance(reason, str)
+        or not reason
+        or reason != reason.strip()
+        or len(reason) > 512
+        or any(ord(character) < 32 for character in reason)
+    ):
+        raise ValueError("reason must be a non-empty trimmed printable string")
+    if not isinstance(confirmation_id, str) or re.fullmatch(
+        r"[0-9a-f]{32}", confirmation_id
+    ) is None:
+        raise ValueError("confirmation_id must be 32 lowercase hexadecimal characters")
+    if previous_state_sha256 is not None and (
+        not isinstance(previous_state_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", previous_state_sha256) is None
+    ):
+        raise ValueError("previous_state_sha256 must be a SHA-256 digest")
+
+    confirmed_at = isoformat(now)
+    payload = {
+        "schema_version": 2,
+        "kind": "annihilation-operator-confirmation",
+        "client": client,
+        "account": account,
+        "week_start_game_day": week.key,
+        "week_start": isoformat(week.start),
+        "week_end": isoformat(week.end),
+        "status": "complete",
+        "confirmed_at": confirmed_at,
+        "completed_at": confirmed_at,
+        "evidence": {
+            "source": "operator-confirmation",
+            "assertion": "weekly-annihilation-complete",
+            "actor": "local-operator",
+            "reason": reason,
+            "confirmation_id": confirmation_id,
+            "previous_state_sha256": previous_state_sha256,
+        },
+    }
+    if (
+        valid_annihilation_state(payload, client=client, account=account, week=week)
+        is None
+    ):
+        raise ValueError("generated operator confirmation failed validation")
+    return payload
+
+
 def plan_annihilation(
     *,
     now: datetime,
@@ -354,10 +484,19 @@ def plan_annihilation(
     }
 
     if saved is not None and saved["status"] == "complete":
+        evidence = saved.get("evidence")
+        operator_confirmed = (
+            isinstance(evidence, Mapping)
+            and evidence.get("source") == "operator-confirmation"
+        )
         return {
             **base,
             "decision": "COMPLETE",
-            "reason": "CLIENT_WEEKLY_CAP_RECORDED",
+            "reason": (
+                "OPERATOR_WEEKLY_CAP_CONFIRMED"
+                if operator_confirmed
+                else "CLIENT_WEEKLY_CAP_RECORDED"
+            ),
             "due_at": None,
             "execute_before": None,
             "evidence": {

@@ -181,9 +181,9 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 3. 活动关卡覆盖整周时，计划时间固定为周一 07:30；周一错过或失败则下一次运行补做。
 4. 双来源缺失或冲突不会被伪装成“无活动”，而是走周一保守回退；旧周最后一小时会重新评估，但不足以容纳完整 30 分钟事务时绝不开战。
 
-执行时每个 `annihilation` task 只进行一次单倍事务，并使用 MAA 原生 `stage = "Annihilation"` 路径：先尝试 PRTS“全权委托”卡；没有卡时回退到已保存的普通代理并实际跑完整场，而不是把“无卡”当成失败或跳过剿灭。因此每笔始终预留完整 30 分钟，不能按有代理卡时的短耗时缩小预算。下一次事务会重新检查客户端状态，最多连续十次。一次体力不足以打满周奖励并不是异常：已结算的 `progress` 会跨 service 保留，本轮体力耗尽后停止，后续定时任务继续补；玩家手动打出的客户端进度也以随后读到的周计数为准。剿灭不吃普通药、不碎石，只允许使用两天内到期的理智药。规划决策同时签出绝对 `execute_before`：执行器在每笔事务前重查剩余时间，并为 30 秒强制清理预留余量，因此“无活动的两小时窗口”不会扩张成十笔各 30 分钟。每次结算从本轮新增 MaaCore 日志读取客户端 OCR 的 `annihilation_weekly_process = [current, total]`；只有同一 `uuid + taskid` 随后正常完成，且 `current >= total > 0`，才原子登记本周 `complete`。星级、命令退出 0 或本地自行累计次数都不能替代周上限证明。MaaCore 的星级 OCR 为 `0`（未知）时仍接受独立的周进度；明确为 `2` 时先记进度，再把本游戏周标记为 `BLOCKED`，后续运行不会继续撞不稳定代理。
+执行时每个 `annihilation` task 只进行一次单倍事务，并使用 MAA 原生 `stage = "Annihilation"` 路径：先尝试 PRTS“全权委托”卡；没有卡时回退到已保存的普通代理并实际跑完整场，而不是把“无卡”当成失败或跳过剿灭。因此每笔始终预留完整 30 分钟，不能按有代理卡时的短耗时缩小预算。下一次事务会重新检查客户端状态，最多连续十次。一次体力不足以打满周奖励并不是异常：已结算的 `progress` 会跨 service 保留，本轮体力耗尽后停止，后续定时任务继续补；玩家手动打出的客户端进度也以随后读到的周计数为准。剿灭不吃普通药、不碎石，只允许使用两天内到期的理智药。规划决策同时签出绝对 `execute_before`：执行器在每笔事务前重查剩余时间，并为 30 秒强制清理预留余量，因此“无活动的两小时窗口”不会扩张成十笔各 30 分钟。自动结算从本轮新增 MaaCore 日志读取客户端 OCR 的 `annihilation_weekly_process = [current, total]`；只有同一 `uuid + taskid` 随后正常完成，且 `current >= total > 0`，才原子登记客户端证明的本周 `complete`。星级、命令退出 0 或本地自行累计次数都不能替代周上限证明。MaaCore 的星级 OCR 为 `0`（未知）时仍接受独立的周进度；明确为 `2` 时先记进度，再把本游戏周标记为 `BLOCKED`，后续运行不会继续撞不稳定代理。
 
-若玩家已经手动打满，本地不一定能从随后消失的剿灭入口取得周进度证明；相同现象也可能来自导航或模板识别失败。启动器不会把两者混为一谈：只有客户端回报的周上限强证明才持久化 `complete`，没有证明就把周状态保留为未知并结束本轮剿灭阶段。无论是已确认满额、状态未知还是剿灭事务失败，剿灭都不是材料刷图的门禁，主流程会继续复用或取得本轮唯一的 Depot 快照，并进行材料规划与普通刷关；未知状态只会让后续定时任务再次检查。周状态按 `client + account + week_start_game_day` 隔离，跨周一 04:00 的事务拒绝落盘。MaaCore 日志游标绑定设备号、inode 与字节偏移，日志读取失败、轮转或缩短都不能回收旧证明。状态位于 `var/state/planner/annihilation.json`，整个排程和记账路径不调用 LLM。
+若玩家已经手动打满，本地不一定能从随后消失的剿灭 ToDo 入口取得周进度证明；相同现象也可能来自导航或模板识别失败。自动启动器不会把两者混为一谈：没有证明就把周状态保留为未知并结束本轮剿灭阶段。玩家核对游戏后可显式运行 `maa-planner confirm-annihilation-complete --week-start-game-day YYYY-MM-DD --reason <原因>`；该命令按 `client + account + week_start_game_day` 绑定，只接受当前游戏周，记录独立的 operator confirmation 而不伪造 `1800/1800` 客户端进度，并在 `annihilation-confirmations/` 留存审计副本。确认会随周界自然失效。无论是已确认满额、状态未知还是剿灭事务失败，剿灭都不是材料刷图的门禁，主流程会继续复用或取得本轮唯一的 Depot 快照，并进行材料规划与普通刷关。跨周一 04:00 的事务和人工确认都拒绝落盘。MaaCore 日志游标绑定设备号、inode 与字节偏移，日志读取失败、轮转或缩短都不能回收旧证明。当前周状态位于 `var/state/planner/annihilation.json`，整个排程和记账路径不调用 LLM。
 
 ## 客户端代理判定与不稳定隔离
 
@@ -299,6 +299,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 ./bin/maa-planner sync-calendar
 ./bin/maa-planner plan --offline
 ./bin/maa-planner plan-annihilation --offline
+./bin/maa-planner confirm-annihilation-complete --week-start-game-day 2026-08-24 --reason user-verified-in-game-weekly-cap
 ./bin/maa-planner capabilities
 ./bin/maa-planner quarantine --stage AT-8 --reason manual-investigation
 ```
@@ -315,7 +316,8 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 - `var/state/planner/latest-activity-calendar.json`：剿灭独立使用的 MAA＋鹰角活动日历及哈希证据，不依赖一图流。
 - `var/state/planner/inventory.json`：最近完整 Depot 快照。
 - `var/state/planner/capabilities.json`：账号、活动实例、关卡维度的三星审计和非三星隔离账本。
-- `var/state/planner/annihilation.json`：客户端观测到的本游戏周剿灭进度/满额证明。
+- `var/state/planner/annihilation.json`：客户端观测到的本游戏周进度/满额证明，或显式的当前周人工满额确认。
+- `var/state/planner/annihilation-confirmations/`：按周绑定的人工满额确认审计副本；不包含伪造的客户端进度。
 - `var/state/planner/latest-annihilation-decision.json` 与 `annihilation-decisions/`：当前及历史剿灭排程证据。
 - `var/state/planner/latest-decision.json`：手工规划的最近决策。
 - `var/state/planner/launcher-<timestamp>.json`：启动器本次使用的决策。

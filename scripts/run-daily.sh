@@ -818,9 +818,11 @@ run_weekly_annihilation_if_due() {
     fi
 
     # Annihilation is a best-effort side phase, never a gate for ordinary
-    # material farming. Only fresh client weekly-cap proof is persisted; an
-    # already-empty ToDo entry and a navigation/recognition failure are both
-    # unproven here, so either outcome stops this phase but not the main flow.
+    # material farming. Automated runs persist only fresh client weekly-cap
+    # proof. An explicit, week-scoped operator confirmation can separately
+    # close a week without inventing client progress. An already-empty ToDo
+    # entry and a navigation/recognition failure remain unproven here, so either
+    # outcome stops this phase but not the main flow.
     annihilation_phase_outcome=planning
     stamp="$(date '+%Y%m%d-%H%M%S-%N')"
     decision_file="${project_root}/var/state/planner/annihilation-launcher-${stamp}.json"
@@ -845,7 +847,11 @@ run_weekly_annihilation_if_due() {
     case "${decision}" in
         COMPLETE)
             annihilation_phase_outcome=weekly-cap-confirmed
-            info "weekly Annihilation already has fresh client weekly-cap proof"
+            if [[ "${reason}" == OPERATOR_WEEKLY_CAP_CONFIRMED ]]; then
+                info "weekly Annihilation is complete by explicit operator confirmation for this game week"
+            else
+                info "weekly Annihilation already has fresh client weekly-cap proof"
+            fi
             return 0
             ;;
         BLOCKED)
@@ -949,6 +955,7 @@ run_weekly_annihilation_if_due() {
             if [[ "${command_succeeded}" == true ]]; then
                 annihilation_phase_outcome=weekly-state-unknown
                 info "Annihilation returned without strong weekly-progress proof; it may already be complete, but this run will not guess or persist that state"
+                info "after verifying the in-game weekly cap, confirm it with: ${planner} confirm-annihilation-complete --week-start-game-day ${planned_week} --reason user-verified-in-game-weekly-cap"
             else
                 annihilation_phase_outcome=transaction-failed
                 info "Annihilation transaction failed without client weekly-progress proof; its weekly state remains unknown"

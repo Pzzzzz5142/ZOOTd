@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Sequence
 
 from .agent import AgentAdviceError, run_advisor
-from .annihilation import game_week, plan_annihilation, valid_annihilation_state
+from .annihilation import (
+    game_week,
+    operator_annihilation_confirmation,
+    plan_annihilation,
+    valid_annihilation_state,
+)
 from .capability import (
     CapabilityError,
     CapabilityKey,
@@ -1063,6 +1068,82 @@ def command_record_annihilation(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_confirm_annihilation_complete(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    now = parse_iso_datetime(args.now).astimezone(UTC) if args.now else utc_now()
+    destination = _annihilation_state_path(root)
+    try:
+        config = _config(root, args.config)
+        week = game_week(now)
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.week_start_game_day):
+            raise ValueError("invalid expected game-week key")
+        if args.week_start_game_day != week.key:
+            raise ValueError(
+                "operator confirmation is not for the current game week "
+                f"({args.week_start_game_day} -> {week.key})"
+            )
+
+        previous: object = None
+        previous_state_sha256: str | None = None
+        if destination.exists():
+            try:
+                previous = load_json(destination)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    "existing Annihilation state cannot be read; refusing to overwrite it"
+                ) from exc
+            valid_previous = valid_annihilation_state(
+                previous,
+                client=config.client_type,
+                account=config.account,
+                week=week,
+            )
+            if valid_previous is not None and valid_previous.get("status") == "complete":
+                print(json.dumps(valid_previous, ensure_ascii=False, sort_keys=True))
+                return 0
+            if valid_previous is None:
+                previous_week = (
+                    previous.get("week_start_game_day")
+                    if isinstance(previous, dict)
+                    else None
+                )
+                if (
+                    not isinstance(previous_week, str)
+                    or re.fullmatch(r"\d{4}-\d{2}-\d{2}", previous_week) is None
+                    or previous_week >= week.key
+                ):
+                    raise ValueError(
+                        "existing current/future Annihilation state is invalid; "
+                        "refusing to overwrite it"
+                    )
+            previous_state_sha256 = sha256_bytes(canonical_json(previous))
+
+        confirmation_id = secrets.token_hex(16)
+        payload = operator_annihilation_confirmation(
+            now=now,
+            client=config.client_type,
+            account=config.account,
+            expected_week_start_game_day=args.week_start_game_day,
+            reason=args.reason,
+            confirmation_id=confirmation_id,
+            previous_state_sha256=previous_state_sha256,
+        )
+        stamp = now.strftime("%Y%m%dT%H%M%S.%fZ")
+        archive = (
+            root
+            / "var/state/planner/annihilation-confirmations"
+            / f"{stamp}-{week.key}-{confirmation_id}.json"
+        )
+        atomic_write_json(archive, payload)
+        atomic_write_json(destination, payload)
+    except (OSError, ValueError, ConfigError) as exc:
+        print(f"cannot confirm Annihilation completion: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
 def command_plan(args: argparse.Namespace) -> int:
     root = Path(args.project_root).resolve()
     now = parse_iso_datetime(args.now).astimezone(UTC) if args.now else utc_now()
@@ -1293,6 +1374,15 @@ def build_parser() -> argparse.ArgumentParser:
     record_annihilation.add_argument("--now")
     record_annihilation.add_argument("--output")
     record_annihilation.set_defaults(func=command_record_annihilation)
+
+    confirm_annihilation = subparsers.add_parser(
+        "confirm-annihilation-complete",
+        help="record an explicit operator confirmation for the current game week",
+    )
+    confirm_annihilation.add_argument("--week-start-game-day", required=True)
+    confirm_annihilation.add_argument("--reason", required=True)
+    confirm_annihilation.add_argument("--now")
+    confirm_annihilation.set_defaults(func=command_confirm_annihilation_complete)
 
     capabilities = subparsers.add_parser("capabilities", help="show the account capability ledger")
     capabilities.set_defaults(func=command_capabilities)
