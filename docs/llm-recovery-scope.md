@@ -1,18 +1,21 @@
 # MAA unattended recovery scope
 
-Version: 1
+Version: 2
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
-controller independently checks the result. The shell is intentionally started
-with `danger-full-access`; this document defines what that capability may be
-used for.
+controller independently checks the result. The recovery process is
+intentionally started with `--dangerously-bypass-approvals-and-sandbox`: there
+is no Codex sandbox and no command approval gate. This document defines the
+operational mission and stopping conditions; it is not a technical sandbox.
 
 ## Mission and terminal conditions
 
 After a managed `full` launcher run fails, diagnose the real cause, repair it,
-and keep trying until one **new full launcher run** succeeds. A recovery is not
-complete merely because Waydroid starts, the game reaches its home screen, one
+and keep trying until one **new full launcher run** succeeds. Every managed
+stage is reentrant, including daily, so partial or completed earlier stages may
+be replayed as part of a new full run. A recovery is not complete merely
+because Waydroid starts, the game reaches its home screen, one
 MAA task succeeds, or a command returns zero.
 
 There are only three valid terminal states:
@@ -69,8 +72,6 @@ Return `scope-blocked` instead of crossing any of these boundaries:
   launcher policy;
 - clearing app data/cache, reinstalling the game, deleting user data, changing
   credentials, or bypassing authentication/security controls;
-- replaying the complete daily task after evidence shows that state-changing
-  daily work may already have run and the launcher cannot prove replay safety;
 - editing tracked source, Git history, task policy, the recovery scope, runtime
   receipts, or append-only audit events during unattended recovery;
 - persistent host DNS/firewall/routing/package changes, disabling security

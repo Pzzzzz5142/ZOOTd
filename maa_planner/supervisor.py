@@ -255,7 +255,7 @@ def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
         "expected_phases": list(expected),
         "repository": repository,
         "llm_policy": "exception-only",
-        "recovery_policy": "danger-full-access-scoped-v1",
+        "recovery_policy": "unsandboxed-scoped-v2",
     }
     event = _event_core(
         run_id=run_id,
@@ -529,7 +529,7 @@ def finish_run(
             "phase_results": [phases[phase] for phase in expected if phase in phases],
             "chain_head_sha256": events[-1]["event_sha256"],
             "hard_safety_rules": [
-                "never replay daily after any state-changing marker",
+                "all managed stages, including daily, are reentrant",
                 "never move training-room operators through Dorm automation",
                 "only six-star recruitment requires manual confirmation",
                 "normal medicine and Originite Prime remain disabled",
@@ -548,10 +548,6 @@ def finish_run(
             if problem_phases and not set(diagnosis.affected_phases) <= problem_phases:
                 raise SupervisorError(
                     "supervisor diagnosis named a phase outside the deterministic problem set"
-                )
-            if diagnosis.safe_to_retry_whole_run and "daily" in phases:
-                raise SupervisorError(
-                    "supervisor attempted to authorize a whole-run retry after daily"
                 )
         except SupervisorError as exc:
             llm_error = str(exc)

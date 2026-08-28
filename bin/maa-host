@@ -208,7 +208,7 @@ doctor() {
         failed=1
     fi
     if [[ -x "${recovery_adapter}" ]]; then
-        info "found danger-full-access recovery adapter: ${recovery_adapter}"
+        info "found unsandboxed recovery adapter: ${recovery_adapter}"
     else
         printf '[maa-host] recovery adapter is not executable: %s\n' \
             "${recovery_adapter}" >&2

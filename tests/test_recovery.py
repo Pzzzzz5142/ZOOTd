@@ -92,7 +92,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(final["payload"]["llm"]["status"], "recovery-pending")
         return run_id
 
-    def test_codex_recovery_keeps_shell_images_and_session_access(self) -> None:
+    def test_codex_recovery_is_unsandboxed_and_keeps_session_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             fake_codex = Path(directory) / "codex"
             fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -107,7 +107,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 1,
+                    "version": 2,
                 },
             }
             seen: dict[str, object] = {}
@@ -159,7 +159,9 @@ class RecoveryTests(unittest.TestCase):
             argv = seen["argv"]
             self.assertIsInstance(argv, list)
             assert isinstance(argv, list)
-            self.assertEqual(argv[argv.index("--sandbox") + 1], "danger-full-access")
+            self.assertIn("--dangerously-bypass-approvals-and-sandbox", argv)
+            self.assertNotIn("--sandbox", argv)
+            self.assertNotIn('approval_policy="never"', argv)
             disabled = {
                 argv[index + 1]
                 for index, value in enumerate(argv[:-1])
@@ -180,7 +182,10 @@ class RecoveryTests(unittest.TestCase):
             prompt = seen["prompt"]
             self.assertIsInstance(prompt, bytes)
             assert isinstance(prompt, bytes)
-            self.assertIn(b"danger-full-access", prompt)
+            self.assertIn(b"completely unsandboxed shell", prompt)
+            self.assertIn(
+                b"Every managed stage, including daily, is reentrant", prompt
+            )
             self.assertEqual(output["scope_blocker"], "manual-login")
 
             evidence["scope"]["sha256"] = "0" * 64
@@ -314,7 +319,7 @@ class RecoveryTests(unittest.TestCase):
                 final["controller_verification"]["status"], "scope-accepted"
             )
 
-    def test_stateful_daily_parent_is_blocked_before_agent_invocation(self) -> None:
+    def test_stateful_daily_parent_still_invokes_reentrant_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = self._repo(directory)
             now = START + timedelta(hours=2)
@@ -363,29 +368,57 @@ class RecoveryTests(unittest.TestCase):
             )
             invoked = False
 
-            def must_not_run(
+            def blocked_runner(
                 argv: tuple[str, ...], **kwargs: object
             ) -> subprocess.CompletedProcess[bytes]:
                 nonlocal invoked
                 invoked = True
-                return subprocess.CompletedProcess(argv, 1, b"", b"")
+                evidence = json.loads(kwargs["input"])
+                self.assertEqual(
+                    evidence["reentrancy_policy"],
+                    {
+                        "all_managed_stages": True,
+                        "daily": True,
+                        "whole_run_replay": True,
+                    },
+                )
+                output = {
+                    "schema_version": 1,
+                    "failed_run_id": failed_run_id,
+                    "status": "scope-blocked",
+                    "classification": "scope",
+                    "summary": "Interactive login is required after replay.",
+                    "actions_taken": [
+                        "Accepted daily as reentrant and inspected the login screen."
+                    ],
+                    "verification": {
+                        "command": evidence["retry_command"],
+                        "exit_status": None,
+                        "successful_run_id": None,
+                        "audit_path": None,
+                    },
+                    "scope_blocker": "manual-login",
+                }
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(output).encode(), b""
+                )
 
             outcome = recover_failed_run(
                 repo,
                 failed_run_id,
                 slot="post-reset",
-                command=("must-not-run",),
+                command=("fake-recovery",),
                 timeout_seconds=60,
-                runner=must_not_run,
+                runner=blocked_runner,
             )
-            self.assertFalse(invoked)
+            self.assertTrue(invoked)
             self.assertEqual(outcome.status, "scope-blocked")
-            self.assertEqual(outcome.scope_blocker, "unsafe-stateful-replay")
+            self.assertEqual(outcome.scope_blocker, "manual-login")
             final = load_run_events(repo, failed_run_id)[-1]["payload"]
-            self.assertFalse(final["agent"]["invoked"])
+            self.assertTrue(final["agent"]["invoked"])
             self.assertEqual(
-                final["controller_verification"]["scope_blocker"],
-                "unsafe-stateful-replay",
+                final["controller_verification"]["status"],
+                "scope-accepted",
             )
 
     def test_recovered_report_requires_controller_fields(self) -> None:

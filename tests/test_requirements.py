@@ -376,7 +376,10 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn(" supervisor-recover-run --run-id ", launcher)
         self.assertIn("--defer-to-recovery", launcher)
         recovery_scope = (ROOT / "docs/llm-recovery-scope.md").read_text()
-        self.assertIn("danger-full-access", recovery_scope)
+        self.assertIn(
+            "--dangerously-bypass-approvals-and-sandbox", recovery_scope
+        )
+        self.assertIn("is no Codex sandbox", recovery_scope)
         self.assertIn("正在获取更新", recovery_scope)
         self.assertIn("No saved proxy", recovery_scope)
 
@@ -426,8 +429,11 @@ class HighLevelRequirementTests(unittest.TestCase):
         daily_start = launcher.index("run_daily_routine() {")
         daily_end = launcher.index("\nannihilation_decision_is_safe() {", daily_start)
         daily_function = launcher[daily_start:daily_end]
-        self.assertIn('daily_log_is_safe_to_retry "${daily_log}"', daily_function)
-        self.assertIn("refusing to replay base, recruitment, or shop", daily_function)
+        self.assertNotIn("daily_log_is_safe_to_retry", launcher)
+        self.assertIn(
+            "daily is reentrant; retrying the complete managed stage once",
+            daily_function,
+        )
         self.assertEqual(daily_function.count('run "${MAA_HOST_TASK}"'), 2)
 
         reuse_start = launcher.index("ensure_farming_inventory_snapshot() {")
@@ -968,7 +974,9 @@ class HighLevelRequirementTests(unittest.TestCase):
                     },
                 ],
                 "chain_head_sha256": "0" * 64,
-                "hard_safety_rules": ["never replay a stateful daily"],
+                "hard_safety_rules": [
+                    "all managed stages, including daily, are reentrant"
+                ],
             }
 
             def supervisor_runner(
@@ -984,7 +992,7 @@ class HighLevelRequirementTests(unittest.TestCase):
                     "affected_phases": ["daily"],
                     "evidence_refs": ["phase_results[0]"],
                     "recommended_actions": ["Inspect the archived daily log."],
-                    "safe_to_retry_whole_run": False,
+                    "safe_to_retry_whole_run": True,
                 }
                 return subprocess.CompletedProcess(
                     argv, 0, json.dumps(output).encode(), b""
@@ -1013,7 +1021,7 @@ class HighLevelRequirementTests(unittest.TestCase):
             assert isinstance(supervisor_env, dict)
             self.assertNotIn("DISPLAY", supervisor_env)
             self.assertNotIn("MAA_SECRET", supervisor_env)
-            self.assertFalse(supervisor_result["safe_to_retry_whole_run"])
+            self.assertTrue(supervisor_result["safe_to_retry_whole_run"])
             self.assertNotIn("authorization", supervisor_result)
 
             successful_evidence = copy.deepcopy(supervisor_evidence)

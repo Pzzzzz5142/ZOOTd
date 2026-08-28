@@ -294,8 +294,8 @@ if [[ "${pre_reset_slot}" == true && "${post_reset_slot}" == true ]]; then
     die "--pre-reset-slot and --post-reset-slot are mutually exclusive"
 fi
 if [[ "${pre_reset_slot}" == true ]]; then
-    # Bound a stuck first attempt; retry remains allowed only before any
-    # state-changing daily phase has started.
+    # Bound a stuck first attempt so the reentrant retry still fits before the
+    # old-game-day cutoff.
     daily_attempt_timeout=22m
 fi
 
@@ -439,7 +439,7 @@ cleanup() {
             # them here does not end this cleanup process or its systemd unit.
             exec 8>&-
             exec 9>&-
-            info "starting scoped danger-full-access recovery for ${supervisor_run_id}"
+            info "starting scoped unsandboxed recovery for ${supervisor_run_id}"
             set +e
             "${planner}" supervisor-recover-run --run-id "${supervisor_run_id}" \
                 --slot "${recovery_slot}"
@@ -761,19 +761,6 @@ daily_log_is_complete() {
     done
 }
 
-daily_log_is_safe_to_retry() {
-    local log_file="$1"
-
-    # A retry is permitted only when the first process produced a readable log
-    # and no state-changing daily phase ever started. Once any base,
-    # recruitment, or shop marker exists, replaying the monolithic daily would
-    # repeat already-applied work and is therefore forbidden.
-    [[ -s "${log_file}" ]] || return 1
-    ! grep -Eq -- \
-        "(Infrast|Recruit|Mall) (Start|Completed|Error|Stopped)|EnterFacility " \
-        "${log_file}"
-}
-
 award_only_log_is_complete() {
     local log_file="$1"
 
@@ -823,13 +810,10 @@ run_daily_routine() {
        daily_log_is_complete "${daily_log}"; then
         info "daily first attempt has complete protected task-chain evidence"
     else
-        if ! daily_log_is_safe_to_retry "${daily_log}"; then
-            die "daily lost completion proof after stateful work started; refusing to replay base, recruitment, or shop; inspect ${daily_log}"
-        fi
         retry_log="${project_root}/var/state/host/${daily_stamp}-daily-retry.log"
         daily_evidence_log="${retry_log}"
         supervisor_active_evidence="${retry_log}"
-        info "daily stopped before any stateful phase; retrying once is safe"
+        info "daily is reentrant; retrying the complete managed stage once"
         info "MAA retry log: ${retry_log}"
         printf '%s\n' "${drone_input_index}" |
             run_with_timeout "${daily_attempt_timeout}" "${maa}" --log-file="${retry_log}" \

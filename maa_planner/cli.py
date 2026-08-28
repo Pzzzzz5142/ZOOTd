@@ -1502,7 +1502,7 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.set_defaults(func=command_validate_runtime_contracts)
     service = subparsers.add_parser(
         "validate-service-contracts",
-        help="validate daily-once and final Award-only task isolation",
+        help="validate managed daily and final Award-only task isolation",
     )
     service.set_defaults(func=command_validate_service_contracts)
     fingerprint = subparsers.add_parser(

@@ -46,7 +46,6 @@ _BLOCKERS = frozenset(
         "six-star-recruitment",
         "client-package-update",
         "unsupported-client",
-        "unsafe-stateful-replay",
         "proxy-unavailable",
         "stage-closed",
         "privileged-host-change",
@@ -57,10 +56,6 @@ _BLOCKERS = frozenset(
     }
 )
 _MAX_EXTERNAL_OUTPUT = 256 * 1024
-_MAX_DAILY_REPLAY_LOG_BYTES = 32 * 1024 * 1024
-_STATEFUL_DAILY_MARKER = re.compile(
-    rb"(Infrast|Recruit|Mall) (Start|Completed|Error|Stopped)|EnterFacility "
-)
 
 
 @dataclass(frozen=True)
@@ -325,68 +320,22 @@ def _incident_evidence(
         "scope": {
             "path": "docs/llm-recovery-scope.md",
             "sha256": sha256_bytes(scope_bytes),
-            "version": 1,
+            "version": 2,
         },
         "controller_repository": {
             "head": recovery_head,
             "dirty": False,
+        },
+        "reentrancy_policy": {
+            "all_managed_stages": True,
+            "daily": True,
+            "whole_run_replay": True,
         },
         "controller_success_requirement": (
             "A different full run must independently validate every expected phase, "
             "a zero process status, the recovery-start clean Git HEAD, and a successful final audit."
         ),
     }
-
-
-def _unsafe_replay_reason(
-    root: Path, events: Sequence[Mapping[str, Any]]
-) -> str | None:
-    daily_payloads = [
-        event.get("payload")
-        for event in events
-        if event.get("event_type") == "phase-finished"
-        and isinstance(event.get("payload"), dict)
-        and event["payload"].get("phase") == "daily"
-    ]
-    if not daily_payloads:
-        return None
-    if len(daily_payloads) != 1:
-        return "daily phase evidence is ambiguous"
-    daily = daily_payloads[0]
-    if daily.get("result") != "failed":
-        return "the failed parent already completed state-changing daily work"
-    descriptors = daily.get("evidence_files")
-    if not isinstance(descriptors, list) or not descriptors:
-        return "a failed daily phase has no immutable log proof that replay is safe"
-    for descriptor in descriptors:
-        if not isinstance(descriptor, dict):
-            return "a failed daily phase has invalid replay-safety evidence"
-        raw_path = descriptor.get("path")
-        size = descriptor.get("size")
-        digest = descriptor.get("sha256")
-        if (
-            not isinstance(raw_path, str)
-            or not isinstance(size, int)
-            or isinstance(size, bool)
-            or not isinstance(digest, str)
-            or size <= 0
-            or size > _MAX_DAILY_REPLAY_LOG_BYTES
-        ):
-            return "a failed daily phase has unusable replay-safety evidence"
-        source = root / raw_path
-        if source.is_symlink():
-            return "a failed daily phase log became a symlink"
-        try:
-            resolved = source.resolve(strict=True)
-            resolved.relative_to(root)
-            content = resolved.read_bytes()
-        except (OSError, ValueError):
-            return "a failed daily phase log is missing or outside the project"
-        if len(content) != size or sha256_bytes(content) != digest:
-            return "a failed daily phase log changed after its audit event"
-        if _STATEFUL_DAILY_MARKER.search(content):
-            return "state-changing Infrast, Recruit, Mall, or facility work already started"
-    return None
 
 
 def _run_adapter(
@@ -595,45 +544,16 @@ def recover_failed_run(
         failed_run_id,
         {
             "schema_version": 1,
-            "policy": "danger-full-access-scoped-v1",
+            "policy": "unsandboxed-scoped-v2",
             "slot": slot,
             "scope": evidence["scope"],
             "controller_repository": evidence["controller_repository"],
+            "reentrancy_policy": evidence["reentrancy_policy"],
             "retry_command": evidence["retry_command"],
             "timeout_seconds": timeout_seconds,
             "screenshot_paths": evidence["screenshot_paths"],
         },
     )
-
-    replay_blocker = _unsafe_replay_reason(root, events)
-    if replay_blocker is not None:
-        event_path = record_recovery_report(
-            root,
-            failed_run_id,
-            {
-                "schema_version": 1,
-                "status": "scope-blocked",
-                "policy": "danger-full-access-scoped-v1",
-                "scope": evidence["scope"],
-                "agent": {
-                    "invoked": False,
-                    "status": "not-invoked",
-                    "reason": replay_blocker,
-                },
-                "controller_verification": {
-                    "status": "blocked",
-                    "scope_blocker": "unsafe-stateful-replay",
-                    "reason": replay_blocker,
-                },
-            },
-        )
-        return RecoveryOutcome(
-            failed_run_id=failed_run_id,
-            status="scope-blocked",
-            event_path=event_path,
-            summary=replay_blocker,
-            scope_blocker="unsafe-stateful-replay",
-        )
 
     report: dict[str, Any] | None = None
     adapter_error: str | None = None
@@ -697,7 +617,7 @@ def recover_failed_run(
     audit_payload: dict[str, Any] = {
         "schema_version": 1,
         "status": overall_status,
-        "policy": "danger-full-access-scoped-v1",
+        "policy": "unsandboxed-scoped-v2",
         "scope": evidence["scope"],
         "agent": {
             "invoked": True,

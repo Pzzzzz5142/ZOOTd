@@ -1,6 +1,6 @@
 # MAA + Waydroid 自动托管与材料规划
 
-这是一个面向国服官服的 MAA Waydroid 启动器。每天 03:00 和 07:30 两个正式槽位都会各执行一次完整 daily 维护：活动规划、库存扫描或刷图失败只会跳过活动刷图，daily 仍会执行；daily 只有在日志明确证明基建、公招和商店均未开始时才允许重试，一旦任何状态任务开始就失败关闭，绝不整段重放。普通任务奖励从 daily 中隔离，并固定为整轮最后一个 MAA 阶段。
+这是一个面向国服官服的 MAA Waydroid 启动器。每天 03:00 和 07:30 两个正式槽位都会各执行一次完整 daily 维护。所有受管阶段（包括 daily）都可重入：单个 daily attempt 失败会直接重试一次，整轮失败则由恢复代理修复并重新执行完整链路。普通任务奖励从 daily 中隔离，并固定为整轮最后一个 MAA 阶段。
 
 默认还会扫描仓库，根据鹰角官方活动关卡时间、MAA 当前活动与导航能力、明日方舟一图流效率、库存目标以及本地不稳定代理隔离记录，输出确定性的 `FIGHT` 或 `NOOP`。游戏客户端始终是“该关是否保存代理作战”的 ground truth：本地状态未知时允许 MAA 尝试，只有本次日志明确出现非三星结果才会建立更高优先级的负面覆盖。活动关没有合格执行结果时，启动器再按 `AP-5`、`1-7` 顺序刷取。所有实际理智作战都允许使用 MaaCore 识别为两天内到期的药，普通药和源石仍禁用。
 
@@ -28,7 +28,9 @@ flowchart LR
     E --> Q[本次 MaaCore 日志证明<br/>成功更新 / 异常隔离]
     Q --> S[逐阶段确定性账本<br/>追加写入 + SHA-256 哈希链]
     S -->|全部有强证据| Z[整轮成功<br/>不调用 LLM]
-    S -->|失败 / 降级 / 缺证据| L[只读 LLM 异常诊断<br/>整轮仍保持失败]
+    S -->|失败 / 降级 / 缺证据| L[无 sandbox LLM 恢复<br/>诊断 / 修复 / 整轮重跑]
+    L -->|所有阶段可重入| S
+    L -->|明确 scope blocker| B[保留失败与恢复审计]
 ```
 
 各输入只承担单一职责：
@@ -41,7 +43,7 @@ flowchart LR
 | 本次 Depot 扫描 | 提供当前会话的库存观测；经典材料按确定性合成链换算蓝材料等价库存 | 未识别到的目标蓝材料是“未知”；下级材料缺失只是不计入，绝不虚构库存 |
 | 能力账本 | 保存三星成功审计和本活动实例中明确观测到的非三星隔离 | 不能替代客户端判断是否保存代理；缺少本地记录不是拒绝理由 |
 | LLM 顾问 | 诊断来源冲突、结构变化和可能的映射问题 | 不能把 `NOOP` 改成 `FIGHT`，不能登记代理能力 |
-| LLM 异常监督器 | 只在阶段失败、降级、缺失或 launcher 非零退出时读取整轮账本并给出诊断 | 不能把失败改成成功，不能自动重放 daily，不能放宽任何安全规则 |
+| LLM 恢复代理 | 只在阶段失败、降级、缺失或 launcher 非零退出时启动；可诊断、修复并重跑全部可重入阶段 | 不能伪造成功、修改 tracked policy/审计，或跨越 scope blocker |
 
 外部来源仅允许预设 HTTPS 域名。响应有大小限制、严格 JSON/结构校验、重复键和非有限数拒绝、请求体身份、SHA-256、条件请求与原子缓存；网络失败时只接受 freshness 范围内且哈希仍一致的缓存。官方公告和 MAA 的活动名称、起止时间必须同时匹配，且当前时刻必须确实位于两者窗口内。
 
@@ -50,7 +52,8 @@ flowchart LR
 - `bin/maa`：使用项目隔离目录的 maa-cli 入口。
 - `bin/maa-planner`：来源同步、库存解析、规划和能力账本 CLI。
 - `bin/maa-host`：统一宿主入口；`run` 转入完整启动器。
-- `bin/maa-codex-advisor` / `bin/maa-codex-supervisor`：分别承载规划 NOOP 诊断和整轮异常诊断；两者均为只读结构化 adapter。
+- `bin/maa-codex-advisor` / `bin/maa-codex-supervisor`：分别承载规划 NOOP 诊断和非完整模式异常分类；两者均为只读结构化 adapter。
+- `bin/maa-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
 - `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存、阶段账本及 LLM 权限边界。
 - `config/farming.toml`：活动、freshness、选关和库存目标策略。
@@ -62,7 +65,7 @@ flowchart LR
 - `config/tasks/annihilation.toml`：每次只执行一笔、随后核对客户端周进度的剿灭事务。
 - `config/tasks/depot.toml`：把原生 StartUp 与当次仓库扫描合在同一个 MaaCore 任务链中。
 - `config/tasks/proxy-preflight.toml`：在同一个 MaaCore 任务链中先以零次 Fight 导航，再只读识别当前关卡是否已勾选代理作战。
-- `config/tasks/daily.toml`：每轮只执行一次的基建、公招和信用商店维护；基建拆成普通设施换班和受保护宿舍恢复两个原生 Infrast 阶段；公招先以 09:00 自动确认普通 3–5 星并保护 `支援机械`，随后用独立的原生 Recruit 阶段以 03:50 自动确认小车；若同槽有保证 4/5 星则仍优先高星，只有 6 星留给人工确认；不会在中途关闭启动器持有的 Waydroid 会话。
+- `config/tasks/daily.toml`：可重入的基建、公招和信用商店维护；基建拆成普通设施换班和受保护宿舍恢复两个原生 Infrast 阶段；公招先以 09:00 自动确认普通 3–5 星并保护 `支援机械`，随后用独立的原生 Recruit 阶段以 03:50 自动确认小车；若同槽有保证 4/5 星则仍优先高星，只有 6 星留给人工确认；不会在中途关闭启动器持有的 Waydroid 会话。
 - `config/infrast/protected-dorm.json`：四间宿舍的官方自定义排班；没有任何具名干员，只允许从游戏“未进驻”筛选结果自动补位。
 - `config/tasks/award-only.toml`：固定放在整轮最后的普通任务奖励领取；同时供轻量 E2E 复用，不进入基建、公招、商店、邮件或战斗。
 - `config/profiles/waydroid.toml`：Waydroid 连接配置。
@@ -73,7 +76,7 @@ flowchart LR
 
 ## 测试策略
 
-仓库刻意只保留 8 条高层需求测试，而不为每个内部 helper 维护大量重复单元测试。它们覆盖：无人登录的 service 与任务边界、单进程 Depot 和单次来源刷新、来源和库存共同授权刷图、不安全输入 fail closed、剿灭可跨多轮且不阻塞普通刷图、只有本轮完整客户端证据才能改变能力状态、Depot/HTTP 缓存完整性、LLM 只读/异常才调用/不能授权重放、阶段历史哈希链，以及 Core＋资源整代原子更新、generation receipt 与回滚。前 7 条集中在 `tests/test_requirements.py`，更新事务场景位于 `tests/test_runtime_updater.py`。
+当前 13 项测试覆盖：无人登录的 service 与任务边界、单进程 Depot 和单次来源刷新、来源和库存共同授权刷图、不安全输入 fail closed、剿灭与能力账本、Depot/HTTP 缓存完整性、只读顾问、无 sandbox 恢复命令、所有阶段可重入、scope blocker、独立整轮成功校验、阶段历史哈希链，以及 Core＋资源整代原子更新、generation receipt 与回滚。
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
@@ -225,7 +228,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 
 1. 用一次纯本地检查核对静态安全契约和 06:30 更新器写入的 runtime generation receipt；不会启动 MaaCore。receipt 与 live Core、资源、API cache 或受管任务配置不一致时整轮失败关闭。
 2. 07:30 槽用一个原生 `startup = true` 的 MAA task 同时启动游戏并执行本轮唯一的只读 Depot 扫描，以赤金 `150` 阈值确定本轮无人机目标；不再为 Depot 单独启动一个 StartUp Core。03:00 保护槽跳过这个前置步骤并禁用无人机，优先把时间留给旧游戏日。
-3. 两个槽都运行同一份完整 daily（基建、普通公招、小车公招、信用商店）；只有首次日志非空且完全没有状态任务标记时才重试。任一 `Infrast`、`Recruit`、`Mall` 或设施进入标记出现后都禁止重放。
+3. 两个槽都运行同一份完整 daily（基建、普通公招、小车公招、信用商店）；daily 可重入，首次 attempt 未形成完整证明时直接重试一次，不受已有状态 marker 限制。
 4. 每轮只联网刷新一次规划来源：03:00 只刷新剿灭和活动共同依赖的鹰角公告＋MAA 活动日历，并复用上一轮仍新鲜的一图流缓存；07:30 刷新完整来源。live MAA 资源仍只由独立的受控更新器写入。
 5. 用本轮缓存离线计算本周剿灭窗口；到期时按单次代理事务执行，逐次读取客户端周进度，满额才登记完成。来源刷新失败不会在这个阶段再次轰炸同一端点。
 6. 材料规划复用本轮已有的 Depot 快照；03:00 槽才在此执行本轮唯一一次扫描。已尝试但失败的 Depot 不会在同一轮重复；决策同样只离线校验并复用第 4 步缓存，不做第二轮网络刷新。
@@ -233,7 +236,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 8. 只有客户端 preflight 成功才执行真实 Fight；没有可用代理或普通执行失败时尝试下一候选，只有本次日志明确出现目标关非三星结果才隔离该活动实例的关卡。
 9. 所有活动候选均没有新鲜三星完成证明时，依次尝试 `AP-5`、`1-7`；只有本次 MaaCore 日志证明对应关卡三星完成才停止回退。这样 AP-5 的开放判断来自实际 MAA 导航，也能兼容临时资源本全开放。
 10. 无论前面的可选刷图是否成功，最后只运行独立的 `award-only`，领取普通任务奖励；它不能进入基建、公招、商店、邮件或战斗。
-11. runtime、设备、Depot、daily、来源、剿灭、刷图、Award 和 cleanup 各写一个终态事件。`succeeded`、有明确策略依据的 `policy-resolved` 与 `not-applicable` 才能形成绿色整轮；`degraded`、`failed`、缺阶段或非零退出都会在清理设备后触发一次 LLM 异常诊断，并保持 service 非零，绝不会把部分成功包装为成功。
+11. runtime、设备、Depot、daily、来源、剿灭、刷图、Award 和 cleanup 各写一个终态事件。`degraded`、`failed`、缺阶段或非零退出都会在清理设备后触发无 sandbox LLM 恢复；只有 controller 验证另一轮完整 run 全部 accepted 后，外层 service 才能转绿。
 
 整轮编排只启动并持有一个 Waydroid 会话。各条 maa-cli 子命令复用同一个运行中的 Waydroid/ADB 设备；daily 和 award-only 都不负责关闭会话，启动器只在全部阶段结束或异常退出时统一清理一次。
 
@@ -356,7 +359,7 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 - `[agent]` 是规划器的局部顾问。只有确定性 `plan` 已得到 `NOOP`，并且原因指向上游来源不可用、schema 变化、官方/MAA 活动冲突、MAA 导航或一图流关卡映射缺失时才调用。它不能把 `NOOP` 改成 `FIGHT`。
 - `[supervisor]` 维护 launcher 的整轮确定性账本。每轮先把预期阶段和 Git 版本写入不可覆盖的起始事件，随后只追加阶段终态。非完整模式和合成探针仍可调用原来的只读分类器。
-- `[supervisor].recovery_*` 是完整 run 失败后的操作型恢复代理。cleanup 先写死失败终态并释放运行锁，再启动一次 `codex exec --sandbox danger-full-access`。它能用 shell/网络直接检查 DNS、Waydroid、ADB、游戏 UI、ANR、journal 和日志，点安全弹窗、等待/重启、修复后反复执行新的完整 launcher。正常整轮仍然零模型调用。
+- `[supervisor].recovery_*` 是完整 run 失败后的操作型恢复代理。cleanup 先写死失败终态并释放运行锁，再通过 `--dangerously-bypass-approvals-and-sandbox` 启动一次完全无 sandbox、无命令审批的 Codex。它能用 shell/网络直接检查 DNS、Waydroid、ADB、游戏 UI、ANR、journal 和日志，点安全弹窗、等待/重启、修复后反复执行新的完整 launcher。正常整轮仍然零模型调用。
 
 规划顾问 stdout 是受限 JSON：
 
@@ -381,7 +384,9 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 操作型恢复的目标不是“给建议”，而是“得到一轮新的完整成功”。原失败 run 永远保留 `failed`；恢复前后追加 `recovery-started` 和 `recovery-finished`，新 run 另建哈希链。即使模型声称已经修好，Python controller 仍会重新读取 `latest-run.json` 和完整事件链，要求新 run id、`full` 模式、恢复开始时记录的 clean Git HEAD、所有预期阶段均为 accepted、进程状态 0、最终事件 `success`，否则 service 不能转绿。子 run 继承 `MAA_RECOVERY_ACTIVE=true`，因此不会递归创建另一个恢复代理；同一个恢复会话继续查看新证据并重试。
 
-`danger-full-access` 是真实能力边界：模型生成的 shell 在当前用户权限下没有文件系统 sandbox，并可联网；它不会凭空获得 root，但已经存在的 `sudo -n` 能力可用于有证据、可回滚的临时网络修复。允许动作和停止条件由版本化的 [恢复 scope 与 FAQ](docs/llm-recovery-scope.md) 定义，其中明确覆盖“正在获取更新”、游戏 ANR、DNS/CDN 差异、点 `Wait`、重启 Waydroid，以及临时网络变更的恢复。它禁止无人值守登录/验证码/六星公招确认、清空游戏数据、购买、绕过认证、持久宿主网络策略改动和运行时修改 Git/审计。
+恢复 Codex 没有 sandbox：模型生成的 shell 在当前用户权限下可直接访问文件系统和网络，也不会遇到 Codex 命令审批；它不会凭空获得 root，但已经存在的 `sudo -n` 能力可用于有证据、可回滚的临时网络修复。允许动作和停止条件由版本化的 [恢复 scope 与 FAQ](docs/llm-recovery-scope.md) 定义，其中明确覆盖“正在获取更新”、游戏 ANR、DNS/CDN 差异、点 `Wait`、重启 Waydroid，以及临时网络变更的恢复。它禁止无人值守登录/验证码/六星公招确认、清空游戏数据、购买、绕过认证、持久宿主网络策略改动和运行时修改 Git/审计。
+
+所有受管阶段都按可重入处理，包括 daily：无论父 run 已进入或完成基建、公招、商店，恢复代理都可重新执行一轮完整 launcher；`unsafe-stateful-replay` 不再是 blocker。每个 agent 内部子 run 失败后仍由同一恢复会话继续分析和整轮重试。
 
 没有代理作战或关卡未开放属于局部游戏状态：自动模式应跳过该候选并尝试下一候选/常驻回退；用户明确指定的唯一关卡不可用，或所有合规候选/回退都不可用时，才允许以 `proxy-unavailable` 或 `stage-closed` scope blocker 结束。游戏内资源下载则仍属恢复范围，不等同于需要人工商店操作的 APK 更新。
 
@@ -396,7 +401,7 @@ jq . var/state/supervisor/latest-probe.json
 
 两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。恢复 adapter 不提供会触碰真实游戏的合成探针；可用 `./bin/maa-host recover RUN_ID post-reset` 显式恢复一个尚未尝试恢复的失败 full run。`doctor` 只检查三个 adapter、Codex 版本和本地登录态，不自动发起模型请求。`config/host.env` 用 `${HOME}/.local/bin/codex` 固定无人登录时的可执行文件解析，不依赖交互 shell 的 PATH。
 
-三个 adapter 都使用显式 stdin prompt、ephemeral session 和 JSON Schema 结构化输出。顾问/分类器继续使用空临时工作区、只读 sandbox，并关闭执行工具；恢复代理则在项目根目录启用 unrestricted shell、图片输入和 `danger-full-access`，但关闭无关 connector/plugin/subagent。默认恢复预算为六小时，仍受 service 的十小时总预算约束。返回后 Python 二次验证所有字段；超时、非法输出、虚构成功或 Git 工作树变化均按失败关闭。该脚本化非交互模式基于 [Codex exec 官方说明](https://learn.chatgpt.com/docs/developer-commands#codex-exec)。
+三个 adapter 都使用显式 stdin prompt、ephemeral session 和 JSON Schema 结构化输出。顾问/分类器继续使用空临时工作区、只读 sandbox，并关闭执行工具；恢复代理则在项目根目录启用图片输入和完全 unsandboxed shell，但关闭无关 connector/plugin/subagent。默认恢复预算为六小时，仍受 service 的十小时总预算约束。返回后 Python 二次验证所有字段；超时、非法输出、虚构成功或 Git 工作树变化均按失败关闭。OpenAI Docs 将该 bypass 开关定义为“无审批、无 sandbox”，并提示只应在外部加固环境使用；这里是 operator 明确选择，实际停止条件来自本仓库 scope，而不是 Codex sandbox。[Codex exec 官方说明](https://learn.chatgpt.com/docs/developer-commands#codex-exec)
 
 ## 修改与运行历史
 
@@ -424,13 +429,13 @@ jq . var/state/supervisor/latest-probe.json
 
 2026-08-25 的 07:30 timer 实际准时触发，但当时尚未登录 Hyprland，旧启动器因缺少 `WAYLAND_DISPLAY` 在五秒内退出。现在 service 不再依赖 `graphical-session.target`，上述 `auto` surface 契约覆盖这一场景。
 
-同日的完整链路验证还暴露了旧编排会在尝试 Fight 后把“奖励对账”实现为第二次完整 daily，因而重复进入基建。现在 `Award` 已从 `daily.toml` 拆到唯一的 `award-only.toml`：每个 service 只运行一次 daily，最后无条件运行一次 Award-only；静态契约拒绝把 Award 放回 daily，跨 04:00 时也失败关闭而不重复基建。
+同日的完整链路验证还暴露了旧编排会在尝试 Fight 后把“奖励对账”实现为第二次完整 daily，因而重复进入基建。现在 `Award` 已从 `daily.toml` 拆到唯一的 `award-only.toml`：正常成功路径只运行一次 daily，只有失败恢复才按可重入契约重试；最后无条件运行一次 Award-only。静态契约拒绝把 Award 放回 daily。
 
 同日 20:36，maa-cli 的逐任务热更新把 live 资源推进到一个重写基建效率格式的新提交，而已安装稳定 MaaCore 无法解析其中的 `infrast.json`。该提交现已在隔离 dry-run 中稳定复现并被拒绝，live 保留前一份兼容资源。上述候选提升机制和静态测试防止以后再次由普通 service 吞入未经验证的资源。
 
 2026-08-26 的 03:00 与 07:30 日志证明 MAA 都没有进入训练室，但四间宿舍运行时 `m_notstationed_filter_enabled` 均为 `0`；宿舍因此能选中仍进驻训练室的干员。根因是旧配置把 `dorm_notstationed_enabled` 设为 `false`，以及文档错误地把“Training 不在 facility 白名单”当成了人员不会被跨设施改派。现在默认宿舍流程已被移出普通设施任务，改由上述未进驻-only 自定义宿舍阶段处理；静态契约与完成日志计数共同防止该假设再次回归。
 
-同日的进程审计还发现，03:00/07:30 正式 service 在接触设备前分别启动 7 个 MaaCore dry-run，而代理 preflight 又为导航和画面确认各启动一次；daily 缺少完整证明时还可能在已经进入基建、公招或商店后整段重放。现在完整 Core 兼容验证只属于 06:30 更新事务，正式 service 和 `doctor` 使用持久化 generation receipt；代理两步合并为一个 Core 任务链；daily retry 则由“尚无任何状态任务标记”的日志证明门控。后续同一轮审计又移除了 Depot 前独立的 StartUp Core，并把最多三轮相同来源联网刷新收敛为一次。正常单活动关路径下，03:00 约为 5 次 MaaCore（daily、Depot、proxy-preflight、Fight、Award）；07:30 若另含一笔剿灭约为 6 次（再加 Annihilation）。额外进程只来自有证据门控的 daily 重试、逐笔剿灭或候选/常驻关回退。
+同日的进程审计还发现，03:00/07:30 正式 service 在接触设备前分别启动 7 个 MaaCore dry-run，而代理 preflight 又为导航和画面确认各启动一次。现在完整 Core 兼容验证只属于 06:30 更新事务，正式 service 和 `doctor` 使用持久化 generation receipt；代理两步合并为一个 Core 任务链；在 operator 明确所有阶段可重入后，daily 允许一次直接重试，恢复代理也允许反复重跑完整链路。后续同一轮审计又移除了 Depot 前独立的 StartUp Core，并把最多三轮相同来源联网刷新收敛为一次。正常单活动关路径下，03:00 约为 5 次 MaaCore（daily、Depot、proxy-preflight、Fight、Award）；07:30 若另含一笔剿灭约为 6 次（再加 Annihilation）。额外进程只来自 daily 重试、逐笔剿灭、候选/常驻关回退或异常恢复。
 
 2026-08-27 的真实 headless 验收先运行 Award-only，日志只有 StartUp 与 Award。随后 runtime 更新拒绝了仍与 stable Core 不兼容的最新 MaaResource，并把兼容 live overlay、fresh API cache 和当前受管配置密封为 schema 3。完整流程恰好产生 Depot、daily、单笔 Annihilation、单进程 proxy-preflight、Fight、最终 Award 六份 MAA 日志：Depot 在一个 Core 内完成 StartUp 并读取 79 项库存；daily 有两次 Infrast、四间 Dorm、两次 Recruit、一次 Mall 和零次 Training；Core 对四间受保护 Dorm 实际记录了四个 `m_notstationed_filter_enabled: 1`、零个 `0`。来源只联网刷新一轮；剿灭缺少周进度强证据时保留 unknown 并继续普通刷关；AT-6 的客户端 PRTS preflight 和八连三星 Fight 成功；最终 Award 日志没有任何基建、公招、商店、Depot 或 Fight 标记。流程结束后 schema 3 receipt 仍通过校验。
 
