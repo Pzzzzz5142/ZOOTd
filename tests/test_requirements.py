@@ -47,6 +47,7 @@ from maa_planner.models import (
 )
 from maa_planner.policy import select_farming_plan
 from maa_planner.runtime_contracts import validate_runtime_contracts
+from maa_planner.runtime_task import RuntimeTaskError, render_runtime_task
 from maa_planner.sources import (
     HttpCache,
     SourceError,
@@ -332,6 +333,7 @@ class HighLevelRequirementTests(unittest.TestCase):
             ["Mfg", "Trade", "Control", "Power", "Reception", "Office"],
         )
         self.assertTrue(shift_infrast["dorm_notstationed_enabled"])
+        self.assertEqual(shift_infrast["drones"], "_NotUse")
         self.assertEqual(dorm_infrast["mode"], 10000)
         self.assertEqual(dorm_infrast["facility"], ["Dorm"])
         self.assertTrue(dorm_infrast["dorm_notstationed_enabled"])
@@ -397,6 +399,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         self.assertEqual(proxy["tasks"][0]["params"]["times"], 0)
         self.assertEqual(proxy["tasks"][0]["params"]["series"], -1)
+        self.assertEqual(proxy["tasks"][0]["params"]["stage"], "1-7")
         self.assertEqual(
             proxy["tasks"][1]["params"]["task_names"],
             ["UsePrtsSuccessCheck"],
@@ -406,6 +409,8 @@ class HighLevelRequirementTests(unittest.TestCase):
         proxy_function = launcher[proxy_start:proxy_end]
         self.assertEqual(proxy_function.count('run proxy-preflight'), 1)
         self.assertEqual(proxy_function.count('"${maa}"'), 1)
+        self.assertIn('render_runtime_task proxy-preflight "${stage_code}"', proxy_function)
+        self.assertNotIn("printf '%s\\n'", proxy_function)
 
         activity_start = launcher.index("run_planned_activity_candidates() {")
         activity_end = launcher.index(
@@ -441,6 +446,17 @@ class HighLevelRequirementTests(unittest.TestCase):
             daily_function,
         )
         self.assertEqual(daily_function.count('run "${MAA_HOST_TASK}"'), 2)
+        self.assertIn('render_runtime_task daily "${drone_mode}"', daily_function)
+        self.assertNotIn("drone_input_index", launcher)
+        self.assertNotIn("[tasks.params.drones]", (ROOT / "config/tasks/daily.toml").read_text())
+
+        for task_name in ("proxy-preflight", "sanity-fight", "verify-fight"):
+            task_text = (ROOT / f"config/tasks/{task_name}.toml").read_text()
+            self.assertNotIn("[tasks.params.stage]", task_text)
+            self.assertNotIn("alternatives =", task_text)
+        self.assertEqual(launcher.count('render_runtime_task sanity-fight "${stage_code}"'), 1)
+        self.assertEqual(launcher.count('render_runtime_task verify-fight "${stage_code}"'), 1)
+        self.assertNotIn("printf '%s\\n' \"${stage_code}\" |", launcher)
 
         reuse_start = launcher.index("ensure_farming_inventory_snapshot() {")
         reuse_end = launcher.index("\nserver_minute_of_day_now() {", reuse_start)
@@ -477,6 +493,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn("MaaRuntime.previous", updater)
         self.assertIn('write_state promoting', updater)
         self.assertIn('"${planner}" runtime-fingerprint', updater)
+        self.assertNotIn("printf '%s\\n' '1-7'", updater)
         self.assertIn("Direct live Core installation/update is disabled", wrapper)
         self.assertIn("Direct maa hot-update is disabled", wrapper)
         self.assertNotIn("--dry-run", host)
@@ -502,6 +519,47 @@ class HighLevelRequirementTests(unittest.TestCase):
             farming["inventory_equivalence"]["recipes_file"],
             "material-recipes.toml",
         )
+
+    def test_runtime_task_values_are_rendered_without_prompts(self) -> None:
+        cases = (
+            ("daily", "Money", "drones"),
+            ("proxy-preflight", "AT-6", "stage"),
+            ("sanity-fight", "AP-5", "stage"),
+            ("verify-fight", "1-7", "stage"),
+        )
+        source_before = {
+            task_name: (ROOT / f"config/tasks/{task_name}.toml").read_bytes()
+            for task_name, _value, _parameter in cases
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            output_root = Path(temporary)
+            for task_name, value, parameter in cases:
+                destination = output_root / f"{task_name}.toml"
+                render_runtime_task(ROOT, task_name, value, destination)
+                rendered = tomllib.loads(destination.read_text())
+                self.assertEqual(rendered["tasks"][0]["params"][parameter], value)
+                self.assertNotIn("alternatives =", destination.read_text())
+                self.assertNotIn("default_index =", destination.read_text())
+
+            with self.assertRaises(RuntimeTaskError):
+                render_runtime_task(
+                    ROOT,
+                    "sanity-fight",
+                    '1-7"; stone = 999',
+                    output_root / "unsafe.toml",
+                )
+            with self.assertRaises(RuntimeTaskError):
+                render_runtime_task(
+                    ROOT,
+                    "daily",
+                    "UseAllDrones",
+                    output_root / "unsafe-daily.toml",
+                )
+
+        for task_name, expected in source_before.items():
+            self.assertEqual(
+                (ROOT / f"config/tasks/{task_name}.toml").read_bytes(), expected
+            )
 
     def test_cross_checked_sources_and_inventory_authorize_one_safe_fight(self) -> None:
         maa_payload = {

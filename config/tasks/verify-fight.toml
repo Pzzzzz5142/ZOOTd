@@ -14,6 +14,5 @@ medicine_expire_days = 2
 stone = 0
 times = 1
 series = 1
-
-[tasks.params.stage]
-description = "Deterministically selected stage to verify"
+# Replaced with the validated planner stage only in an isolated per-run copy.
+stage = "1-7"

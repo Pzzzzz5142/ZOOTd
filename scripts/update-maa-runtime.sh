@@ -195,44 +195,18 @@ validate_runtime_at() {
     local candidate_config="$3"
     local item_index task_name
 
-    for task_name in daily award-only annihilation depot; do
+    for task_name in \
+        daily award-only annihilation depot \
+        proxy-preflight sanity-fight verify-fight; do
         if ! MAA_DATA_DIR="${candidate_data}" \
             MAA_CACHE_DIR="${candidate_cache}" \
             MAA_CONFIG_DIR="${candidate_config}" \
-            "${maa}" --batch \
-            --log-file=/dev/null run "${task_name}" \
-            --profile waydroid --dry-run >/dev/null; then
+            "${maa}" --log-file=/dev/null run "${task_name}" \
+            --profile waydroid --dry-run </dev/null >/dev/null; then
             info "runtime validation failed for task=${task_name}"
             return 1
         fi
     done
-    if ! printf '%s\n' '1-7' | MAA_DATA_DIR="${candidate_data}" \
-        MAA_CACHE_DIR="${candidate_cache}" \
-        MAA_CONFIG_DIR="${candidate_config}" \
-        "${maa}" \
-        --log-file=/dev/null run proxy-preflight --profile waydroid \
-        --dry-run >/dev/null; then
-        info "runtime validation failed for task=proxy-preflight"
-        return 1
-    fi
-    if ! printf '%s\n' '1-7' | MAA_DATA_DIR="${candidate_data}" \
-        MAA_CACHE_DIR="${candidate_cache}" \
-        MAA_CONFIG_DIR="${candidate_config}" \
-        "${maa}" \
-        --log-file=/dev/null run sanity-fight --profile waydroid \
-        --dry-run >/dev/null; then
-        info "runtime validation failed for task=sanity-fight"
-        return 1
-    fi
-    if ! printf '%s\n' '1-7' | MAA_DATA_DIR="${candidate_data}" \
-        MAA_CACHE_DIR="${candidate_cache}" \
-        MAA_CONFIG_DIR="${candidate_config}" \
-        "${maa}" \
-        --log-file=/dev/null run verify-fight --profile waydroid \
-        --dry-run >/dev/null; then
-        info "runtime validation failed for task=verify-fight"
-        return 1
-    fi
     item_index="${candidate_data}/resource/item_index.json"
     if [[ -f "${candidate_data}/MaaResource/resource/item_index.json" ]]; then
         item_index="${candidate_data}/MaaResource/resource/item_index.json"

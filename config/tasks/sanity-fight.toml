@@ -1,6 +1,6 @@
 # Dynamic material-stage execution. The launcher writes the solver-selected
-# stage to stdin; every other sanity-spending parameter is fixed here so the
-# current MaaCore receives the non-deprecated expiry policy directly.
+# stage into an isolated per-run copy; every other sanity-spending parameter is
+# fixed here so the current MaaCore receives the non-deprecated expiry policy.
 client_type = "Official"
 startup = false
 closedown = false
@@ -14,7 +14,5 @@ medicine = 0
 medicine_expire_days = 2
 stone = 0
 series = 0
-
-[tasks.params.stage]
-description = "Deterministically selected stage"
-
+# Replaced with the validated planner stage only in an isolated per-run copy.
+stage = "1-7"

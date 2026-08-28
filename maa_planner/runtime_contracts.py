@@ -169,6 +169,11 @@ def validate_service_contracts(root: Path) -> None:
         raise RuntimeContractError(
             f"{daily_path} first Infrast must keep the defensive unstationed guard enabled"
         )
+    if shift_params.get("drones") != "_NotUse":
+        raise RuntimeContractError(
+            f"{daily_path} committed drone target must be the non-interactive "
+            "_NotUse runtime placeholder"
+        )
 
     protected_dorm_filename = "protected-dorm.json"
     _require_exact_params(
@@ -356,15 +361,10 @@ def validate_farming_contracts(root: Path) -> None:
     proxy_custom = proxy_tasks[1].get("params")
     if not isinstance(proxy_fight, dict) or not isinstance(proxy_custom, dict):
         raise RuntimeContractError(f"{proxy_path} task has no params table")
-    proxy_stage_input = proxy_fight.get("stage")
-    if (
-        not isinstance(proxy_stage_input, dict)
-        or set(proxy_stage_input) != {"description"}
-        or not isinstance(proxy_stage_input.get("description"), str)
-        or not proxy_stage_input["description"].strip()
-    ):
+    stage_placeholder = "1-7"
+    if proxy_fight.get("stage") != stage_placeholder:
         raise RuntimeContractError(
-            f"{proxy_path} stage must be the single dynamic input"
+            f"{proxy_path} stage must use the non-interactive runtime placeholder"
         )
     _require_exact_params(
         proxy_path,
@@ -374,7 +374,7 @@ def validate_farming_contracts(root: Path) -> None:
             "stone": 0,
             "times": 0,
             "series": -1,
-            "stage": proxy_stage_input,
+            "stage": stage_placeholder,
         },
         task_type="zero-battle proxy-navigation Fight",
     )
@@ -387,14 +387,10 @@ def validate_farming_contracts(root: Path) -> None:
 
     sanity_path = tasks / "sanity-fight.toml"
     _, sanity = _load_fight_task(sanity_path)
-    stage_input = sanity.get("stage")
-    if not isinstance(stage_input, dict) or set(stage_input) != {"description"}:
+    if sanity.get("stage") != stage_placeholder:
         raise RuntimeContractError(
-            f"{sanity_path} stage must be the single dynamic input"
+            f"{sanity_path} stage must use the non-interactive runtime placeholder"
         )
-    description = stage_input.get("description")
-    if not isinstance(description, str) or not description.strip():
-        raise RuntimeContractError(f"{sanity_path} stage description is invalid")
     _require_exact_params(
         sanity_path,
         sanity,
@@ -403,21 +399,15 @@ def validate_farming_contracts(root: Path) -> None:
             "medicine_expire_days": 2,
             "stone": 0,
             "series": 0,
-            "stage": stage_input,
+            "stage": stage_placeholder,
         },
     )
 
     verify_path = tasks / "verify-fight.toml"
     _, verify = _load_fight_task(verify_path)
-    verify_stage_input = verify.get("stage")
-    if (
-        not isinstance(verify_stage_input, dict)
-        or set(verify_stage_input) != {"description"}
-        or not isinstance(verify_stage_input.get("description"), str)
-        or not verify_stage_input["description"].strip()
-    ):
+    if verify.get("stage") != stage_placeholder:
         raise RuntimeContractError(
-            f"{verify_path} stage must be the single dynamic input"
+            f"{verify_path} stage must use the non-interactive runtime placeholder"
         )
     _require_exact_params(
         verify_path,
@@ -428,7 +418,7 @@ def validate_farming_contracts(root: Path) -> None:
             "stone": 0,
             "times": 1,
             "series": 1,
-            "stage": verify_stage_input,
+            "stage": stage_placeholder,
         },
     )
 

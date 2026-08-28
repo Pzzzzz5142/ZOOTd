@@ -14,9 +14,9 @@ medicine = 0
 stone = 0
 times = 0
 series = -1
-
-[tasks.params.stage]
-description = "Stage whose saved PRTS proxy state must be checked"
+# Replaced with the validated planner stage only in an isolated per-run copy.
+# The committed task keeps the launcher's final, universally available fallback.
+stage = "1-7"
 
 [[tasks]]
 name = "Read-only saved-proxy check"

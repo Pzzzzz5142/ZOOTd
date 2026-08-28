@@ -24,14 +24,10 @@ dorm_trust_enabled = false
 reception_message_board = true
 reception_clue_exchange = true
 reception_send_clue = true
-
-# The launcher answers this Select from the run's single pre-daily Depot snapshot:
-# Pure Gold item 3003 < 150 -> PureGold, otherwise -> Money. Batch/default is
-# deliberately _NotUse so missing or invalid inventory never spends drones.
-[tasks.params.drones]
-alternatives = ["_NotUse", "PureGold", "Money"]
-default_index = 1
-description = "Deterministic drone target (_NotUse, PureGold, Money)"
+# The launcher replaces this safe value only in an isolated per-run task copy:
+# Pure Gold item 3003 < 150 -> PureGold, otherwise -> Money. Keeping the
+# committed task at _NotUse makes direct or failed rendering disable drones.
+drones = "_NotUse"
 
 [[tasks]]
 name = "Protected dorm recovery"

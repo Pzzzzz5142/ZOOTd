@@ -60,12 +60,12 @@ flowchart LR
 - `config/material-recipes.toml`：严格校验的经典 T1→T2→T3 合成链，只用于蓝材料等价库存计算，不执行合成。
 - `config/fight-decision.jq`：启动器对规划器 `FIGHT` JSON 的独立执行契约。
 - `config/annihilation-decision.jq`：周剿灭排程的独立执行契约。
-- `config/tasks/sanity-fight.toml`：动态关卡、两天临期药无限额、普通药和源石禁用的实际 Fight。
-- `config/tasks/verify-fight.toml`：兼容审计模式的一次三星验证，随后仍转入无限额 Fight。
+- `config/tasks/sanity-fight.toml`：两天临期药无限额、普通药和源石禁用的实际 Fight；规划关卡由启动器写入隔离的本轮任务副本。
+- `config/tasks/verify-fight.toml`：兼容审计模式的一次三星验证；规划关卡同样通过本轮任务副本注入，随后仍转入无限额 Fight。
 - `config/tasks/annihilation.toml`：每次只执行一笔、随后核对客户端周进度的剿灭事务。
 - `config/tasks/depot.toml`：把原生 StartUp 与当次仓库扫描合在同一个 MaaCore 任务链中。
-- `config/tasks/proxy-preflight.toml`：在同一个 MaaCore 任务链中先以零次 Fight 导航，再只读识别当前关卡是否已勾选代理作战。
-- `config/tasks/daily.toml`：可重入的基建、公招和信用商店维护；基建拆成普通设施换班和受保护宿舍恢复两个原生 Infrast 阶段；公招先以 09:00 自动确认普通 3–5 星并保护 `支援机械`，随后用独立的原生 Recruit 阶段以 03:50 自动确认小车；若同槽有保证 4/5 星则仍优先高星，只有 6 星留给人工确认；不会在中途关闭启动器持有的 Waydroid 会话。
+- `config/tasks/proxy-preflight.toml`：在同一个 MaaCore 任务链中先以零次 Fight 导航，再只读识别当前关卡是否已勾选代理作战；关卡由启动器非交互注入。
+- `config/tasks/daily.toml`：可重入的基建、公招和信用商店维护；无人机目标由启动器非交互注入；基建拆成普通设施换班和受保护宿舍恢复两个原生 Infrast 阶段；公招先以 09:00 自动确认普通 3–5 星并保护 `支援机械`，随后用独立的原生 Recruit 阶段以 03:50 自动确认小车；若同槽有保证 4/5 星则仍优先高星，只有 6 星留给人工确认；不会在中途关闭启动器持有的 Waydroid 会话。
 - `config/infrast/protected-dorm.json`：四间宿舍的官方自定义排班；没有任何具名干员，只允许从游戏“未进驻”筛选结果自动补位。
 - `config/tasks/award-only.toml`：固定放在整轮最后的普通任务奖励领取；同时供轻量 E2E 复用，不进入基建、公招、商店、邮件或战斗。
 - `config/profiles/waydroid.toml`：Waydroid 连接配置。
@@ -76,7 +76,7 @@ flowchart LR
 
 ## 测试策略
 
-当前 13 项测试覆盖：无人登录的 service 与任务边界、单进程 Depot 和单次来源刷新、来源和库存共同授权刷图、不安全输入 fail closed、剿灭与能力账本、Depot/HTTP 缓存完整性、只读顾问、无 sandbox 恢复命令、所有阶段可重入、scope blocker、独立整轮成功校验、阶段历史哈希链，以及 Core＋资源整代原子更新、generation receipt 与回滚。
+当前 14 项测试覆盖：无人登录的 service 与任务边界、非交互运行时任务参数、单进程 Depot 和单次来源刷新、来源和库存共同授权刷图、不安全输入 fail closed、剿灭与能力账本、Depot/HTTP 缓存完整性、只读顾问、无 sandbox 恢复命令、所有阶段可重入、scope blocker、独立整轮成功校验、阶段历史哈希链，以及 Core＋资源整代原子更新、generation receipt 与回滚。
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
@@ -172,6 +172,8 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 启动器会在 daily 前执行一次只读 Depot 扫描，并按赤金（物品 ID `3003`）库存确定 MAA 的无人机目标：少于 `150` 时选择 `PureGold` 加速赤金制造站，达到或超过 `150` 时选择 `Money` 加速贸易站。阈值由 `config/host.env` 的 `MAA_PURE_GOLD_DRONE_THRESHOLD` 配置。
 
 这个选择完全由确定性程序完成，不依赖 LLM。每轮最多执行一次 Depot：07:30 在 daily 前取得的同一快照既决定无人机，也供稍后的材料关求解器复用；因此 daily 期间由基建或信用商店带来的库存变化要到下一轮才会反映。首次前置启动失败会重试一次；若两次都失败且尚未执行 Depot，daily 仍照常运行，并把本轮唯一的 Depot 机会留到材料规划前，此时无人机安全回退为 `_NotUse`。若唯一一次 Depot 已执行但扫描不完整、赤金未识别、快照过期或账号不匹配，则不会二次扫描或猜测库存。
+
+无人机与关卡都不是 maa-cli 用户输入。受管任务文件只保存普通字符串基线，启动器将确定性结果写入 `var/state/host/maa-config.*` 下权限隔离的临时配置视图，再让 MaaCore 读取；因此不会显示 `Select/Input` prompt，也不从终端读取答案。渲染器只接受 `_NotUse`、`PureGold`、`Money` 或通过关卡码白名单格式校验的值，并证明输出只改变目标字段；临时视图在本轮清理阶段删除。
 
 ## 每周剿灭排程
 

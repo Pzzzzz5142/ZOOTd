@@ -62,6 +62,7 @@ from .runtime_receipt import (
     runtime_generation_fingerprint,
     validate_runtime_receipt,
 )
+from .runtime_task import RUNTIME_PARAMETERS, RuntimeTaskError, render_runtime_task
 from .sources import SourceError
 from .supervisor import (
     PHASE_RESULTS,
@@ -735,6 +736,18 @@ def command_select_drones(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_render_runtime_task(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    destination = _project_path(root, args.output)
+    try:
+        render_runtime_task(root, args.task, args.value, destination)
+    except (OSError, RuntimeTaskError) as exc:
+        print(f"cannot render runtime MAA task: {exc}", file=sys.stderr)
+        return 1
+    print(destination)
+    return 0
+
+
 def command_record_fight(args: argparse.Namespace) -> int:
     root = Path(args.project_root).resolve()
     now = parse_iso_datetime(args.now).astimezone(UTC) if args.now else utc_now()
@@ -1333,6 +1346,15 @@ def build_parser() -> argparse.ArgumentParser:
     select_drones.add_argument("--now")
     select_drones.add_argument("--value-only", action="store_true")
     select_drones.set_defaults(func=command_select_drones)
+
+    render_task = subparsers.add_parser(
+        "render-runtime-task",
+        help="write one non-interactive task copy with an allowlisted planner value",
+    )
+    render_task.add_argument("--task", choices=tuple(RUNTIME_PARAMETERS), required=True)
+    render_task.add_argument("--value", required=True)
+    render_task.add_argument("--output", required=True)
+    render_task.set_defaults(func=command_render_runtime_task)
 
     plan = subparsers.add_parser("plan", help="write an audited FIGHT or NOOP decision")
     plan.add_argument("--offline", action="store_true", help="use fresh source cache only")

@@ -75,7 +75,7 @@ daily_completed_game_day=""
 daily_attempt_timeout=3h
 drone_threshold="${MAA_PURE_GOLD_DRONE_THRESHOLD}"
 drone_mode=_NotUse
-drone_input_index=1
+runtime_task_config_dir=""
 depot_scan_attempted=false
 inventory_snapshot_ready=false
 depot_scan_outcome=not-attempted
@@ -117,6 +117,51 @@ die() {
     fi
     printf '[maa-daily] error: %s\n' "$*" >&2
     exit 1
+}
+
+remove_runtime_task_config_view() {
+    local expected_prefix="${project_root}/var/state/host/maa-config."
+
+    [[ -n "${runtime_task_config_dir}" ]] || return 0
+    if [[ "${runtime_task_config_dir}" != "${expected_prefix}"* ||
+          ! -d "${runtime_task_config_dir}" ||
+          -L "${runtime_task_config_dir}" ]]; then
+        info "refusing to remove an unsafe runtime task config path: ${runtime_task_config_dir}"
+        return 1
+    fi
+    rm -r -- "${runtime_task_config_dir}" || return 1
+    runtime_task_config_dir=""
+}
+
+ensure_runtime_task_config_view() {
+    if [[ -n "${runtime_task_config_dir}" ]]; then
+        [[ -d "${runtime_task_config_dir}/tasks" ]] ||
+            die "runtime task config view disappeared: ${runtime_task_config_dir}"
+        return 0
+    fi
+
+    runtime_task_config_dir="$(
+        mktemp -d -- "${project_root}/var/state/host/maa-config.XXXXXXXX"
+    )" || die "could not create the isolated runtime task config view"
+    mkdir -- "${runtime_task_config_dir}/tasks"
+    ln -s -- "${project_root}/config/cli.toml" \
+        "${runtime_task_config_dir}/cli.toml"
+    ln -s -- "${project_root}/config/profiles" \
+        "${runtime_task_config_dir}/profiles"
+    ln -s -- "${project_root}/config/infrast" \
+        "${runtime_task_config_dir}/infrast"
+}
+
+render_runtime_task() {
+    local task_name="$1"
+    local value="$2"
+    local destination
+
+    ensure_runtime_task_config_view
+    destination="${runtime_task_config_dir}/tasks/${task_name}.toml"
+    "${planner}" render-runtime-task --task "${task_name}" --value "${value}" \
+        --output "${destination}" >/dev/null ||
+        die "could not render non-interactive task=${task_name} value=${value}"
 }
 
 require_command() {
@@ -352,6 +397,10 @@ cleanup() {
     if [[ -n "${waydroid_serial}" ]]; then
         timeout --signal=TERM --kill-after=2s 5s \
             adb disconnect "${waydroid_serial}" >/dev/null 2>&1 || true
+    fi
+
+    if ! remove_runtime_task_config_view; then
+        cleanup_ok=false
     fi
 
     if [[ "${session_started_by_launcher}" == true ]] && waydroid_session_is_running; then
@@ -650,8 +699,9 @@ game_client_has_saved_proxy() {
     farming_evidence_log="${preflight_log}"
     supervisor_active_evidence="${preflight_log}"
     info "checking ${stage_code} navigation and saved proxy in one zero-battle MAA task"
-    if ! printf '%s\n' "${stage_code}" |
-       run_farming_soft_with_timeout 1080 "${maa}" \
+    render_runtime_task proxy-preflight "${stage_code}"
+    if ! run_farming_soft_with_timeout 1080 env \
+       MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" \
            --log-file="${preflight_log}" run proxy-preflight \
            --profile "${MAA_HOST_PROFILE}"; then
         info "${stage_code} proxy preflight was unavailable"
@@ -679,8 +729,9 @@ run_sanity_fight() {
         return 1
     fi
     fight_attempted=true
-    printf '%s\n' "${stage_code}" |
-        run_soft_with_timeout "${duration_seconds}s" "${maa}" --log-file="${log_file}" \
+    render_runtime_task sanity-fight "${stage_code}"
+    run_soft_with_timeout "${duration_seconds}s" env \
+        MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${log_file}" \
             run sanity-fight --profile "${MAA_HOST_PROFILE}"
 }
 
@@ -697,8 +748,9 @@ run_verify_fight() {
         return 1
     fi
     fight_attempted=true
-    printf '%s\n' "${stage_code}" |
-        run_soft_with_timeout "${duration_seconds}s" "${maa}" --log-file="${log_file}" \
+    render_runtime_task verify-fight "${stage_code}"
+    run_soft_with_timeout "${duration_seconds}s" env \
+        MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${log_file}" \
             run verify-fight --profile "${MAA_HOST_PROFILE}"
 }
 
@@ -804,8 +856,9 @@ run_daily_routine() {
     daily_evidence_log="${daily_log}"
     supervisor_active_evidence="${daily_log}"
     info "MAA log: ${daily_log}"
-    if printf '%s\n' "${drone_input_index}" |
-       run_soft_with_timeout "${daily_attempt_timeout}" "${maa}" --log-file="${daily_log}" \
+    render_runtime_task daily "${drone_mode}"
+    if run_soft_with_timeout "${daily_attempt_timeout}" env \
+       MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${daily_log}" \
            run "${MAA_HOST_TASK}" --profile "${MAA_HOST_PROFILE}" &&
        daily_log_is_complete "${daily_log}"; then
         info "daily first attempt has complete protected task-chain evidence"
@@ -815,8 +868,8 @@ run_daily_routine() {
         supervisor_active_evidence="${retry_log}"
         info "daily is reentrant; retrying the complete managed stage once"
         info "MAA retry log: ${retry_log}"
-        printf '%s\n' "${drone_input_index}" |
-            run_with_timeout "${daily_attempt_timeout}" "${maa}" --log-file="${retry_log}" \
+        run_with_timeout "${daily_attempt_timeout}" env \
+            MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${retry_log}" \
                 run "${MAA_HOST_TASK}" --profile "${MAA_HOST_PROFILE}"
         daily_log_is_complete "${retry_log}" ||
             die "daily retry returned without complete task-chain evidence; inspect ${retry_log}"
@@ -1219,7 +1272,6 @@ select_daily_drone_policy_from_snapshot() {
     local selected
 
     drone_mode=_NotUse
-    drone_input_index=1
     if [[ ! -x "${planner}" ]]; then
         info "drone policy fallback: planner unavailable; drones disabled"
         return 1
@@ -1229,11 +1281,9 @@ select_daily_drone_policy_from_snapshot() {
     case "${selected}" in
         PureGold)
             drone_mode=PureGold
-            drone_input_index=2
             ;;
         Money)
             drone_mode=Money
-            drone_input_index=3
             ;;
         *)
             info "drone policy fallback: fresh Pure Gold inventory is unavailable; drones disabled"
@@ -1248,14 +1298,12 @@ prepare_daily_drone_policy() {
 
     if [[ "${farming_contracts_ready}" != true ]]; then
         drone_mode=_NotUse
-        drone_input_index=1
         info "drone Depot skipped because its managed-task contract is invalid"
         return 0
     fi
 
     if [[ "${pre_reset_slot}" == true ]]; then
         drone_mode=_NotUse
-        drone_input_index=1
         info "pre-reset skips only the auxiliary drone Depot; the complete old-game-day daily still runs"
         return 0
     fi
@@ -1331,8 +1379,12 @@ stop_user_service_if_active() {
 }
 
 require_command adb
+require_command env
 require_command flock
 require_command grep
+require_command ln
+require_command mktemp
+require_command rm
 require_command systemctl
 require_command timeout
 require_command waydroid
