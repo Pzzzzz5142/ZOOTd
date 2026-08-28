@@ -255,6 +255,7 @@ def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
         "expected_phases": list(expected),
         "repository": repository,
         "llm_policy": "exception-only",
+        "recovery_policy": "danger-full-access-scoped-v1",
     }
     event = _event_core(
         run_id=run_id,
@@ -482,6 +483,7 @@ def finish_run(
     supervisor_required: bool,
     command: Sequence[str],
     timeout_seconds: int,
+    diagnose: bool = True,
     now: datetime | None = None,
 ) -> SupervisorFinish:
     root = root.resolve()
@@ -491,6 +493,8 @@ def finish_run(
     if any(event.get("event_type") == "run-finished" for event in events):
         raise SupervisorError("supervisor run is already finished")
     start = _start_payload(events)
+    if not diagnose and start.get("mode") != "full":
+        raise SupervisorError("only a full run may defer diagnosis to recovery")
     expected_raw = start.get("expected_phases")
     if not isinstance(expected_raw, list) or not all(
         isinstance(phase, str) and phase in PHASES for phase in expected_raw
@@ -511,7 +515,7 @@ def finish_run(
     llm_invoked = False
     diagnosis: SupervisorDiagnosis | None = None
     llm_error: str | None = None
-    if not deterministic_success and supervisor_enabled:
+    if not deterministic_success and supervisor_enabled and diagnose:
         llm_invoked = True
         evidence = {
             "schema_version": 1,
@@ -551,7 +555,7 @@ def finish_run(
                 )
         except SupervisorError as exc:
             llm_error = str(exc)
-    elif not deterministic_success and supervisor_required:
+    elif not deterministic_success and supervisor_required and diagnose:
         llm_error = "exception diagnosis is required but the supervisor is disabled"
 
     status = "success" if deterministic_success else "failed"
@@ -568,6 +572,8 @@ def finish_run(
             "status": (
                 "not-needed"
                 if deterministic_success
+                else "recovery-pending"
+                if not diagnose
                 else "success"
                 if diagnosis is not None
                 else "error"
@@ -598,3 +604,55 @@ def finish_run(
         event_path=path,
         diagnosis=diagnosis,
     )
+
+
+def _failed_run_terminal(events: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
+    finished = [event for event in events if event.get("event_type") == "run-finished"]
+    if len(finished) != 1:
+        raise SupervisorError("recovery requires exactly one run-finished event")
+    payload = finished[0].get("payload")
+    if not isinstance(payload, dict) or payload.get("status") != "failed":
+        raise SupervisorError("recovery is only valid for a deterministically failed run")
+    start = _start_payload(events)
+    if start.get("mode") != "full":
+        raise SupervisorError("operational recovery is only valid for a full run")
+    return finished[0]
+
+
+def record_recovery_started(
+    root: Path,
+    run_id: str,
+    payload: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> Path:
+    root = root.resolve()
+    events = load_run_events(root, run_id)
+    _failed_run_terminal(events)
+    if any(
+        event.get("event_type") in {"recovery-started", "recovery-finished"}
+        for event in events
+    ):
+        raise SupervisorError("recovery was already started for this run")
+    if len(canonical_json(payload)) > _MAX_EXTERNAL_OUTPUT:
+        raise SupervisorError("recovery-started payload is too large")
+    return _append_event(root, run_id, "recovery-started", payload, now=now)
+
+
+def record_recovery_report(
+    root: Path,
+    run_id: str,
+    payload: Mapping[str, Any],
+    *,
+    now: datetime | None = None,
+) -> Path:
+    root = root.resolve()
+    events = load_run_events(root, run_id)
+    _failed_run_terminal(events)
+    starts = [event for event in events if event.get("event_type") == "recovery-started"]
+    finishes = [event for event in events if event.get("event_type") == "recovery-finished"]
+    if len(starts) != 1 or finishes:
+        raise SupervisorError("recovery report requires one unfinished recovery attempt")
+    if len(canonical_json(payload)) > _MAX_EXTERNAL_OUTPUT:
+        raise SupervisorError("recovery report payload is too large")
+    return _append_event(root, run_id, "recovery-finished", payload, now=now)

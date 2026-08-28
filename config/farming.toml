@@ -75,12 +75,17 @@ timeout_seconds = 60
 
 [supervisor]
 # Every phase is checked by deterministic code and written to an append-only
-# hash chain. The LLM is called only when a phase is degraded/failed, evidence
-# is missing, or the launcher exits non-zero; a clean run makes no model call.
+# hash chain. A clean run makes no model call. Non-full probes retain the
+# read-only diagnostician; a failed full run invokes the scoped operational
+# recovery agent and is green only after a new complete run is independently
+# verified.
 enabled = true
 required_on_exception = true
 command = ["/home/pzzzzz/Projects/maa-waydroid/bin/maa-codex-supervisor"]
 timeout_seconds = 90
+recovery_enabled = true
+recovery_command = ["/home/pzzzzz/Projects/maa-waydroid/bin/maa-codex-recovery"]
+recovery_timeout_seconds = 21600
 
 # Optional per-item overrides for the dynamic target of 200. Missing observed
 # items are never interpreted as zero.

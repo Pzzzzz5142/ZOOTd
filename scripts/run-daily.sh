@@ -36,6 +36,7 @@ export MAA_STATE_DIR="${project_root}/var/state"
 : "${MAA_HOST_TASK:=daily}"
 : "${MAA_FARM_MODE:=auto}"
 : "${MAA_PURE_GOLD_DRONE_THRESHOLD:=150}"
+: "${MAA_RECOVERY_ACTIVE:=false}"
 # Completion is accepted only from the INFO callback markers emitted by maa-cli.
 # Keep the unified launcher at INFO even if a local environment chose a quieter
 # level; raw-run remains available for custom logging experiments.
@@ -93,6 +94,7 @@ supervisor_active_phase=""
 supervisor_active_evidence=""
 supervisor_audit_error=false
 supervisor_finishing=false
+supervisor_mode=""
 
 info() {
     printf '[maa-daily] %s\n' "$*"
@@ -256,6 +258,14 @@ case "${display_mode}" in
         die "invalid display mode: ${display_mode} (expected auto, desktop, or headless)"
         ;;
 esac
+case "${MAA_RECOVERY_ACTIVE}" in
+    true|false)
+        ;;
+    *)
+        die "invalid MAA_RECOVERY_ACTIVE value: ${MAA_RECOVERY_ACTIVE}"
+        ;;
+esac
+export MAA_RECOVERY_ACTIVE
 export MAA_WAYDROID_DISPLAY_MODE="${display_mode}"
 if [[ ! "${drone_threshold}" =~ ^[0-9]{1,9}$ ]]; then
     die "invalid Pure Gold drone threshold: ${drone_threshold}"
@@ -319,7 +329,11 @@ cleanup() {
     local attempt
     local cleanup_ok=true
     local finish_status
+    local supervisor_finish_status=0
+    local recovery_status=0
+    local recovery_slot=manual
     local -a cleanup_evidence=()
+    local -a finish_args=()
 
     trap - EXIT INT TERM HUP
 
@@ -396,10 +410,48 @@ cleanup() {
         if [[ "${supervisor_audit_error}" == true ]]; then
             finish_status=1
         fi
+        if [[ "${supervisor_mode}" == full ]]; then
+            finish_args=(--defer-to-recovery)
+        fi
         supervisor_finishing=true
-        if ! "${planner}" supervisor-finish --run-id "${supervisor_run_id}" \
-            --process-status "${finish_status}" 8>&- 9>&-; then
+        set +e
+        "${planner}" supervisor-finish --run-id "${supervisor_run_id}" \
+            --process-status "${finish_status}" "${finish_args[@]}" 8>&- 9>&-
+        supervisor_finish_status=$?
+        set -e
+        if (( supervisor_finish_status != 0 )); then
             status=1
+        fi
+
+        if [[ "${supervisor_mode}" == full &&
+              "${MAA_RECOVERY_ACTIVE}" != true &&
+              "${supervisor_finish_status}" -eq 1 &&
+              "${finish_status}" -ne 129 &&
+              "${finish_status}" -ne 130 &&
+              "${finish_status}" -ne 143 ]]; then
+            if [[ "${pre_reset_slot}" == true ]]; then
+                recovery_slot=pre-reset
+            elif [[ "${post_reset_slot}" == true ]]; then
+                recovery_slot=post-reset
+            fi
+
+            # A nested full launcher must acquire these exact locks. Closing
+            # them here does not end this cleanup process or its systemd unit.
+            exec 8>&-
+            exec 9>&-
+            info "starting scoped danger-full-access recovery for ${supervisor_run_id}"
+            set +e
+            "${planner}" supervisor-recover-run --run-id "${supervisor_run_id}" \
+                --slot "${recovery_slot}"
+            recovery_status=$?
+            set -e
+            if (( recovery_status == 0 )); then
+                status=0
+                info "a new complete full run passed independent recovery verification"
+            else
+                status=1
+                info "operational recovery ended with status ${recovery_status}; inspect the recovery audit"
+            fi
         fi
     fi
 

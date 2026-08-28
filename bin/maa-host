@@ -6,6 +6,7 @@ maa="${project_root}/bin/maa"
 planner="${project_root}/bin/maa-planner"
 advisor_adapter="${project_root}/bin/maa-codex-advisor"
 supervisor_adapter="${project_root}/bin/maa-codex-supervisor"
+recovery_adapter="${project_root}/bin/maa-codex-recovery"
 daily_launcher="${project_root}/scripts/run-daily.sh"
 runtime_updater="${project_root}/scripts/update-maa-runtime.sh"
 host_config="${project_root}/config/host.env"
@@ -206,6 +207,13 @@ doctor() {
             "${supervisor_adapter}" >&2
         failed=1
     fi
+    if [[ -x "${recovery_adapter}" ]]; then
+        info "found danger-full-access recovery adapter: ${recovery_adapter}"
+    else
+        printf '[maa-host] recovery adapter is not executable: %s\n' \
+            "${recovery_adapter}" >&2
+        failed=1
+    fi
     if command -v "${codex_bin}" >/dev/null 2>&1; then
         "${codex_bin}" --version || failed=1
         "${codex_bin}" login status || failed=1
@@ -277,6 +285,9 @@ Commands:
   doctor                Check dependencies and the promoted runtime receipt
   advisor-check         Run and archive one bounded real-model connectivity probe
   supervisor-check      Send one synthetic failure to the exception-only LLM supervisor
+  recover RUN_ID [SLOT]
+                        Recover a failed full audit; SLOT is manual (default),
+                        pre-reset, or post-reset
   runtime-update        Validate stable Core plus staged resources, then atomically promote them
   resource-update       Compatibility alias for runtime-update
   probe                 Check live ADB authorization and the game package
@@ -308,6 +319,15 @@ case "${command_name}" in
     supervisor-check)
         shift
         exec "${planner}" supervisor-check "$@"
+        ;;
+    recover)
+        shift
+        [[ -n "${1:-}" ]] || die "recover requires a failed supervisor run id"
+        recovery_run_id="$1"
+        recovery_slot="${2:-manual}"
+        (( $# <= 2 )) || die "recover accepts only RUN_ID and optional SLOT"
+        exec "${planner}" supervisor-recover-run --run-id "${recovery_run_id}" \
+            --slot "${recovery_slot}"
         ;;
     runtime-update|resource-update)
         shift

@@ -368,6 +368,17 @@ class HighLevelRequirementTests(unittest.TestCase):
         farming_config = tomllib.loads((ROOT / "config/farming.toml").read_text())
         self.assertTrue(farming_config["supervisor"]["enabled"])
         self.assertTrue(farming_config["supervisor"]["required_on_exception"])
+        self.assertTrue(farming_config["supervisor"]["recovery_enabled"])
+        self.assertEqual(
+            farming_config["supervisor"]["recovery_timeout_seconds"], 21600
+        )
+        self.assertIn("MAA_RECOVERY_ACTIVE", launcher)
+        self.assertIn(" supervisor-recover-run --run-id ", launcher)
+        self.assertIn("--defer-to-recovery", launcher)
+        recovery_scope = (ROOT / "docs/llm-recovery-scope.md").read_text()
+        self.assertIn("danger-full-access", recovery_scope)
+        self.assertIn("正在获取更新", recovery_scope)
+        self.assertIn("No saved proxy", recovery_scope)
 
         proxy = tomllib.loads(
             (ROOT / "config/tasks/proxy-preflight.toml").read_text()
@@ -833,7 +844,7 @@ class HighLevelRequirementTests(unittest.TestCase):
                     request_body=request,
                 )
 
-    def test_llm_is_read_only_exception_only_and_cannot_authorize_gameplay(self) -> None:
+    def test_llm_advisor_and_diagnostic_classifier_remain_read_only(self) -> None:
         evidence = json.dumps(
             {
                 "schema_version": 1,

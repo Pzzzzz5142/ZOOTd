@@ -50,6 +50,7 @@ from .orchestrator import (
     refresh_maa_resources,
 )
 from .policy import select_farming_plan
+from .recovery import RecoveryError, recover_failed_run
 from .runtime_contracts import (
     RuntimeContractError,
     validate_farming_contracts,
@@ -555,6 +556,10 @@ def command_supervisor_finish(args: argparse.Namespace) -> int:
     root = Path(args.project_root).resolve()
     try:
         config = _config(root, args.config)
+        if args.defer_to_recovery and not config.supervisor.recovery_enabled:
+            raise SupervisorError(
+                "cannot defer diagnosis because operational recovery is disabled"
+            )
         outcome = finish_run(
             root,
             args.run_id,
@@ -563,10 +568,11 @@ def command_supervisor_finish(args: argparse.Namespace) -> int:
             supervisor_required=config.supervisor.required_on_exception,
             command=config.supervisor.command,
             timeout_seconds=config.supervisor.timeout_seconds,
+            diagnose=not args.defer_to_recovery,
         )
     except (ConfigError, OSError, SupervisorError) as exc:
         print(f"cannot finish phase supervisor: {exc}", file=sys.stderr)
-        return 1
+        return 2
     if outcome.status == "success":
         print(
             f"all deterministic phases succeeded; LLM not needed: {outcome.event_path}"
@@ -580,6 +586,42 @@ def command_supervisor_finish(args: argparse.Namespace) -> int:
         )
     else:
         print(f"run failed; inspect supervisor audit: {outcome.event_path}", file=sys.stderr)
+    return 1
+
+
+def command_supervisor_recover_run(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    try:
+        config = _config(root, args.config)
+        if not config.supervisor.recovery_enabled:
+            raise RecoveryError("operational recovery is disabled")
+        outcome = recover_failed_run(
+            root,
+            args.run_id,
+            slot=args.slot,
+            command=config.supervisor.recovery_command,
+            timeout_seconds=config.supervisor.recovery_timeout_seconds,
+        )
+    except (ConfigError, OSError, RecoveryError, SupervisorError) as exc:
+        print(f"cannot recover failed supervisor run: {exc}", file=sys.stderr)
+        return 1
+    if outcome.status == "recovered":
+        print(
+            f"recovery completed through full run {outcome.successful_run_id}; "
+            f"audit: {outcome.event_path}"
+        )
+        return 0
+    if outcome.status == "scope-blocked":
+        print(
+            f"recovery reached scope blocker {outcome.scope_blocker}: "
+            f"{outcome.summary}; audit: {outcome.event_path}",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        f"recovery did not complete: {outcome.summary}; audit: {outcome.event_path}",
+        file=sys.stderr,
+    )
     return 1
 
 
@@ -1428,7 +1470,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     supervisor_finish.add_argument("--run-id", required=True)
     supervisor_finish.add_argument("--process-status", type=int, required=True)
+    supervisor_finish.add_argument(
+        "--defer-to-recovery",
+        action="store_true",
+        help="record a failed full run without invoking the read-only classifier",
+    )
     supervisor_finish.set_defaults(func=command_supervisor_finish)
+
+    supervisor_recover = subparsers.add_parser(
+        "supervisor-recover-run",
+        help="repair one failed full run and independently verify a new complete run",
+    )
+    supervisor_recover.add_argument("--run-id", required=True)
+    supervisor_recover.add_argument(
+        "--slot", choices=("pre-reset", "post-reset", "manual"), required=True
+    )
+    supervisor_recover.set_defaults(func=command_supervisor_recover_run)
 
     validate = subparsers.add_parser("validate-config", help="validate planner configuration")
     validate.set_defaults(func=lambda args: command_validate(args))

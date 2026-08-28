@@ -348,14 +348,15 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 06:30 `maa-waydroid-runtime-update.timer` 每天同时检查 stable Core 与官方 MaaResource `main`，所以不会因为资源暂时要求更高 Core 而永久钉死旧版。`./bin/maa-host install-core`、`update` 和 `runtime-update` 都进入同一个事务式更新器；`resource-update` 只是旧命令的兼容别名。手工执行 `maa-planner sync` 也只调用这个入口；正式游戏 service 已持有全局锁，所以仅刷新 HTTP 规划来源，不会在任务中途改 runtime。状态证据位于 `var/state/runtime/maa-resource.json`。
 
-## LLM 诊断兜底
+## LLM 诊断与整轮恢复
 
 活动更新、时间解析、双来源一致性、周剿灭排程与完成证明、库存、效率计算、选关、参数校验、代理能力判断和每个阶段的成功条件全部是确定性 Python/Shell 程序。LLM 不在正常热路径中；脚本已经取得完整强证据时，本轮模型调用次数严格为零。
 
-这里有两个彼此独立的只读入口：
+这里有三个职责不同的入口：
 
 - `[agent]` 是规划器的局部顾问。只有确定性 `plan` 已得到 `NOOP`，并且原因指向上游来源不可用、schema 变化、官方/MAA 活动冲突、MAA 导航或一图流关卡映射缺失时才调用。它不能把 `NOOP` 改成 `FIGHT`。
-- `[supervisor]` 是 launcher 的整轮异常监督器。每轮先把预期阶段和 Git 版本写入不可覆盖的起始事件，随后只追加阶段终态。只有出现 `degraded`、`failed`、缺阶段或进程非零退出时，cleanup 才调用它一次；正常整轮不调用。`required_on_exception = true` 保证异常时模型没接通也不能得到绿色 service 状态。
+- `[supervisor]` 维护 launcher 的整轮确定性账本。每轮先把预期阶段和 Git 版本写入不可覆盖的起始事件，随后只追加阶段终态。非完整模式和合成探针仍可调用原来的只读分类器。
+- `[supervisor].recovery_*` 是完整 run 失败后的操作型恢复代理。cleanup 先写死失败终态并释放运行锁，再启动一次 `codex exec --sandbox danger-full-access`。它能用 shell/网络直接检查 DNS、Waydroid、ADB、游戏 UI、ANR、journal 和日志，点安全弹窗、等待/重启、修复后反复执行新的完整 launcher。正常整轮仍然零模型调用。
 
 规划顾问 stdout 是受限 JSON：
 
@@ -378,9 +379,13 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 `classification` 只能是 `stage_mapping`、`source_schema`、`source_conflict` 或 `unknown`；建议中的关卡必须来自确定性候选集。每次 `plan` 都会写入 `decision.evidence.agent`，明确说明是否符合调用条件、是否真的调用。成功建议和错误都只写审计，不改变本次 `NOOP`。
 
-异常监督器收到的只是本轮阶段结果、有限 detail、证据文件的项目内相对路径/大小/SHA-256、哈希链头和硬安全规则，不会读取任意宿主文件。输出只能分类为 environment、runtime、configuration、upstream、game-state、evidence 或 unknown，并给出受影响阶段、证据引用和下一步建议。无论它输出什么，确定性的失败状态都不会被改写；代码也不会执行它建议的命令。尤其只要 daily 已经有终态事件，监督器就没有整轮重放授权；daily 自身仍只使用“尚未出现任何状态任务 marker”这一条确定性安全重试规则。
+操作型恢复的目标不是“给建议”，而是“得到一轮新的完整成功”。原失败 run 永远保留 `failed`；恢复前后追加 `recovery-started` 和 `recovery-finished`，新 run 另建哈希链。即使模型声称已经修好，Python controller 仍会重新读取 `latest-run.json` 和完整事件链，要求新 run id、`full` 模式、恢复开始时记录的 clean Git HEAD、所有预期阶段均为 accepted、进程状态 0、最终事件 `success`，否则 service 不能转绿。子 run 继承 `MAA_RECOVERY_ACTIVE=true`，因此不会递归创建另一个恢复代理；同一个恢复会话继续查看新证据并重试。
 
-需要分别验证两个 adapter 的真实连通性时，运行合成探针：
+`danger-full-access` 是真实能力边界：模型生成的 shell 在当前用户权限下没有文件系统 sandbox，并可联网；它不会凭空获得 root，但已经存在的 `sudo -n` 能力可用于有证据、可回滚的临时网络修复。允许动作和停止条件由版本化的 [恢复 scope 与 FAQ](docs/llm-recovery-scope.md) 定义，其中明确覆盖“正在获取更新”、游戏 ANR、DNS/CDN 差异、点 `Wait`、重启 Waydroid，以及临时网络变更的恢复。它禁止无人值守登录/验证码/六星公招确认、清空游戏数据、购买、绕过认证、持久宿主网络策略改动和运行时修改 Git/审计。
+
+没有代理作战或关卡未开放属于局部游戏状态：自动模式应跳过该候选并尝试下一候选/常驻回退；用户明确指定的唯一关卡不可用，或所有合规候选/回退都不可用时，才允许以 `proxy-unavailable` 或 `stage-closed` scope blocker 结束。游戏内资源下载则仍属恢复范围，不等同于需要人工商店操作的 APK 更新。
+
+两个只读 adapter 的真实连通性仍用合成探针验证：
 
 ```bash
 ./bin/maa-host advisor-check
@@ -389,13 +394,13 @@ jq . var/state/planner/latest-advisor-probe.json
 jq . var/state/supervisor/latest-probe.json
 ```
 
-两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。`doctor` 只检查两个 adapter、Codex 版本和本地登录态，不自动发起模型请求。`config/host.env` 用 `${HOME}/.local/bin/codex` 固定无人登录时的可执行文件解析，不依赖交互 shell 的 PATH。
+两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。恢复 adapter 不提供会触碰真实游戏的合成探针；可用 `./bin/maa-host recover RUN_ID post-reset` 显式恢复一个尚未尝试恢复的失败 full run。`doctor` 只检查三个 adapter、Codex 版本和本地登录态，不自动发起模型请求。`config/host.env` 用 `${HOME}/.local/bin/codex` 固定无人登录时的可执行文件解析，不依赖交互 shell 的 PATH。
 
-两个 adapter 共用同一套 Codex `exec` 边界：显式 stdin prompt、ephemeral session、JSON Schema 结构化输出、只读 sandbox 和空临时工作区，并关闭执行、浏览器、桌面、plugin 与 subagent 工具。返回后 Python 再验证 run id、阶段集合、候选关卡和字段上限；超时、非法输出或虚构对象均按失败关闭。
+三个 adapter 都使用显式 stdin prompt、ephemeral session 和 JSON Schema 结构化输出。顾问/分类器继续使用空临时工作区、只读 sandbox，并关闭执行工具；恢复代理则在项目根目录启用 unrestricted shell、图片输入和 `danger-full-access`，但关闭无关 connector/plugin/subagent。默认恢复预算为六小时，仍受 service 的十小时总预算约束。返回后 Python 二次验证所有字段；超时、非法输出、虚构成功或 Git 工作树变化均按失败关闭。该脚本化非交互模式基于 [Codex exec 官方说明](https://learn.chatgpt.com/docs/developer-commands#codex-exec)。
 
 ## 修改与运行历史
 
-仓库在引入异常监督器前先建立了 `4baa479`（`chore: preserve validated automation baseline`）基线提交；监督器实现另存为 `3249301`（`feat: add exception-driven LLM phase supervision`），没有覆盖此前已经通过真实 E2E 的实现。后续功能和修复继续使用新的普通 commit，不 amend、不 squash、不 rebase；用 `git log --oneline --decorate` 可以恢复代码演进。managed run 启动前要求 Git 工作树为 clean；未提交的代码修改会直接阻止无人值守任务，避免执行一个无法从历史恢复的版本。无人值守运行也不会让 LLM 自动改工作树，避免定时任务在没有验证和审阅时自我改写安全策略。
+仓库在引入异常监督器前先建立了 `4baa479`（`chore: preserve validated automation baseline`）基线提交；监督器实现另存为 `3249301`（`feat: add exception-driven LLM phase supervision`），没有覆盖此前已经通过真实 E2E 的实现。后续功能和修复继续使用新的普通 commit，不 amend、不 squash、不 rebase；用 `git log --oneline --decorate` 可以恢复代码演进。managed run 启动前要求 Git 工作树为 clean；未提交的代码修改会直接阻止无人值守任务，避免执行一个无法从历史恢复的版本。恢复 scope 禁止 LLM 在运行时编辑 tracked source；即使违反，下一轮 `supervisor-start` 和最终 controller 的 clean-tree 检查也会拒绝把结果记为恢复成功。
 
 代码历史与运行历史分开保存：Git 记录可执行代码和文档；`var/state/supervisor/runs/` 记录本地游戏运行证据，不提交可能含账号状态的日志。每个 run 起始事件固定当时的 Git HEAD、dirty 标志、status 哈希和 tracked diff 哈希；每个后续事件包含前一事件 SHA-256 且以 exclusive-create 写入，既不能覆盖旧阶段，也不能给同一阶段补写第二个“更好看”的终态。`latest-run.json` 只是可变索引，不是历史真相。
 
@@ -432,6 +437,8 @@ jq . var/state/supervisor/latest-probe.json
 同日随后建立 Git 基线并加入异常驱动的 LLM 监督：正常强证据路径不请求模型；所有 launcher 阶段进入追加式哈希链，任一失败、降级、缺失或非零退出只在 cleanup 后请求一次只读诊断，并保持整轮失败。这样 LLM 接入可被真实探针证明，又不会让正常 daily 为九个阶段重复产生模型调用，也不会取得重跑 daily 或修改安全策略的权限。
 
 该监督器的真实合成异常探针先发现 Codex 结构化输出不接受 `uniqueItems`，失败 probe 被保留；把唯一性改为 Python 二次校验后，下一次真实模型探针成功返回 `safe_to_retry_whole_run=false`。随后在 commit `3249301` 的 clean 工作树上完成两轮 headless 验收：Award-only 账本包含 runtime、device、Award、cleanup 四个 `succeeded`，日志只有 StartUp、Award 和总链完成；完整链路的九个阶段依次为 runtime/device/Depot/daily/source `succeeded`、剿灭 `policy-resolved(weekly-state-unknown)`、farming/Award/cleanup `succeeded`。Depot 仍为 79 项；daily 为 2/2 Infrast、4 Dorm、2 Recruit、1 Mall、0 Training，Core 对四间 Dorm 均记录 `m_notstationed_filter_enabled: 1`；活动候选没有新鲜三星证明时没有猜成功，AP-5 preflight 失败后由 1-7 三次三星回退取得实际掉落证明；最终 Award 无任何基建、公招、商店、Depot 或 Fight marker。两轮最终事件均为 `llm.invoked=false`，证明正常强证据路径没有模型开销；cleanup 后 Waydroid 为 STOPPED，schema-3 readiness 仍有效。
+
+2026-08-28 的 07:30 run 在 Waydroid/ADB/分辨率和通用网络探针均通过后，游戏长期停在“正在获取更新…”，随后 Android 对 `com.hypergryph.arknights/com.u8.sdk.U8UnityContext` 报 input-dispatch ANR。Depot 没有完成，后续阶段因此都未开始。07:36 的 LLM 实际已经被调用且成功返回诊断，但当时 adapter 被固定为 read-only classifier，prompt 和 sandbox 都明确禁止执行命令，所以它只能写 postmortem，无法点 `Wait`、检查游戏实际 CDN DNS、重启 Waydroid或重跑。这个事故直接促成上述 operational recovery：同类故障现在应按 scope FAQ 修到一轮新 full run 成功，而不是在第一次诊断后退出。
 
 ```bash
 systemctl --user start maa-waydroid.service

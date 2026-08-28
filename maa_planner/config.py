@@ -81,6 +81,9 @@ class SupervisorConfig:
     required_on_exception: bool
     command: tuple[str, ...]
     timeout_seconds: int
+    recovery_enabled: bool
+    recovery_command: tuple[str, ...]
+    recovery_timeout_seconds: int
 
 
 @dataclass(frozen=True)
@@ -337,13 +340,23 @@ def load_config(path: Path) -> PlannerConfig:
     supervisor_enabled = supervisor_raw.get("enabled", False)
     supervisor_required = supervisor_raw.get("required_on_exception", False)
     supervisor_command = supervisor_raw.get("command", [])
+    recovery_enabled = supervisor_raw.get("recovery_enabled", False)
+    recovery_command = supervisor_raw.get("recovery_command", [])
     if (
         not isinstance(supervisor_enabled, bool)
         or not isinstance(supervisor_required, bool)
         or not isinstance(supervisor_command, list)
         or not all(isinstance(x, str) and x for x in supervisor_command)
+        or not isinstance(recovery_enabled, bool)
+        or not isinstance(recovery_command, list)
+        or not all(isinstance(x, str) and x for x in recovery_command)
     ):
-        raise ConfigError("supervisor enabled/required/command values have invalid types")
+        raise ConfigError("supervisor diagnostic/recovery values have invalid types")
+    recovery_timeout = _integer(
+        supervisor_raw, "recovery_timeout_seconds", 21600, minimum=1
+    )
+    if recovery_timeout > 32400:
+        raise ConfigError("supervisor.recovery_timeout_seconds must be <= 32400")
     supervisor = SupervisorConfig(
         enabled=supervisor_enabled,
         required_on_exception=supervisor_required,
@@ -351,6 +364,9 @@ def load_config(path: Path) -> PlannerConfig:
         timeout_seconds=_integer(
             supervisor_raw, "timeout_seconds", 90, minimum=1
         ),
+        recovery_enabled=recovery_enabled,
+        recovery_command=tuple(recovery_command),
+        recovery_timeout_seconds=recovery_timeout,
     )
     if supervisor.enabled and not supervisor.command:
         raise ConfigError(
@@ -359,6 +375,16 @@ def load_config(path: Path) -> PlannerConfig:
     if supervisor.required_on_exception and not supervisor.enabled:
         raise ConfigError(
             "supervisor.required_on_exception requires supervisor.enabled"
+        )
+    if supervisor.recovery_enabled and not supervisor.recovery_command:
+        raise ConfigError(
+            "supervisor.recovery_command is required when recovery is enabled"
+        )
+    if supervisor.recovery_enabled and (
+        not supervisor.enabled or not supervisor.required_on_exception
+    ):
+        raise ConfigError(
+            "supervisor recovery requires enabled exception supervision"
         )
 
     targets_raw = payload.get("targets", [])
