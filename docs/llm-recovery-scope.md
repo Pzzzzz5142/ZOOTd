@@ -1,6 +1,6 @@
 # MAA unattended recovery scope
 
-Version: 2
+Version: 3
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -44,6 +44,13 @@ The agent may use unrestricted user-level shell commands and network access to:
 - use ADB and Waydroid commands, inspect Android properties/logcat/UI state,
   wait for transient startup work, and click a known benign retry/confirm/Wait
   dialog;
+- complete both kinds of official game update: in-app resource/hot updates and
+  an official CN client APK update for `com.hypergryph.arknights`;
+- resolve a fresh APK URL from the official dynamic endpoint
+  `https://ak.hypergryph.com/downloads/android_lastest`, download it only over
+  HTTPS through Hypergryph/HyCDN redirects, and replace the existing package
+  with `adb install --no-streaming -r` (or `adb install -r` if required) so app
+  data is preserved; never reuse a version-specific CDN URL from an old run;
 - force-stop and relaunch `com.hypergryph.arknights`, restart the Waydroid
   session, and when necessary restart the Waydroid container service;
 - make a reversible, narrowly targeted, temporary DNS/network adjustment using
@@ -67,7 +74,9 @@ Return `scope-blocked` instead of crossing any of these boundaries:
   legal terms, or any other identity/consent step;
 - a six-star recruitment decision or another game choice explicitly reserved
   for the operator;
-- installing/upgrading an APK, changing game account/client/region, purchasing
+- installing an APK for any package other than `com.hypergryph.arknights`,
+  using an unofficial/mirrored APK, changing game account/client channel/region,
+  accepting a signing-certificate mismatch, forcing a downgrade, purchasing
   anything, or using Originite Prime or ordinary medicine outside the checked
   launcher policy;
 - clearing app data/cache, reinstalling the game, deleting user data, changing
@@ -92,9 +101,38 @@ original request explicitly required that exact stage, or when every
 policy-authorized candidate/fallback is unavailable and no compliant full-run
 result can be produced.
 
-Similarly, an in-app resource update is not an APK/store update: wait, retry,
-and repair its connectivity in scope. An APK/store update that requires human
-account interaction is out of scope.
+Both an in-app resource update and an official CN APK update are recovery work,
+not scope blockers. If an Android store UI requests a human account, do not use
+that store: use the official dynamic APK endpoint and ADB replacement install.
+Only a package/channel/signature mismatch that cannot be updated without
+uninstalling or clearing data is `unsupported-client`.
+
+## FAQ: forced APK/client update
+
+The official dynamic URL is a resolver, not a pinned APK. Resolve it fresh for
+every incident and require every redirect to remain HTTPS and on an official
+Hypergryph/HyCDN host. Do not use TapTap, Bilibili, emulator-vendor mirrors,
+search results, or an APK cached by an earlier recovery.
+
+1. Record the installed package, version code/name, signing information exposed
+   by Android, current data path, available host/Waydroid space, and the update
+   prompt or log evidence.
+2. Download the fresh official APK below ignored runtime state (`var/`), with
+   resume and bounded retry when useful. Check the final URL, HTTP status,
+   content type/length, ZIP integrity, and a SHA-256 digest before installation.
+3. Stop only `com.hypergryph.arknights`. Replace it with
+   `adb install --no-streaming -r APK`, falling back to `adb install -r APK` if
+   required. Do not use `-d`, `-t`, uninstall, `pm clear`, or removal of the
+   existing package/data.
+4. Android Package Manager must accept the existing signing identity. Treat
+   `INSTALL_FAILED_UPDATE_INCOMPATIBLE` as `unsupported-client`; do not bypass
+   it by uninstalling. On a downgrade result, refresh the official resolver and
+   wait/retry rather than forcing the downgrade.
+5. Confirm that the official package is present at the new version and still
+   has its data, then launch it. Complete any subsequent in-app resource update,
+   handling benign update/retry/Wait dialogs and connectivity faults in scope.
+6. Delete only the downloaded recovery APK after it is no longer needed, then
+   run the supplied complete launcher and continue until its new audit succeeds.
 
 ## FAQ: stuck at “正在获取更新…” or Android ANR
 

@@ -107,7 +107,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 2,
+                    "version": 3,
                 },
             }
             seen: dict[str, object] = {}
@@ -121,6 +121,10 @@ class RecoveryTests(unittest.TestCase):
                 schema_path = Path(argv[argv.index("--output-schema") + 1])
                 schema = json.loads(schema_path.read_text(encoding="utf-8"))
                 self.assertIn("recovered", schema["properties"]["status"]["enum"])
+                self.assertNotIn(
+                    "client-package-update",
+                    schema["properties"]["scope_blocker"]["enum"],
+                )
                 output = {
                     "schema_version": 1,
                     "failed_run_id": failed_run_id,
@@ -183,6 +187,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertIsInstance(prompt, bytes)
             assert isinstance(prompt, bytes)
             self.assertIn(b"completely unsandboxed shell", prompt)
+            self.assertIn(b"client APK update", prompt)
             self.assertIn(
                 b"Every managed stage, including daily, is reentrant", prompt
             )
@@ -381,6 +386,20 @@ class RecoveryTests(unittest.TestCase):
                         "daily": True,
                         "whole_run_replay": True,
                     },
+                )
+                self.assertEqual(
+                    evidence["client_update_policy"]["official_apk_url"],
+                    "https://ak.hypergryph.com/downloads/android_lastest",
+                )
+                self.assertTrue(
+                    evidence["client_update_policy"]["preserve_app_data"]
+                )
+                self.assertEqual(
+                    evidence["client_update_policy"]["install_argv_prefix"],
+                    ["adb", "install", "--no-streaming", "-r"],
+                )
+                self.assertFalse(
+                    evidence["client_update_policy"]["allow_uninstall"]
                 )
                 output = {
                     "schema_version": 1,

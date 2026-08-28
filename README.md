@@ -359,7 +359,7 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 - `[agent]` 是规划器的局部顾问。只有确定性 `plan` 已得到 `NOOP`，并且原因指向上游来源不可用、schema 变化、官方/MAA 活动冲突、MAA 导航或一图流关卡映射缺失时才调用。它不能把 `NOOP` 改成 `FIGHT`。
 - `[supervisor]` 维护 launcher 的整轮确定性账本。每轮先把预期阶段和 Git 版本写入不可覆盖的起始事件，随后只追加阶段终态。非完整模式和合成探针仍可调用原来的只读分类器。
-- `[supervisor].recovery_*` 是完整 run 失败后的操作型恢复代理。cleanup 先写死失败终态并释放运行锁，再通过 `--dangerously-bypass-approvals-and-sandbox` 启动一次完全无 sandbox、无命令审批的 Codex。它能用 shell/网络直接检查 DNS、Waydroid、ADB、游戏 UI、ANR、journal 和日志，点安全弹窗、等待/重启、修复后反复执行新的完整 launcher。正常整轮仍然零模型调用。
+- `[supervisor].recovery_*` 是完整 run 失败后的操作型恢复代理。cleanup 先写死失败终态并释放运行锁，再通过 `--dangerously-bypass-approvals-and-sandbox` 启动一次完全无 sandbox、无命令审批的 Codex。它能用 shell/网络直接检查 DNS、Waydroid、ADB、游戏 UI、ANR、journal 和日志，处理游戏内资源更新与官服 APK 强制更新、点安全弹窗、等待/重启，修复后反复执行新的完整 launcher。正常整轮仍然零模型调用。
 
 规划顾问 stdout 是受限 JSON：
 
@@ -384,11 +384,11 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 操作型恢复的目标不是“给建议”，而是“得到一轮新的完整成功”。原失败 run 永远保留 `failed`；恢复前后追加 `recovery-started` 和 `recovery-finished`，新 run 另建哈希链。即使模型声称已经修好，Python controller 仍会重新读取 `latest-run.json` 和完整事件链，要求新 run id、`full` 模式、恢复开始时记录的 clean Git HEAD、所有预期阶段均为 accepted、进程状态 0、最终事件 `success`，否则 service 不能转绿。子 run 继承 `MAA_RECOVERY_ACTIVE=true`，因此不会递归创建另一个恢复代理；同一个恢复会话继续查看新证据并重试。
 
-恢复 Codex 没有 sandbox：模型生成的 shell 在当前用户权限下可直接访问文件系统和网络，也不会遇到 Codex 命令审批；它不会凭空获得 root，但已经存在的 `sudo -n` 能力可用于有证据、可回滚的临时网络修复。允许动作和停止条件由版本化的 [恢复 scope 与 FAQ](docs/llm-recovery-scope.md) 定义，其中明确覆盖“正在获取更新”、游戏 ANR、DNS/CDN 差异、点 `Wait`、重启 Waydroid，以及临时网络变更的恢复。它禁止无人值守登录/验证码/六星公招确认、清空游戏数据、购买、绕过认证、持久宿主网络策略改动和运行时修改 Git/审计。
+恢复 Codex 没有 sandbox：模型生成的 shell 在当前用户权限下可直接访问文件系统和网络，也不会遇到 Codex 命令审批；它不会凭空获得 root，但已经存在的 `sudo -n` 能力可用于有证据、可回滚的临时网络修复。允许动作和停止条件由版本化的 [恢复 scope 与 FAQ](docs/llm-recovery-scope.md) 定义，其中明确覆盖“正在获取更新”、游戏 ANR、DNS/CDN 差异、游戏内资源更新、从鹰角官方下载官服 APK 并保留数据覆盖安装、点 `Wait`、重启 Waydroid，以及临时网络变更。它禁止无人值守登录/验证码/六星公招确认、清空游戏数据、购买、绕过签名校验、强制降级、切换客户端渠道、持久宿主网络策略改动和运行时修改 Git/审计。
 
 所有受管阶段都按可重入处理，包括 daily：无论父 run 已进入或完成基建、公招、商店，恢复代理都可重新执行一轮完整 launcher；`unsafe-stateful-replay` 不再是 blocker。每个 agent 内部子 run 失败后仍由同一恢复会话继续分析和整轮重试。
 
-没有代理作战或关卡未开放属于局部游戏状态：自动模式应跳过该候选并尝试下一候选/常驻回退；用户明确指定的唯一关卡不可用，或所有合规候选/回退都不可用时，才允许以 `proxy-unavailable` 或 `stage-closed` scope blocker 结束。游戏内资源下载则仍属恢复范围，不等同于需要人工商店操作的 APK 更新。
+没有代理作战或关卡未开放属于局部游戏状态：自动模式应跳过该候选并尝试下一候选/常驻回退；用户明确指定的唯一关卡不可用，或所有合规候选/回退都不可用时，才允许以 `proxy-unavailable` 或 `stage-closed` scope blocker 结束。游戏内资源下载和官服 APK 更新都属于恢复范围；若商店要求人工账号操作，代理改用 `https://ak.hypergryph.com/downloads/android_lastest` 动态解析当期官服 APK，并通过 ADB replacement install 保留数据。
 
 两个只读 adapter 的真实连通性仍用合成探针验证：
 

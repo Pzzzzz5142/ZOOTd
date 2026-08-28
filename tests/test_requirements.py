@@ -382,6 +382,12 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn("is no Codex sandbox", recovery_scope)
         self.assertIn("正在获取更新", recovery_scope)
         self.assertIn("No saved proxy", recovery_scope)
+        self.assertIn(
+            "https://ak.hypergryph.com/downloads/android_lastest",
+            recovery_scope,
+        )
+        self.assertIn("adb install --no-streaming -r", recovery_scope)
+        self.assertNotIn("client-package-update", recovery_scope)
 
         proxy = tomllib.loads(
             (ROOT / "config/tasks/proxy-preflight.toml").read_text()

@@ -44,7 +44,6 @@ _BLOCKERS = frozenset(
         "manual-login",
         "captcha-or-terms",
         "six-star-recruitment",
-        "client-package-update",
         "unsupported-client",
         "proxy-unavailable",
         "stage-closed",
@@ -320,7 +319,7 @@ def _incident_evidence(
         "scope": {
             "path": "docs/llm-recovery-scope.md",
             "sha256": sha256_bytes(scope_bytes),
-            "version": 2,
+            "version": 3,
         },
         "controller_repository": {
             "head": recovery_head,
@@ -330,6 +329,28 @@ def _incident_evidence(
             "all_managed_stages": True,
             "daily": True,
             "whole_run_replay": True,
+        },
+        "client_update_policy": {
+            "in_scope": True,
+            "package": "com.hypergryph.arknights",
+            "official_apk_url": (
+                "https://ak.hypergryph.com/downloads/android_lastest"
+            ),
+            "allowed_https_domain_suffixes": [
+                "hypergryph.com",
+                "hycdn.cn",
+            ],
+            "replace_existing": True,
+            "preserve_app_data": True,
+            "install_argv_prefix": [
+                "adb",
+                "install",
+                "--no-streaming",
+                "-r",
+            ],
+            "fallback_install_argv_prefix": ["adb", "install", "-r"],
+            "allow_uninstall": False,
+            "allow_downgrade": False,
         },
         "controller_success_requirement": (
             "A different full run must independently validate every expected phase, "
@@ -544,11 +565,12 @@ def recover_failed_run(
         failed_run_id,
         {
             "schema_version": 1,
-            "policy": "unsandboxed-scoped-v2",
+            "policy": "unsandboxed-scoped-v3",
             "slot": slot,
             "scope": evidence["scope"],
             "controller_repository": evidence["controller_repository"],
             "reentrancy_policy": evidence["reentrancy_policy"],
+            "client_update_policy": evidence["client_update_policy"],
             "retry_command": evidence["retry_command"],
             "timeout_seconds": timeout_seconds,
             "screenshot_paths": evidence["screenshot_paths"],
@@ -617,7 +639,7 @@ def recover_failed_run(
     audit_payload: dict[str, Any] = {
         "schema_version": 1,
         "status": overall_status,
-        "policy": "unsandboxed-scoped-v2",
+        "policy": "unsandboxed-scoped-v3",
         "scope": evidence["scope"],
         "agent": {
             "invoked": True,

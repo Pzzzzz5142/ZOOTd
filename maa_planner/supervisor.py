@@ -255,7 +255,7 @@ def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
         "expected_phases": list(expected),
         "repository": repository,
         "llm_policy": "exception-only",
-        "recovery_policy": "unsandboxed-scoped-v2",
+        "recovery_policy": "unsandboxed-scoped-v3",
     }
     event = _event_core(
         run_id=run_id,
