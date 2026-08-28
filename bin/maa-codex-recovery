@@ -2,5 +2,11 @@
 set -Eeuo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+sdk_python="${MAA_CODEX_SDK_PYTHON:-${project_root}/.venv/bin/python}"
+[[ -x "${sdk_python}" ]] || {
+    printf 'Codex SDK environment is missing. Run %s/scripts/bootstrap.sh first.\n' \
+        "${project_root}" >&2
+    exit 1
+}
 cd -- "${project_root}"
-exec python3 -m maa_planner.codex_recovery "$@"
+exec "${sdk_python}" -m maa_planner.codex_recovery "$@"

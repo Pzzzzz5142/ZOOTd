@@ -1,5 +1,6 @@
 # Project-local binaries and mutable MAA data.
 /.local/
+/.venv/
 /var/
 
 # Local overrides and editor noise.

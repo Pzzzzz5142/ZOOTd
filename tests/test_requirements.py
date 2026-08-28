@@ -27,6 +27,7 @@ from maa_planner.capability import (
 )
 from maa_planner.cli import _read_log_suffix
 from maa_planner.codex_advisor import CodexAdvisorError, run_codex_advisor
+from maa_planner.codex_sdk import CodexSDKRequest
 from maa_planner.codex_supervisor import (
     CodexSupervisorError,
     run_codex_supervisor,
@@ -379,9 +380,10 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn("--defer-to-recovery", launcher)
         recovery_scope = (ROOT / "docs/llm-recovery-scope.md").read_text()
         self.assertIn(
-            "--dangerously-bypass-approvals-and-sandbox", recovery_scope
+            "`Sandbox.full_access`", recovery_scope
         )
-        self.assertIn("is no Codex sandbox", recovery_scope)
+        self.assertIn("`ApprovalMode.deny_all`", recovery_scope)
+        self.assertIn("is no Codex filesystem sandbox", recovery_scope)
         self.assertIn("正在获取更新", recovery_scope)
         self.assertIn("No saved proxy", recovery_scope)
         self.assertIn(
@@ -498,6 +500,25 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn("Direct maa hot-update is disabled", wrapper)
         self.assertNotIn("--dry-run", host)
         self.assertIn('"${planner}" validate-service-readiness', host)
+
+        sdk = (ROOT / "maa_planner/codex_sdk.py").read_text()
+        self.assertIn("AsyncCodex", sdk)
+        self.assertIn("output_schema=dict(request.output_schema)", sdk)
+        self.assertNotIn("subprocess", sdk)
+        self.assertFalse((ROOT / "maa_planner/codex_exec.py").exists())
+        self.assertEqual(
+            (ROOT / "requirements.txt").read_text().strip(),
+            "openai-codex==0.147.0",
+        )
+        for adapter_name in (
+            "maa-codex-advisor",
+            "maa-codex-supervisor",
+            "maa-codex-recovery",
+        ):
+            adapter = (ROOT / "bin" / adapter_name).read_text()
+            self.assertIn(".venv/bin/python", adapter)
+            self.assertNotIn("codex exec", adapter)
+        self.assertNotIn("MAA_CODEX_BIN", host)
 
         runtime_timer = (ROOT / "systemd/maa-waydroid-runtime-update.timer").read_text()
         pre_timer = (ROOT / "systemd/maa-waydroid-prereset.timer").read_text()
@@ -932,16 +953,10 @@ class HighLevelRequirementTests(unittest.TestCase):
             }
         ).encode()
         with tempfile.TemporaryDirectory() as directory:
-            fake_codex = Path(directory) / "codex"
-            fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            fake_codex.chmod(0o700)
             seen: dict[str, object] = {}
 
-            def valid_runner(
-                argv: list[str], **kwargs: object
-            ) -> subprocess.CompletedProcess[bytes]:
-                seen["argv"] = argv
-                seen.update(kwargs)
+            def valid_runner(request: CodexSDKRequest) -> str:
+                seen["request"] = request
                 output = {
                     "schema_version": 1,
                     "classification": "source_schema",
@@ -950,9 +965,7 @@ class HighLevelRequirementTests(unittest.TestCase):
                     "mappings": [],
                     "evidence_refs": ["evidence.rejection_reasons"],
                 }
-                return subprocess.CompletedProcess(
-                    argv, 0, json.dumps(output).encode(), b""
-                )
+                return json.dumps(output)
 
             result = json.loads(
                 run_codex_advisor(
@@ -962,16 +975,19 @@ class HighLevelRequirementTests(unittest.TestCase):
                         "PATH": directory,
                         "DISPLAY": ":0",
                         "MAA_SECRET": "must-not-leak",
-                        "MAA_CODEX_BIN": str(fake_codex),
                     },
-                    runner=valid_runner,
+                    sdk_runner=valid_runner,
                 )
             )
-            argv = seen["argv"]
-            assert isinstance(argv, list)
-            self.assertIn("--ephemeral", argv)
-            self.assertEqual(argv[argv.index("--sandbox") + 1], "read-only")
-            child_env = seen["env"]
+            request = seen["request"]
+            self.assertIsInstance(request, CodexSDKRequest)
+            assert isinstance(request, CodexSDKRequest)
+            self.assertTrue(request.ephemeral)
+            self.assertEqual(request.approval_mode, "deny-all")
+            self.assertEqual(request.sandbox, "read-only")
+            self.assertIn("features.shell_tool=false", request.config_overrides)
+            self.assertIn("tools.web_search=false", request.config_overrides)
+            child_env = request.environment
             assert isinstance(child_env, dict)
             self.assertNotIn("DISPLAY", child_env)
             self.assertNotIn("MAA_SECRET", child_env)
@@ -982,13 +998,11 @@ class HighLevelRequirementTests(unittest.TestCase):
             with self.assertRaises(CodexAdvisorError):
                 run_codex_advisor(
                     json.dumps(fight).encode(),
-                    environ={"HOME": directory, "MAA_CODEX_BIN": str(fake_codex)},
-                    runner=valid_runner,
+                    environ={"HOME": directory},
+                    sdk_runner=valid_runner,
                 )
 
-            def invented_runner(
-                argv: list[str], **_kwargs: object
-            ) -> subprocess.CompletedProcess[bytes]:
+            def invented_runner(_request: CodexSDKRequest) -> str:
                 output = {
                     "schema_version": 1,
                     "classification": "stage_mapping",
@@ -1003,17 +1017,15 @@ class HighLevelRequirementTests(unittest.TestCase):
                     ],
                     "evidence_refs": [],
                 }
-                return subprocess.CompletedProcess(
-                    argv, 0, json.dumps(output).encode(), b""
-                )
+                return json.dumps(output)
 
             with self.assertRaisesRegex(
                 CodexAdvisorError, "outside the deterministic"
             ):
                 run_codex_advisor(
                     evidence,
-                    environ={"HOME": directory, "MAA_CODEX_BIN": str(fake_codex)},
-                    runner=invented_runner,
+                    environ={"HOME": directory},
+                    sdk_runner=invented_runner,
                 )
 
             supervisor_evidence = {
@@ -1043,11 +1055,8 @@ class HighLevelRequirementTests(unittest.TestCase):
                 ],
             }
 
-            def supervisor_runner(
-                argv: list[str], **kwargs: object
-            ) -> subprocess.CompletedProcess[bytes]:
-                seen["supervisor_argv"] = argv
-                seen["supervisor_env"] = kwargs["env"]
+            def supervisor_runner(request: CodexSDKRequest) -> str:
+                seen["supervisor_request"] = request
                 output = {
                     "schema_version": 1,
                     "run_id": supervisor_evidence["run_id"],
@@ -1058,9 +1067,7 @@ class HighLevelRequirementTests(unittest.TestCase):
                     "recommended_actions": ["Inspect the archived daily log."],
                     "safe_to_retry_whole_run": True,
                 }
-                return subprocess.CompletedProcess(
-                    argv, 0, json.dumps(output).encode(), b""
-                )
+                return json.dumps(output)
 
             supervisor_result = json.loads(
                 run_codex_supervisor(
@@ -1070,18 +1077,15 @@ class HighLevelRequirementTests(unittest.TestCase):
                         "PATH": directory,
                         "DISPLAY": ":0",
                         "MAA_SECRET": "must-not-leak",
-                        "MAA_CODEX_BIN": str(fake_codex),
                     },
-                    runner=supervisor_runner,
+                    sdk_runner=supervisor_runner,
                 )
             )
-            supervisor_argv = seen["supervisor_argv"]
-            assert isinstance(supervisor_argv, list)
-            self.assertEqual(
-                supervisor_argv[supervisor_argv.index("--sandbox") + 1],
-                "read-only",
-            )
-            supervisor_env = seen["supervisor_env"]
+            supervisor_request = seen["supervisor_request"]
+            self.assertIsInstance(supervisor_request, CodexSDKRequest)
+            assert isinstance(supervisor_request, CodexSDKRequest)
+            self.assertEqual(supervisor_request.sandbox, "read-only")
+            supervisor_env = supervisor_request.environment
             assert isinstance(supervisor_env, dict)
             self.assertNotIn("DISPLAY", supervisor_env)
             self.assertNotIn("MAA_SECRET", supervisor_env)
@@ -1096,8 +1100,8 @@ class HighLevelRequirementTests(unittest.TestCase):
             ):
                 run_codex_supervisor(
                     json.dumps(successful_evidence).encode(),
-                    environ={"HOME": directory, "MAA_CODEX_BIN": str(fake_codex)},
-                    runner=supervisor_runner,
+                    environ={"HOME": directory},
+                    sdk_runner=supervisor_runner,
                 )
 
             repo = Path(directory) / "history-repo"

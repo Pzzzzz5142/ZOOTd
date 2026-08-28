@@ -1,13 +1,14 @@
 # MAA unattended recovery scope
 
-Version: 3
+Version: 4
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
 controller independently checks the result. The recovery process is
-intentionally started with `--dangerously-bypass-approvals-and-sandbox`: there
-is no Codex sandbox and no command approval gate. This document defines the
-operational mission and stopping conditions; it is not a technical sandbox.
+intentionally started through the Codex SDK with `Sandbox.full_access` and
+`ApprovalMode.deny_all`: there is no Codex filesystem sandbox and no command
+approval gate. This document defines the operational mission and stopping
+conditions; it is not a technical sandbox.
 
 ## Mission and terminal conditions
 

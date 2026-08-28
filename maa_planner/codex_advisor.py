@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from .agent import AgentAdviceError, validate_advice
-from .codex_exec import CodexExecError, run_structured_codex
+from .codex_sdk import CodexSDKError, CodexSDKRunner, run_structured_codex
 from .util import canonical_json
 
 
@@ -30,7 +29,7 @@ fight."""
 
 
 def _model_input(evidence: Mapping[str, Any]) -> bytes:
-    """Build one explicit stdin prompt for the stable `codex exec ... -` interface."""
+    """Build the explicit text input supplied to one ephemeral SDK turn."""
 
     return (
         _PROMPT.encode("utf-8")
@@ -123,7 +122,7 @@ def run_codex_advisor(
     raw_evidence: bytes,
     *,
     environ: Mapping[str, str] | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    sdk_runner: CodexSDKRunner | None = None,
 ) -> bytes:
     evidence, allowed_stages = _parse_evidence(raw_evidence)
     try:
@@ -135,10 +134,10 @@ def run_codex_advisor(
             default_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
             workspace_prefix="maa-codex-advisor-",
             environ=environ,
-            runner=runner,
+            sdk_runner=sdk_runner,
         )
         advice = validate_advice(value, allowed_stages)
-    except (CodexExecError, AgentAdviceError) as exc:
+    except (CodexSDKError, AgentAdviceError) as exc:
         raise CodexAdvisorError(f"Codex advisor returned invalid advice: {exc}") from exc
 
     # Emit only the schema consumed by maa_planner.agent; progress and diagnostics

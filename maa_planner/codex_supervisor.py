@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
-from .codex_exec import CodexExecError, run_structured_codex
+from .codex_sdk import CodexSDKError, CodexSDKRunner, run_structured_codex
 from .supervisor import SupervisorError, validate_diagnosis
 from .util import canonical_json
 
@@ -130,7 +129,7 @@ def run_codex_supervisor(
     raw_evidence: bytes,
     *,
     environ: Mapping[str, str] | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    sdk_runner: CodexSDKRunner | None = None,
 ) -> bytes:
     evidence, run_id, expected_phases = _parse_evidence(raw_evidence)
     try:
@@ -142,12 +141,12 @@ def run_codex_supervisor(
             default_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
             workspace_prefix="maa-codex-supervisor-",
             environ=environ,
-            runner=runner,
+            sdk_runner=sdk_runner,
         )
         diagnosis = validate_diagnosis(
             value, run_id=run_id, expected_phases=expected_phases
         )
-    except (CodexExecError, SupervisorError) as exc:
+    except (CodexSDKError, SupervisorError) as exc:
         raise CodexSupervisorError(f"Codex supervisor returned invalid diagnosis: {exc}") from exc
     return canonical_json(
         {

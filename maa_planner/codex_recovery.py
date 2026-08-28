@@ -3,13 +3,17 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
+from .codex_sdk import (
+    CodexSDKError,
+    CodexSDKRequest,
+    CodexSDKRunner,
+    feature_overrides,
+    run_structured_request,
+)
 from .util import canonical_json, sha256_bytes
 
 
@@ -115,19 +119,6 @@ def _timeout_seconds(environ: Mapping[str, str]) -> int:
             "MAA_CODEX_RECOVERY_TIMEOUT_SECONDS must be between 1 and 32400"
         )
     return value
-
-
-def _codex_binary(environ: Mapping[str, str]) -> str:
-    configured = environ.get("MAA_CODEX_BIN", "codex")
-    if not configured or "\x00" in configured:
-        raise CodexRecoveryError("MAA_CODEX_BIN is invalid")
-    candidate = shutil.which(configured, path=environ.get("PATH"))
-    if candidate is None:
-        raise CodexRecoveryError(f"Codex executable was not found: {configured}")
-    resolved = Path(candidate).resolve()
-    if not resolved.is_file() or not os.access(resolved, os.X_OK):
-        raise CodexRecoveryError(f"Codex executable is not runnable: {resolved}")
-    return str(resolved)
 
 
 def _child_environment(
@@ -286,52 +277,11 @@ def _output_schema(failed_run_id: str) -> dict[str, Any]:
     }
 
 
-def _command(
-    codex: str,
-    *,
-    root: Path,
-    schema_path: Path,
-    images: list[Path],
-    model: str | None,
-) -> list[str]:
-    argv = [
-        codex,
-        "exec",
-        "--ephemeral",
-        "--ignore-user-config",
-        "--ignore-rules",
-        "--strict-config",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--cd",
-        str(root),
-    ]
-    for path in images:
-        argv.extend(("--image", str(path)))
-    argv.extend(
-        [
-            "--output-schema",
-            str(schema_path),
-            "--color",
-            "never",
-            "--config",
-            'shell_environment_policy.inherit="all"',
-            "--config",
-            'shell_environment_policy.exclude=["OPENAI_API_KEY","CODEX_API_KEY","CODEX_ACCESS_TOKEN","*_SECRET","*_TOKEN","*_KEY"]',
-        ]
-    )
-    for feature in _DISABLED_FEATURES:
-        argv.extend(("--disable", feature))
-    if model is not None:
-        argv.extend(("--model", model))
-    argv.append("-")
-    return argv
-
-
 def run_codex_recovery(
     raw_evidence: bytes,
     *,
     environ: Mapping[str, str] | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    sdk_runner: CodexSDKRunner | None = None,
 ) -> bytes:
     root = _project_root()
     evidence, failed_run_id, images = _parse_evidence(raw_evidence, root)
@@ -349,7 +299,6 @@ def run_codex_recovery(
         raise CodexRecoveryError("recovery scope identity does not match the incident")
 
     source_env = os.environ if environ is None else environ
-    codex = _codex_binary(source_env)
     timeout = _timeout_seconds(source_env)
     model = source_env.get("MAA_CODEX_RECOVERY_MODEL") or None
     if model is not None and not _MODEL_RE.fullmatch(model):
@@ -365,47 +314,33 @@ def run_codex_recovery(
     )
     if len(prompt) > MAX_INPUT_BYTES:
         raise CodexRecoveryError("recovery prompt exceeds the adapter input limit")
-
-    with tempfile.TemporaryDirectory(prefix="maa-codex-recovery-") as raw_temp:
-        schema_path = Path(raw_temp) / "output-schema.json"
-        schema_path.write_bytes(canonical_json(_output_schema(failed_run_id)))
-        schema_path.chmod(0o400)
-        argv = _command(
-            codex,
-            root=root,
-            schema_path=schema_path,
-            images=images,
-            model=model,
-        )
-        try:
-            completed = runner(
-                argv,
-                input=prompt,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=timeout,
-                check=False,
-                cwd=root,
-                env=child_env,
-                start_new_session=True,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise CodexRecoveryError(f"Codex recovery invocation failed: {exc}") from exc
-
-    if completed.returncode != 0:
-        detail = completed.stderr.decode("utf-8", errors="replace")[-4000:].strip()
-        suffix = f": {detail}" if detail else ""
-        raise CodexRecoveryError(
-            f"Codex recovery exited with status {completed.returncode}{suffix}"
-        )
-    if len(completed.stdout) > MAX_OUTPUT_BYTES:
-        raise CodexRecoveryError("Codex recovery output exceeds the adapter limit")
     try:
-        value = json.loads(completed.stdout)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise CodexRecoveryError("Codex recovery did not return one JSON object") from exc
-    if not isinstance(value, dict):
-        raise CodexRecoveryError("Codex recovery output is not a JSON object")
+        prompt_text = prompt.decode("utf-8")
+        request = CodexSDKRequest(
+            prompt=prompt_text,
+            output_schema=_output_schema(failed_run_id),
+            cwd=root,
+            sandbox="full-access",
+            images=tuple(images),
+            model=model,
+            timeout_seconds=timeout,
+            environment=child_env,
+            config_overrides=feature_overrides(_DISABLED_FEATURES)
+            + (
+                "mcp_servers={}",
+                "skills.config=[]",
+                "tools.web_search=false",
+                'shell_environment_policy.inherit="all"',
+                'shell_environment_policy.exclude=["OPENAI_API_KEY","CODEX_API_KEY","CODEX_ACCESS_TOKEN","*_SECRET","*_TOKEN","*_KEY"]',
+            ),
+        )
+        value = run_structured_request(
+            request,
+            max_output_bytes=MAX_OUTPUT_BYTES,
+            sdk_runner=sdk_runner,
+        )
+    except (UnicodeDecodeError, CodexSDKError) as exc:
+        raise CodexRecoveryError(f"Codex recovery invocation failed: {exc}") from exc
     return canonical_json(value)
 
 

@@ -54,6 +54,7 @@ flowchart LR
 - `bin/maa-host`：统一宿主入口；`run` 转入完整启动器。
 - `bin/maa-codex-advisor` / `bin/maa-codex-supervisor`：分别承载规划 NOOP 诊断和非完整模式异常分类；两者均为只读结构化 adapter。
 - `bin/maa-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
+- `requirements.txt` / `.venv/`：固定官方 Python Codex SDK 版本及其项目本地运行环境；SDK 自带匹配版本的 Codex runtime。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
 - `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存、阶段账本及 LLM 权限边界。
 - `config/farming.toml`：活动、freshness、选关和库存目标策略。
@@ -76,10 +77,10 @@ flowchart LR
 
 ## 测试策略
 
-当前 14 项测试覆盖：无人登录的 service 与任务边界、非交互运行时任务参数、单进程 Depot 和单次来源刷新、来源和库存共同授权刷图、不安全输入 fail closed、剿灭与能力账本、Depot/HTTP 缓存完整性、只读顾问、无 sandbox 恢复命令、所有阶段可重入、scope blocker、独立整轮成功校验、阶段历史哈希链，以及 Core＋资源整代原子更新、generation receipt 与回滚。
+当前 14 项测试覆盖：无人登录的 service 与任务边界、非交互运行时任务参数、单进程 Depot 和单次来源刷新、来源和库存共同授权刷图、不安全输入 fail closed、剿灭与能力账本、Depot/HTTP 缓存完整性、只读顾问、无 sandbox 恢复 SDK 请求、所有阶段可重入、scope blocker、独立整轮成功校验、阶段历史哈希链，以及 Core＋资源整代原子更新、generation receipt 与回滚。
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
 ```
 
 这组测试完全在本地运行；更新器场景使用临时目录、假 Maa 和本地 Git 仓库，不启动 MaaCore、ADB、Waydroid 或游戏。真实设备 E2E 另用 `award-only.toml`，只在设备空闲时手工执行。
@@ -94,7 +95,7 @@ sudo ./scripts/install-network-fix.sh
 ./bin/maa-planner sync
 ```
 
-`bootstrap.sh` 安装项目本地的 maa-cli；在 Arch 上会按需安装 `android-tools`、`gamescope` 和 `jq`。`install-network-fix.sh` 一次性写入 Docker 原生的 `ip-forward-no-drop` 配置，并把当前 `FORWARD` 策略切为 `ACCEPT`；它不会重启 Docker。以后 Docker 启动时不会再把转发默认策略改回 `DROP`，启动器本身只检查联网，不再动态提权改 iptables。这个 Docker 选项是宿主机级配置，适合当前单网卡的可信家庭 LAN；如果以后把机器用作多网卡/VPN 路由器，应重新审查全局转发策略。Waydroid 需先完成 `waydroid init`，并在其中安装、登录国服官服明日方舟。
+`bootstrap.sh` 安装项目本地的 maa-cli，并在 `.venv/` 安装 `requirements.txt` 固定的官方 Python Codex SDK；SDK 包自带同版本 Codex runtime，不再依赖交互 shell 中的 `codex` 可执行文件。在 Arch 上脚本还会按需安装 `android-tools`、`gamescope` 和 `jq`。`install-network-fix.sh` 一次性写入 Docker 原生的 `ip-forward-no-drop` 配置，并把当前 `FORWARD` 策略切为 `ACCEPT`；它不会重启 Docker。以后 Docker 启动时不会再把转发默认策略改回 `DROP`，启动器本身只检查联网，不再动态提权改 iptables。这个 Docker 选项是宿主机级配置，适合当前单网卡的可信家庭 LAN；如果以后把机器用作多网卡/VPN 路由器，应重新审查全局转发策略。Waydroid 需先完成 `waydroid init`，并在其中安装、登录国服官服明日方舟。
 
 `doctor` 只检查依赖、无人登录条件和已提升 runtime 的 generation receipt，不再重复启动 7 个 MaaCore dry-run。所有 Core/资源/任务兼容 dry-run 只属于 `install-core`/每日 06:30 的隔离更新事务。
 
@@ -361,7 +362,7 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 - `[agent]` 是规划器的局部顾问。只有确定性 `plan` 已得到 `NOOP`，并且原因指向上游来源不可用、schema 变化、官方/MAA 活动冲突、MAA 导航或一图流关卡映射缺失时才调用。它不能把 `NOOP` 改成 `FIGHT`。
 - `[supervisor]` 维护 launcher 的整轮确定性账本。每轮先把预期阶段和 Git 版本写入不可覆盖的起始事件，随后只追加阶段终态。非完整模式和合成探针仍可调用原来的只读分类器。
-- `[supervisor].recovery_*` 是完整 run 失败后的操作型恢复代理。cleanup 先写死失败终态并释放运行锁，再通过 `--dangerously-bypass-approvals-and-sandbox` 启动一次完全无 sandbox、无命令审批的 Codex。它能用 shell/网络直接检查 DNS、Waydroid、ADB、游戏 UI、ANR、journal 和日志，处理游戏内资源更新与官服 APK 强制更新、点安全弹窗、等待/重启，修复后反复执行新的完整 launcher。正常整轮仍然零模型调用。
+- `[supervisor].recovery_*` 是完整 run 失败后的操作型恢复代理。cleanup 先写死失败终态并释放运行锁，再通过 Python Codex SDK 以 `Sandbox.full_access` 和 `ApprovalMode.deny_all` 启动一次完全无 sandbox、无命令审批的 ephemeral thread。它能用 shell/网络直接检查 DNS、Waydroid、ADB、游戏 UI、ANR、journal 和日志，处理游戏内资源更新与官服 APK 强制更新、点安全弹窗、等待/重启，修复后反复执行新的完整 launcher。正常整轮仍然零模型调用。
 
 规划顾问 stdout 是受限 JSON：
 
@@ -401,9 +402,9 @@ jq . var/state/planner/latest-advisor-probe.json
 jq . var/state/supervisor/latest-probe.json
 ```
 
-两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。恢复 adapter 不提供会触碰真实游戏的合成探针；可用 `./bin/maa-host recover RUN_ID post-reset` 显式恢复一个尚未尝试恢复的失败 full run。`doctor` 只检查三个 adapter、Codex 版本和本地登录态，不自动发起模型请求。`config/host.env` 用 `${HOME}/.local/bin/codex` 固定无人登录时的可执行文件解析，不依赖交互 shell 的 PATH。
+两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。恢复 adapter 不提供会触碰真实游戏的合成探针；可用 `./bin/maa-host recover RUN_ID post-reset` 显式恢复一个尚未尝试恢复的失败 full run。`doctor` 只启动 SDK 自带的本地 runtime 并检查 SDK 版本与现有登录态，不自动发起模型请求。三个 adapter 固定使用项目 `.venv`，不再解析或执行外部 `codex` CLI。
 
-三个 adapter 都使用显式 stdin prompt、ephemeral session 和 JSON Schema 结构化输出。顾问/分类器继续使用空临时工作区、只读 sandbox，并关闭执行工具；恢复代理则在项目根目录启用图片输入和完全 unsandboxed shell，但关闭无关 connector/plugin/subagent。默认恢复预算为六小时，仍受 service 的十小时总预算约束。返回后 Python 二次验证所有字段；超时、非法输出、虚构成功或 Git 工作树变化均按失败关闭。OpenAI Docs 将该 bypass 开关定义为“无审批、无 sandbox”，并提示只应在外部加固环境使用；这里是 operator 明确选择，实际停止条件来自本仓库 scope，而不是 Codex sandbox。[Codex exec 官方说明](https://learn.chatgpt.com/docs/developer-commands#codex-exec)
+三个 adapter 都通过官方 Python SDK 直接提交显式文本输入、ephemeral thread 和 JSON Schema 结构化输出。顾问/分类器继续使用空临时工作区、`Sandbox.read_only`，并关闭执行、联网、MCP、plugin 和 subagent 能力；恢复代理则在项目根目录附加本地图片，使用 `Sandbox.full_access` 与 `ApprovalMode.deny_all`，但关闭无关 connector/plugin/subagent。SDK 调用使用隔离后的最小环境，并由异步超时负责取消和关闭 runtime。默认恢复预算为六小时，仍受 service 的十小时总预算约束。返回后 Python 二次验证所有字段；超时、非法输出、虚构成功或 Git 工作树变化均按失败关闭。这里的 full access 是 operator 明确选择，实际停止条件来自本仓库 scope，而不是 Codex sandbox。[Codex SDK 官方说明](https://learn.chatgpt.com/docs/codex-sdk)
 
 ## 修改与运行历史
 

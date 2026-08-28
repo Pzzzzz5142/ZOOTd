@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from maa_planner.codex_recovery import CodexRecoveryError, run_codex_recovery
+from maa_planner.codex_sdk import CodexSDKRequest
 from maa_planner.recovery import recover_failed_run, validate_recovery_report
 from maa_planner.supervisor import (
     PHASES,
@@ -94,9 +95,6 @@ class RecoveryTests(unittest.TestCase):
 
     def test_codex_recovery_is_unsandboxed_and_keeps_session_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            fake_codex = Path(directory) / "codex"
-            fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            fake_codex.chmod(0o755)
             failed_run_id = "20260828T000000.000000Z-12345678"
             scope = (ROOT / "docs/llm-recovery-scope.md").read_bytes()
             evidence = {
@@ -107,19 +105,14 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 3,
+                    "version": 4,
                 },
             }
             seen: dict[str, object] = {}
 
-            def runner(
-                argv: list[str], **kwargs: object
-            ) -> subprocess.CompletedProcess[bytes]:
-                seen["argv"] = argv
-                seen["env"] = kwargs["env"]
-                seen["prompt"] = kwargs["input"]
-                schema_path = Path(argv[argv.index("--output-schema") + 1])
-                schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            def sdk_runner(request: CodexSDKRequest) -> str:
+                seen["request"] = request
+                schema = request.output_schema
                 self.assertIn("recovered", schema["properties"]["status"]["enum"])
                 self.assertNotIn(
                     "client-package-update",
@@ -140,9 +133,7 @@ class RecoveryTests(unittest.TestCase):
                     },
                     "scope_blocker": "manual-login",
                 }
-                return subprocess.CompletedProcess(
-                    argv, 0, json.dumps(output).encode(), b""
-                )
+                return json.dumps(output)
 
             output = json.loads(
                 run_codex_recovery(
@@ -152,30 +143,32 @@ class RecoveryTests(unittest.TestCase):
                         "PATH": directory,
                         "DISPLAY": ":0",
                         "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1/bus",
-                        "OPENAI_API_KEY": "needed-by-codex-cli",
+                        "OPENAI_API_KEY": "needed-by-codex-sdk",
                         "MAA_SECRET": "must-not-leak",
-                        "MAA_CODEX_BIN": str(fake_codex),
                         "MAA_CODEX_RECOVERY_TIMEOUT_SECONDS": "120",
                     },
-                    runner=runner,
+                    sdk_runner=sdk_runner,
                 )
             )
-            argv = seen["argv"]
-            self.assertIsInstance(argv, list)
-            assert isinstance(argv, list)
-            self.assertIn("--dangerously-bypass-approvals-and-sandbox", argv)
-            self.assertNotIn("--sandbox", argv)
-            self.assertNotIn('approval_policy="never"', argv)
+            request = seen["request"]
+            self.assertIsInstance(request, CodexSDKRequest)
+            assert isinstance(request, CodexSDKRequest)
+            self.assertTrue(request.ephemeral)
+            self.assertEqual(request.approval_mode, "deny-all")
+            self.assertEqual(request.sandbox, "full-access")
             disabled = {
-                argv[index + 1]
-                for index, value in enumerate(argv[:-1])
-                if value == "--disable"
+                value.removeprefix("features.").removesuffix("=false")
+                for value in request.config_overrides
+                if value.startswith("features.") and value.endswith("=false")
             }
             self.assertNotIn("shell_tool", disabled)
             self.assertNotIn("unified_exec", disabled)
             self.assertNotIn("view_image", disabled)
-            self.assertIn('shell_environment_policy.inherit="all"', argv)
-            child_env = seen["env"]
+            self.assertIn(
+                'shell_environment_policy.inherit="all"',
+                request.config_overrides,
+            )
+            child_env = request.environment
             self.assertIsInstance(child_env, dict)
             assert isinstance(child_env, dict)
             self.assertEqual(child_env["MAA_RECOVERY_ACTIVE"], "true")
@@ -183,13 +176,12 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(child_env["DISPLAY"], ":0")
             self.assertIn("OPENAI_API_KEY", child_env)
             self.assertNotIn("MAA_SECRET", child_env)
-            prompt = seen["prompt"]
-            self.assertIsInstance(prompt, bytes)
-            assert isinstance(prompt, bytes)
-            self.assertIn(b"completely unsandboxed shell", prompt)
-            self.assertIn(b"client APK update", prompt)
+            prompt = request.prompt
+            self.assertIsInstance(prompt, str)
+            self.assertIn("completely unsandboxed shell", prompt)
+            self.assertIn("client APK update", prompt)
             self.assertIn(
-                b"Every managed stage, including daily, is reentrant", prompt
+                "Every managed stage, including daily, is reentrant", prompt
             )
             self.assertEqual(output["scope_blocker"], "manual-login")
 
@@ -197,11 +189,8 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(CodexRecoveryError, "scope identity"):
                 run_codex_recovery(
                     json.dumps(evidence).encode(),
-                    environ={
-                        "HOME": directory,
-                        "MAA_CODEX_BIN": str(fake_codex),
-                    },
-                    runner=runner,
+                    environ={"HOME": directory},
+                    sdk_runner=sdk_runner,
                 )
 
     def test_recovery_is_green_only_after_new_complete_full_audit(self) -> None:

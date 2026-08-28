@@ -4,6 +4,8 @@ set -Eeuo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 install_dir="${project_root}/.local/bin"
 version=0.7.5
+sdk_version=0.147.0
+venv_dir="${project_root}/.venv"
 
 case "$(uname -m)" in
     x86_64)
@@ -35,11 +37,6 @@ if (( ${#missing_packages[@]} > 0 )); then
     fi
 fi
 
-if [[ -x "${install_dir}/maa" ]] && [[ "$("${install_dir}/maa" --version)" == "maa ${version}" ]]; then
-    printf 'maa-cli %s is already installed.\n' "${version}"
-    exit 0
-fi
-
 require_command() {
     command -v "$1" >/dev/null 2>&1 || {
         printf 'Required command not found: %s\n' "$1" >&2
@@ -47,32 +44,64 @@ require_command() {
     }
 }
 
-require_command curl
-require_command sha256sum
-require_command tar
+require_command python3
 
-archive="maa_cli-v${version}-${target}.tar.gz"
-download_url="https://github.com/MaaAssistantArknights/maa-cli/releases/download/v${version}/${archive}"
-temp_dir="$(mktemp -d)"
+if [[ -x "${install_dir}/maa" ]] && [[ "$("${install_dir}/maa" --version)" == "maa ${version}" ]]; then
+    printf 'maa-cli %s is already installed.\n' "${version}"
+else
+    require_command curl
+    require_command sha256sum
+    require_command tar
 
-cleanup_temp() {
-    if [[ -n "${temp_dir:-}" && -d "${temp_dir}" && "${temp_dir}" == /tmp/tmp.* ]]; then
-        rm -r -- "${temp_dir}"
-    fi
-}
-trap cleanup_temp EXIT
+    archive="maa_cli-v${version}-${target}.tar.gz"
+    download_url="https://github.com/MaaAssistantArknights/maa-cli/releases/download/v${version}/${archive}"
+    temp_dir="$(mktemp -d)"
 
-printf 'Downloading maa-cli %s for %s...\n' "${version}" "${target}"
-curl --fail --location --output "${temp_dir}/${archive}" "${download_url}"
-printf '%s  %s\n' "${checksum}" "${temp_dir}/${archive}" | sha256sum --check --status
-tar -xzf "${temp_dir}/${archive}" -C "${temp_dir}"
+    cleanup_temp() {
+        if [[ -n "${temp_dir:-}" && -d "${temp_dir}" && "${temp_dir}" == /tmp/tmp.* ]]; then
+            rm -r -- "${temp_dir}"
+        fi
+    }
+    trap cleanup_temp EXIT
 
-maa_source="$(find "${temp_dir}" -type f -name maa -print -quit)"
-[[ -n "${maa_source}" ]] || {
-    printf 'maa binary not found in release archive.\n' >&2
-    exit 1
-}
+    printf 'Downloading maa-cli %s for %s...\n' "${version}" "${target}"
+    curl --fail --location --output "${temp_dir}/${archive}" "${download_url}"
+    printf '%s  %s\n' "${checksum}" "${temp_dir}/${archive}" | sha256sum --check --status
+    tar -xzf "${temp_dir}/${archive}" -C "${temp_dir}"
 
-install -d -- "${install_dir}"
-install -m 0755 -- "${maa_source}" "${install_dir}/maa"
-printf 'Installed %s\n' "${install_dir}/maa"
+    maa_source="$(find "${temp_dir}" -type f -name maa -print -quit)"
+    [[ -n "${maa_source}" ]] || {
+        printf 'maa binary not found in release archive.\n' >&2
+        exit 1
+    }
+
+    install -d -- "${install_dir}"
+    install -m 0755 -- "${maa_source}" "${install_dir}/maa"
+    printf 'Installed %s\n' "${install_dir}/maa"
+fi
+
+if [[ ! -x "${venv_dir}/bin/python" ]]; then
+    printf 'Creating the project-local Python environment.\n'
+    python3 -m venv "${venv_dir}"
+fi
+
+if "${venv_dir}/bin/python" - "${sdk_version}" <<'PY'
+import importlib.metadata
+import sys
+
+try:
+    import openai_codex  # noqa: F401
+    installed = importlib.metadata.version("openai-codex")
+except (ImportError, importlib.metadata.PackageNotFoundError):
+    raise SystemExit(1)
+raise SystemExit(installed != sys.argv[1])
+PY
+then
+    printf 'openai-codex SDK %s is already installed.\n' "${sdk_version}"
+else
+    "${venv_dir}/bin/python" -m pip install \
+        --disable-pip-version-check \
+        --requirement "${project_root}/requirements.txt"
+    printf 'Installed openai-codex SDK %s in %s\n' \
+        "${sdk_version}" "${venv_dir}"
+fi

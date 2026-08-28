@@ -172,7 +172,7 @@ run_raw_task() {
 
 doctor() {
     local failed=0
-    local codex_bin="${MAA_CODEX_BIN:-codex}"
+    local sdk_python="${MAA_CODEX_SDK_PYTHON:-${project_root}/.venv/bin/python}"
 
     import_desktop_environment
     info "project: ${project_root}"
@@ -214,12 +214,12 @@ doctor() {
             "${recovery_adapter}" >&2
         failed=1
     fi
-    if command -v "${codex_bin}" >/dev/null 2>&1; then
-        "${codex_bin}" --version || failed=1
-        "${codex_bin}" login status || failed=1
+    if [[ -x "${sdk_python}" ]]; then
+        PYTHONPATH="${project_root}" \
+            "${sdk_python}" -m maa_planner.codex_sdk doctor || failed=1
     else
-        printf '[maa-host] configured Codex executable is unavailable: %s\n' \
-            "${codex_bin}" >&2
+        printf '[maa-host] Codex SDK environment is unavailable: %s; run scripts/bootstrap.sh\n' \
+            "${sdk_python}" >&2
         failed=1
     fi
 
