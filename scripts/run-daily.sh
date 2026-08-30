@@ -69,7 +69,6 @@ waydroid_ui_log=""
 core_log="${MAA_STATE_DIR:-${project_root}/var/state}/debug/asst.log"
 regular_fallback_stages=(AP-5 1-7)
 activity_fight_completed=false
-fight_attempted=false
 server_timezone=Asia/Shanghai
 daily_completed_game_day=""
 daily_attempt_timeout=3h
@@ -728,7 +727,6 @@ run_sanity_fight() {
         info "pre-reset Fight window is closed; preserving time for final Award"
         return 1
     fi
-    fight_attempted=true
     render_runtime_task sanity-fight "${stage_code}"
     run_soft_with_timeout "${duration_seconds}s" env \
         MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${log_file}" \
@@ -747,7 +745,6 @@ run_verify_fight() {
         info "pre-reset Fight window is closed; skipping proxy verification"
         return 1
     fi
-    fight_attempted=true
     render_runtime_task verify-fight "${stage_code}"
     run_soft_with_timeout "${duration_seconds}s" env \
         MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${log_file}" \
@@ -1029,7 +1026,6 @@ run_weekly_annihilation_if_due() {
             break
         fi
         command_succeeded=false
-        fight_attempted=true
         info "weekly Annihilation transaction ${transaction}/${max_transactions}; client proxy state is re-checked"
         if run_soft_with_timeout "${transaction_timeout_seconds}s" "${maa}" --batch \
             --log-file="${transaction_log}" run annihilation \
@@ -1119,10 +1115,6 @@ run_regular_fallback() {
             return 0
         fi
         info "${stage_code} was unavailable or produced no fresh proof; trying the next fallback"
-        if [[ "${pre_reset_slot}" == true && "${fight_attempted}" == true ]]; then
-            info "pre-reset Fight was attempted; returning immediately for final Award"
-            break
-        fi
     done
     return 1
 }
@@ -1204,10 +1196,6 @@ run_planned_activity_candidates() {
         else
             info "${stage_code} fight evidence could not be reconciled; local capability state is unchanged"
         fi
-        if [[ "${pre_reset_slot}" == true && "${fight_attempted}" == true ]]; then
-            info "pre-reset Fight was attempted; returning immediately for final Award"
-            return 1
-        fi
     done < <(
         jq -r '
             .evidence.execution_candidates[]
@@ -1241,8 +1229,7 @@ refresh_planner_sources_if_needed() {
     # Refresh network sources exactly once. Every later planner in this
     # launcher run revalidates the resulting cache offline, so Annihilation and
     # material planning cannot each redownload the same MAA/official payloads.
-    if [[ "${pre_reset_slot}" == true || -n "${stage}" ||
-          "${auto_farm_ready}" != true ]]; then
+    if [[ -n "${stage}" || "${auto_farm_ready}" != true ]]; then
         info "refreshing the shared activity calendar once; this path does not need a new efficiency download"
         source_refresh_evidence="${project_root}/var/state/planner/latest-activity-calendar.json"
         if run_farming_soft_with_timeout 300 "${planner}" sync-calendar; then
@@ -1251,7 +1238,7 @@ refresh_planner_sources_if_needed() {
     else
         info "refreshing all planner sources once for this launcher run"
         source_refresh_evidence="${project_root}/var/state/planner/latest-sources.json"
-        if run_soft_with_timeout 15m "${planner}" sync --skip-maa-hot-update; then
+        if run_farming_soft_with_timeout 900 "${planner}" sync --skip-maa-hot-update; then
             refresh_succeeded=true
         fi
     fi
@@ -1299,12 +1286,6 @@ prepare_daily_drone_policy() {
     if [[ "${farming_contracts_ready}" != true ]]; then
         drone_mode=_NotUse
         info "drone Depot skipped because its managed-task contract is invalid"
-        return 0
-    fi
-
-    if [[ "${pre_reset_slot}" == true ]]; then
-        drone_mode=_NotUse
-        info "pre-reset skips only the auxiliary drone Depot; the complete old-game-day daily still runs"
         return 0
     fi
 
@@ -1576,10 +1557,7 @@ fi
 info "daily-first mode: protecting the game day that ends at 04:00 ${server_timezone}"
 supervisor_begin_phase depot
 prepare_daily_drone_policy
-if [[ "${pre_reset_slot}" == true ]]; then
-    supervisor_record_phase depot not-applicable pre-reset-auxiliary-scan-skipped \
-        --detail "drone_mode=${drone_mode}" || true
-elif [[ "${farming_contracts_ready}" != true ]]; then
+if [[ "${farming_contracts_ready}" != true ]]; then
     supervisor_record_phase depot degraded managed-task-contract-invalid \
         --detail "drone_mode=${drone_mode}" || true
 elif [[ "${depot_scan_outcome}" == ready && -f "${depot_evidence_log}" ]]; then
@@ -1743,16 +1721,7 @@ else
     farming_phase_outcome=automatic-farming-unavailable
 fi
 
-if [[ "${pre_reset_slot}" == true && "${fight_attempted}" == true ]]; then
-    info "pre-reset Fight was attempted; skipping fallback and proceeding to final Award"
-    if [[ "${activity_fight_completed}" == true ]]; then
-        farming_phase_result=succeeded
-        farming_phase_outcome=activity-fight-three-star-verified
-    elif [[ -z "${stage}" ]]; then
-        farming_phase_result=policy-resolved
-        farming_phase_outcome=pre-reset-cutoff-after-fight-attempt
-    fi
-elif [[ -z "${stage}" && "${farm_mode}" == auto &&
+if [[ -z "${stage}" && "${farm_mode}" == auto &&
         "${activity_fight_completed}" != true ]]; then
     info "no activity-stage fight was completed; entering AP-5 -> 1-7 fallback"
     if run_regular_fallback; then

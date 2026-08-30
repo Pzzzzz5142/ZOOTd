@@ -26,7 +26,7 @@ yituliu_stage_seconds = 86400
 yituliu_matrix_seconds = 259200
 yituliu_value_seconds = 86400
 # Automatic execution takes at most one Depot snapshot in the current launcher
-# run. The post-reset slot takes it before daily for drones and reuses it for
+# run. Both scheduled slots take it before daily for drones and reuse it for
 # farming; this is the maximum delay allowed between that scan and the decision.
 inventory_seconds = 1800
 

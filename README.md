@@ -172,7 +172,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 
 启动器会在 daily 前执行一次只读 Depot 扫描，并按赤金（物品 ID `3003`）库存确定 MAA 的无人机目标：少于 `150` 时选择 `PureGold` 加速赤金制造站，达到或超过 `150` 时选择 `Money` 加速贸易站。阈值由 `config/host.env` 的 `MAA_PURE_GOLD_DRONE_THRESHOLD` 配置。
 
-这个选择完全由确定性程序完成，不依赖 LLM。每轮最多执行一次 Depot：07:30 在 daily 前取得的同一快照既决定无人机，也供稍后的材料关求解器复用；因此 daily 期间由基建或信用商店带来的库存变化要到下一轮才会反映。首次前置启动失败会重试一次；若两次都失败且尚未执行 Depot，daily 仍照常运行，并把本轮唯一的 Depot 机会留到材料规划前，此时无人机安全回退为 `_NotUse`。若唯一一次 Depot 已执行但扫描不完整、赤金未识别、快照过期或账号不匹配，则不会二次扫描或猜测库存。
+这个选择完全由确定性程序完成，不依赖 LLM。03:00 与 07:30 每轮都最多执行一次 Depot，并在 daily 前取得快照；同一快照既决定无人机，也供稍后的材料关求解器复用，因此 daily 期间由基建或信用商店带来的库存变化要到下一轮才会反映。前置扫描失败时 daily 仍照常运行，无人机安全回退为 `_NotUse`；若唯一一次 Depot 已执行但扫描不完整、赤金未识别、快照过期或账号不匹配，则不会二次扫描或猜测库存。
 
 无人机与关卡都不是 maa-cli 用户输入。受管任务文件只保存普通字符串基线，启动器将确定性结果写入 `var/state/host/maa-config.*` 下权限隔离的临时配置视图，再让 MaaCore 读取；因此不会显示 `Select/Input` prompt，也不从终端读取答案。渲染器只接受 `_NotUse`、`PureGold`、`Money` 或通过关卡码白名单格式校验的值，并证明输出只改变目标字段；临时视图在本轮清理阶段删除。
 
@@ -230,11 +230,11 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 默认顺序如下：
 
 1. 用一次纯本地检查核对静态安全契约和 06:30 更新器写入的 runtime generation receipt；不会启动 MaaCore。receipt 与 live Core、资源、API cache 或受管任务配置不一致时整轮失败关闭。
-2. 07:30 槽用一个原生 `startup = true` 的 MAA task 同时启动游戏并执行本轮唯一的只读 Depot 扫描，以赤金 `150` 阈值确定本轮无人机目标；不再为 Depot 单独启动一个 StartUp Core。03:00 保护槽跳过这个前置步骤并禁用无人机，优先把时间留给旧游戏日。
+2. 03:00 与 07:30 都用一个原生 `startup = true` 的 MAA task 同时启动游戏并执行本轮唯一的只读 Depot 扫描，以赤金 `150` 阈值确定本轮无人机目标；不再为 Depot 单独启动一个 StartUp Core。
 3. 两个槽都运行同一份完整 daily（基建、普通公招、小车公招、信用商店）；daily 可重入，首次 attempt 未形成完整证明时直接重试一次，不受已有状态 marker 限制。
-4. 每轮只联网刷新一次规划来源：03:00 只刷新剿灭和活动共同依赖的鹰角公告＋MAA 活动日历，并复用上一轮仍新鲜的一图流缓存；07:30 刷新完整来源。live MAA 资源仍只由独立的受控更新器写入。
+4. 每轮只联网刷新一次完整规划来源；03:00 与 07:30 使用同一路径。live MAA 资源仍只由独立的受控更新器写入。
 5. 用本轮缓存离线计算本周剿灭窗口；到期时按单次代理事务执行，逐次读取客户端周进度，满额才登记完成。来源刷新失败不会在这个阶段再次轰炸同一端点。
-6. 材料规划复用本轮已有的 Depot 快照；03:00 槽才在此执行本轮唯一一次扫描。已尝试但失败的 Depot 不会在同一轮重复；决策同样只离线校验并复用第 4 步缓存，不做第二轮网络刷新。
+6. 材料规划复用 daily 前取得的 Depot 快照。已尝试但失败的 Depot 不会在同一轮重复；决策同样只离线校验并复用第 4 步缓存，不做第二轮网络刷新。
 7. 仅当 JSON 为合法 `FIGHT` 且启动器二次校验所有有序候选的关卡码、活动实例、材料及两天临期药参数后，逐关执行零次战斗导航与客户端代理勾选检查。
 8. 只有客户端 preflight 成功才执行真实 Fight；没有可用代理或普通执行失败时尝试下一候选，只有本次日志明确出现目标关非三星结果才隔离该活动实例的关卡。
 9. 所有活动候选均没有新鲜三星完成证明时，依次尝试 `AP-5`、`1-7`；只有本次 MaaCore 日志证明对应关卡三星完成才停止回退。这样 AP-5 的开放判断来自实际 MAA 导航，也能兼容临时资源本全开放。
@@ -334,10 +334,10 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 - `var/state/supervisor/latest-probe.json` 与 `probes/`：异常监督器的合成连通性探针，不启动 Waydroid、MAA 或游戏。
 - `var/state/runtime/maa-resource.json`：最近候选/当前 Core 版本、资源提交、组合选择、验证结果、generation fingerprint 及回滚原因。
 - `var/cache/planner/http/`：响应正文和带请求身份、ETag、时间及 SHA-256 的 metadata。
-- `var/state/host/*-pre-daily-depot.log`：07:30 在 daily 前取得、同时用于无人机和材料规划的本轮唯一 Depot 日志。
+- `var/state/host/*-pre-daily-depot.log`：03:00 与 07:30 在 daily 前取得、同时用于无人机和材料规划的本轮唯一 Depot 日志。
 - `var/state/host/*-e2e-award.log`：只领取普通任务奖励的轻量 E2E 探针日志；必须仅含 `Award Completed` 与总链完成证明。
 - `var/state/host/*-award-final.log`：正式 service 最后的同一 Award-only 任务日志，同样禁止出现基建、公招、商店、邮件或战斗任务。
-- `var/state/host/*-depot.log`：03:00 延后取得的本轮唯一 Depot 日志；`*-proxy-preflight-<stage>.log`、`*-annihilation-*.log`、`*-farm-<stage>.log`、`*-daily.log` 分别记录单进程客户端代理 preflight、剿灭、各候选刷图和日常执行。
+- `var/state/host/*-depot.log`：仅在前置 Depot 尚未尝试时由材料规划补取的库存日志；`*-proxy-preflight-<stage>.log`、`*-annihilation-*.log`、`*-farm-<stage>.log`、`*-daily.log` 分别记录单进程客户端代理 preflight、剿灭、各候选刷图和日常执行。
 - `var/state/debug/asst.log`：用于验证本次三星完成的 MaaCore 核心日志。
 
 安全拒绝是正常业务结果，因此 `plan` 写入 `NOOP` 时通常仍退出 0；调用方必须读取 JSON 的 `decision` 和 `reason`。`sync`、`validate-config` 等操作失败才使用非零退出码。
@@ -414,7 +414,7 @@ jq . var/state/supervisor/latest-probe.json
 
 ## systemd 定时托管
 
-三个 timer 固定按国服时区 `Asia/Shanghai` 运行。`06:30` 只做隔离的 Core/资源候选验证，不启动 Waydroid；游戏任务在每天 `03:00` 与 `07:30` 运行。两次游戏任务都调用同一个启动器和同一份完整 `daily.toml`，各执行受保护的两段基建、两段公招和信用商店，再规划剿灭和材料刷图，最后只执行 Award-only。明日方舟在 `04:00` 切换游戏日，因此 03:00 清即将结束的游戏日；该槽位跳过的只是前置 Depot/无人机辅助决策，不会裁剪 daily，整个刷图阶段（活动日历、启动、Depot、代理检查和 Fight）共用 03:25 硬截止。剿灭只有在截止前仍容得下完整 30 分钟事务时才启动，不会为了旧周补救而中途打断一场；若全权委托较快结束，剩余窗口仍可交给无限额临期药材料 Fight；若没有代理卡，则 30 分钟预算允许普通代理完整跑完。07:30 清重置后的新游戏日并承担完整库存、无人机、剿灭和材料计划。它们不依赖宿主当前设置的时区。安装并启用：
+三个 timer 固定按国服时区 `Asia/Shanghai` 运行。`06:30` 只做隔离的 Core/资源候选验证，不启动 Waydroid；游戏任务在每天 `03:00` 与 `07:30` 运行。两个游戏槽位的业务步骤完全相同：先做 Depot 和无人机决策，再运行同一份完整 `daily.toml`，刷新同一组完整规划来源，规划剿灭和材料刷图，最后只执行 Award-only。明日方舟在 `04:00` 切换游戏日，因此 03:00 清即将结束的游戏日，07:30 清重置后的新游戏日。为了不让 03:00 的旧游戏日任务跨过重置，它的刷图阶段共用 03:25 硬截止；这只缩短可用执行窗口，不改变任务顺序、无人机策略、候选回退或来源范围。剿灭只有在截止前仍容得下完整 30 分钟事务时才启动，不会为了旧周补救而中途打断一场。两个槽位都不依赖宿主当前设置的时区。安装并启用：
 
 ```bash
 ./scripts/install-systemd.sh --enable
@@ -438,7 +438,7 @@ jq . var/state/supervisor/latest-probe.json
 
 2026-08-26 的 03:00 与 07:30 日志证明 MAA 都没有进入训练室，但四间宿舍运行时 `m_notstationed_filter_enabled` 均为 `0`；宿舍因此能选中仍进驻训练室的干员。根因是旧配置把 `dorm_notstationed_enabled` 设为 `false`，以及文档错误地把“Training 不在 facility 白名单”当成了人员不会被跨设施改派。现在默认宿舍流程已被移出普通设施任务，改由上述未进驻-only 自定义宿舍阶段处理；静态契约与完成日志计数共同防止该假设再次回归。
 
-同日的进程审计还发现，03:00/07:30 正式 service 在接触设备前分别启动 7 个 MaaCore dry-run，而代理 preflight 又为导航和画面确认各启动一次。现在完整 Core 兼容验证只属于 06:30 更新事务，正式 service 和 `doctor` 使用持久化 generation receipt；代理两步合并为一个 Core 任务链；在 operator 明确所有阶段可重入后，daily 允许一次直接重试，恢复代理也允许反复重跑完整链路。后续同一轮审计又移除了 Depot 前独立的 StartUp Core，并把最多三轮相同来源联网刷新收敛为一次。正常单活动关路径下，03:00 约为 5 次 MaaCore（daily、Depot、proxy-preflight、Fight、Award）；07:30 若另含一笔剿灭约为 6 次（再加 Annihilation）。额外进程只来自 daily 重试、逐笔剿灭、候选/常驻关回退或异常恢复。
+同日的进程审计还发现，03:00/07:30 正式 service 在接触设备前分别启动 7 个 MaaCore dry-run，而代理 preflight 又为导航和画面确认各启动一次。现在完整 Core 兼容验证只属于 06:30 更新事务，正式 service 和 `doctor` 使用持久化 generation receipt；代理两步合并为一个 Core 任务链；在 operator 明确所有阶段可重入后，daily 允许一次直接重试，恢复代理也允许反复重跑完整链路。后续同一轮审计又移除了 Depot 前独立的 StartUp Core，并把最多三轮相同来源联网刷新收敛为一次。两个定时槽在正常单活动关路径下都约为 5 次 MaaCore（Depot、daily、proxy-preflight、Fight、Award）；每笔到期的剿灭再增加一次 Annihilation。额外进程只来自 daily 重试、逐笔剿灭、候选/常驻关回退或异常恢复。
 
 2026-08-27 的真实 headless 验收先运行 Award-only，日志只有 StartUp 与 Award。随后 runtime 更新拒绝了仍与 stable Core 不兼容的最新 MaaResource，并把兼容 live overlay、fresh API cache 和当前受管配置密封为 schema 3。完整流程恰好产生 Depot、daily、单笔 Annihilation、单进程 proxy-preflight、Fight、最终 Award 六份 MAA 日志：Depot 在一个 Core 内完成 StartUp 并读取 79 项库存；daily 有两次 Infrast、四间 Dorm、两次 Recruit、一次 Mall 和零次 Training；Core 对四间受保护 Dorm 实际记录了四个 `m_notstationed_filter_enabled: 1`、零个 `0`。来源只联网刷新一轮；剿灭缺少周进度强证据时保留 unknown 并继续普通刷关；AT-6 的客户端 PRTS preflight 和八连三星 Fight 成功；最终 Award 日志没有任何基建、公招、商店、Depot 或 Fight 标记。流程结束后 schema 3 receipt 仍通过校验。
 

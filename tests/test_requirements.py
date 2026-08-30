@@ -362,6 +362,10 @@ class HighLevelRequirementTests(unittest.TestCase):
         final_award = 'run_award_only "final service phase" "award-final"'
         self.assertEqual(launcher.count(final_award), 1)
         self.assertGreater(launcher.index(final_award), launcher.index("run_regular_fallback"))
+        scheduled_workflow = launcher[
+            launcher.index('info "daily-first mode: protecting the game day'):
+        ]
+        self.assertNotIn("pre_reset_slot", scheduled_workflow)
         self.assertIn('"${planner}" validate-service-readiness --value-only', launcher)
         self.assertNotIn('--profile "${MAA_HOST_PROFILE}" --dry-run', launcher)
         self.assertIn('[[ "${MAA_HOST_PROFILE}" == waydroid ]]', launcher)
@@ -423,6 +427,11 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertNotIn("check-fight", activity_function)
         self.assertNotIn("record-fight", activity_function)
         self.assertNotIn("quarantine-fight", activity_function)
+        self.assertNotIn("pre_reset_slot", activity_function)
+
+        fallback_start = launcher.index("run_regular_fallback() {")
+        fallback_end = launcher.index("\nactivity_decision_is_safe() {", fallback_start)
+        self.assertNotIn("pre_reset_slot", launcher[fallback_start:fallback_end])
 
         self.assertNotIn("start_game_for_depot_with_retry", launcher)
         self.assertNotIn("startup Official", launcher)
@@ -467,6 +476,16 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn('if [[ "${depot_scan_attempted}" == true ]]', reuse_function)
         self.assertIn("no second scan", reuse_function)
 
+        drone_start = launcher.index("prepare_daily_drone_policy() {")
+        drone_end = launcher.index(
+            "\nensure_farming_inventory_snapshot() {", drone_start
+        )
+        drone_function = launcher[drone_start:drone_end]
+        self.assertNotIn("pre_reset_slot", drone_function)
+        self.assertEqual(drone_function.count("scan_depot_inventory_once"), 1)
+        self.assertNotIn("pre-reset-auxiliary-scan-skipped", launcher)
+        self.assertNotIn("pre-reset-cutoff-after-fight-attempt", launcher)
+
         refresh_start = launcher.index("refresh_planner_sources_if_needed() {")
         refresh_end = launcher.index(
             "\nselect_daily_drone_policy_from_snapshot() {", refresh_start
@@ -477,6 +496,7 @@ class HighLevelRequirementTests(unittest.TestCase):
             refresh_function.count('"${planner}" sync --skip-maa-hot-update'),
             1,
         )
+        self.assertNotIn("pre_reset_slot", refresh_function)
         self.assertIn("planner_source_args=(--offline)", refresh_function)
         self.assertEqual(
             launcher.count('"${planner_source_args[@]}" --skip-maa-hot-update'),
