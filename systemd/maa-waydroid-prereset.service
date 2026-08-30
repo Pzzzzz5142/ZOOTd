@@ -9,7 +9,8 @@ ConditionPathExists=%h/Projects/maa-waydroid/bin/maa-host
 Type=oneshot
 WorkingDirectory=%h/Projects/maa-waydroid
 ExecStart=%h/Projects/maa-waydroid/bin/maa-host run --pre-reset-slot
-# Starting is guarded to 03:00-03:04. Force cleanup before the 04:00 reset.
+# Initial starts are guarded to 03:00-03:04; scoped recovery may replay before
+# 03:25. Force cleanup before the 04:00 reset.
 TimeoutStartSec=50m
 TimeoutStopSec=4m
 KillSignal=SIGINT

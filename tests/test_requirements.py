@@ -33,6 +33,7 @@ from maa_planner.codex_supervisor import (
     run_codex_supervisor,
 )
 from maa_planner.inventory import (
+    InventoryParseError,
     InventorySnapshot,
     InventoryValidationError,
     extract_depot_snapshot,
@@ -380,6 +381,13 @@ class HighLevelRequirementTests(unittest.TestCase):
             farming_config["supervisor"]["recovery_timeout_seconds"], 21600
         )
         self.assertIn("MAA_RECOVERY_ACTIVE", launcher)
+        pre_reset_guard = launcher[
+            launcher.index('if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]'):
+            launcher.index('\nmkdir -p -- "${project_root}/var/run"')
+        ]
+        self.assertIn('[[ "${MAA_RECOVERY_ACTIVE}" != true ]]', pre_reset_guard)
+        self.assertIn("server_minute >= 205", pre_reset_guard)
+        self.assertIn("03:25 cutoff", pre_reset_guard)
         self.assertIn(" supervisor-recover-run --run-id ", launcher)
         self.assertIn("--defer-to-recovery", launcher)
         recovery_scope = (ROOT / "docs/llm-recovery-scope.md").read_text()
@@ -445,6 +453,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         self.assertIn('if [[ "${depot_scan_attempted}" == true ]]', depot_function)
         self.assertIn("depot_scan_attempted=true", depot_function)
+        self.assertIn('if [[ "${command_succeeded}" != true ]]', depot_function)
         self.assertIn("inventory_snapshot_ready=true", depot_function)
         self.assertEqual(depot_function.count('"${maa}"'), 1)
 
@@ -483,6 +492,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         drone_function = launcher[drone_start:drone_end]
         self.assertNotIn("pre_reset_slot", drone_function)
         self.assertEqual(drone_function.count("scan_depot_inventory_once"), 1)
+        self.assertIn("depot_scan_outcome=drone-target-unavailable", drone_function)
         self.assertNotIn("pre-reset-auxiliary-scan-skipped", launcher)
         self.assertNotIn("pre-reset-cutoff-after-fight-attempt", launcher)
 
@@ -886,6 +896,17 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         snapshot = extract_depot_snapshot(depot)
         self.assertEqual(select_drone_mode(snapshot), ("PureGold", 149))
+        empty_depot = callback(
+            "SubTaskExtraInfo",
+            {
+                "what": "DepotInfo",
+                "details": {"done": True, "data": "{}"},
+                "taskchain": "Depot",
+                "taskid": 1,
+            },
+        )
+        with self.assertRaises(InventoryParseError):
+            extract_depot_snapshot(empty_depot)
         self.assertEqual(
             select_drone_mode(
                 InventorySnapshot(

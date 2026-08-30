@@ -281,6 +281,8 @@ def extract_depot_snapshot(
         raise InventoryParseError("latest final Depot result is invalid") from last_error
     if not saw_final or last_items is None:
         raise InventoryParseError("no final done=true Depot result found")
+    if not last_items:
+        raise InventoryParseError("final Depot result contains no observed items")
 
     return InventorySnapshot(
         items=last_items,

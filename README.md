@@ -172,7 +172,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 
 启动器会在 daily 前执行一次只读 Depot 扫描，并按赤金（物品 ID `3003`）库存确定 MAA 的无人机目标：少于 `150` 时选择 `PureGold` 加速赤金制造站，达到或超过 `150` 时选择 `Money` 加速贸易站。阈值由 `config/host.env` 的 `MAA_PURE_GOLD_DRONE_THRESHOLD` 配置。
 
-这个选择完全由确定性程序完成，不依赖 LLM。03:00 与 07:30 每轮都最多执行一次 Depot，并在 daily 前取得快照；同一快照既决定无人机，也供稍后的材料关求解器复用，因此 daily 期间由基建或信用商店带来的库存变化要到下一轮才会反映。前置扫描失败时 daily 仍照常运行，无人机安全回退为 `_NotUse`；若唯一一次 Depot 已执行但扫描不完整、赤金未识别、快照过期或账号不匹配，则不会二次扫描或猜测库存。
+这个选择完全由确定性程序完成，不依赖 LLM。03:00 与 07:30 每轮都最多执行一次 Depot，并在 daily 前取得快照；同一快照既决定无人机，也供稍后的材料关求解器复用，因此 daily 期间由基建或信用商店带来的库存变化要到下一轮才会反映。前置扫描失败时 daily 仍照常运行，无人机安全回退为 `_NotUse`，但 Depot 阶段必须记为 `degraded`，从而在整轮清理后触发操作型恢复；MAA 命令非零、空 `{}` 结果或赤金未识别都不能伪装成成功快照。唯一一次 Depot 已执行但扫描不完整、快照过期或账号不匹配时，本轮不会二次扫描或猜测库存，恢复代理只能通过一轮新的完整 launcher 重试取得新快照。
 
 无人机与关卡都不是 maa-cli 用户输入。受管任务文件只保存普通字符串基线，启动器将确定性结果写入 `var/state/host/maa-config.*` 下权限隔离的临时配置视图，再让 MaaCore 读取；因此不会显示 `Select/Input` prompt，也不从终端读取答案。渲染器只接受 `_NotUse`、`PureGold`、`Money` 或通过关卡码白名单格式校验的值，并证明输出只改变目标字段；临时视图在本轮清理阶段删除。
 
@@ -420,7 +420,7 @@ jq . var/state/supervisor/latest-probe.json
 ./scripts/install-systemd.sh --enable
 ```
 
-两个游戏槽位使用独立 service，避免同一个 oneshot 吞掉第二次触发。03:00 service 使用 `--pre-reset-slot`（隐含 `--daily-first`），只接受 `03:00`–`03:04` 启动，并以 50 分钟运行上限加 4 分钟清理上限保证在 04:00 前退出；休眠后过时的 03:00 触发会直接跳过。07:30 service 使用 `--post-reset-slot` 和 `Persistent=true`，但在 `03:00`–`04:00` 保护窗内不做追补。两个入口都会先停止仍占用设备的另一个定时槽，再获取全局锁；每个槽位内部只启动一个 Waydroid 会话，并在整轮结束时统一关闭。06:30 runtime timer 使用 `Persistent=false`，避免开机补跑更新与 07:30 游戏任务争锁；候选失败只保留 live 旧版，不影响游戏 service。
+两个游戏槽位使用独立 service，避免同一个 oneshot 吞掉第二次触发。03:00 service 使用 `--pre-reset-slot`（隐含 `--daily-first`）；普通启动只接受 `03:00`–`03:04`，休眠后的过时触发会直接跳过。若本轮确定性审计失败，controller 注入 `MAA_RECOVERY_ACTIVE=true` 的同一 `--pre-reset-slot` 命令可在 `03:05`–`03:24` 做一轮受控恢复重放；`03:25` 起拒绝新重放。原 service 的 50 分钟运行上限和 4 分钟清理上限仍保证在 04:00 前退出。07:30 service 使用 `--post-reset-slot` 和 `Persistent=true`，但在 `03:00`–`04:00` 保护窗内不做追补。两个入口都会先停止仍占用设备的另一个定时槽，再获取全局锁；每个槽位内部只启动一个 Waydroid 会话，并在整轮结束时统一关闭。06:30 runtime timer 使用 `Persistent=false`，避免开机补跑更新与 07:30 游戏任务争锁；候选失败只保留 live 旧版，不影响游戏 service。
 
 定时任务不要求当时已经登录 Hyprland。安装器会确认 systemd user lingering 已启用，使 user manager 和 timer 能在开机后、登录桌面前运行。`MAA_WAYDROID_DISPLAY_MODE=auto` 会在存在有效 Hyprland socket 时显示原有的 1280×720 浮动窗口；无人登录时使用 Gamescope 官方 `headless` backend 提供同尺寸 Wayland surface。该 compositor 只属于本轮 service，结束时与 Waydroid 会话一起回收，不修改 Waydroid 系统脚本或防火墙。可用 `headless` 强制无人值守模式，或用 `desktop` 在没有图形会话时明确报错。
 

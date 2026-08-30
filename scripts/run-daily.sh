@@ -661,16 +661,15 @@ scan_depot_inventory_once() {
         command_succeeded=true
     fi
 
-    if [[ "${command_succeeded}" == true ]]; then
-        depot_scan_outcome=snapshot-invalid
+    if [[ "${command_succeeded}" != true ]]; then
+        info "combined startup and Depot task failed before producing a valid snapshot"
+        return 1
     fi
+
+    depot_scan_outcome=snapshot-invalid
     if ! run_farming_soft_with_timeout 60 "${planner}" inventory-from-log \
         --log "${log_file}"; then
-        if [[ "${command_succeeded}" == true ]]; then
-            info "Depot task completed but produced no valid inventory snapshot"
-        else
-            info "combined startup and Depot task failed before producing a valid snapshot"
-        fi
+        info "Depot task completed but produced no valid inventory snapshot"
         return 1
     fi
 
@@ -1304,8 +1303,8 @@ prepare_daily_drone_policy() {
                 info "drone policy fallback: inventory is unavailable; drones disabled"
                 ;;
         esac
-    else
-        select_daily_drone_policy_from_snapshot || true
+    elif ! select_daily_drone_policy_from_snapshot; then
+        depot_scan_outcome=drone-target-unavailable
     fi
 }
 
@@ -1375,9 +1374,17 @@ require_command waydroid
 
 if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]; then
     server_minute="$(server_minute_of_day_now)"
-    if (( server_minute < 180 || server_minute >= 185 )); then
+    if (( server_minute < 180 )); then
         info "missed the 03:00-03:04 pre-reset start window; old-game-day work is not recoverable now"
         exit 0
+    elif [[ "${MAA_RECOVERY_ACTIVE}" != true ]] && (( server_minute >= 185 )); then
+        info "missed the 03:00-03:04 pre-reset start window; old-game-day work is not recoverable now"
+        exit 0
+    elif (( server_minute >= 205 )); then
+        info "missed the pre-reset recovery replay window ending at 03:25; old-game-day work is no longer safe to replay"
+        exit 0
+    elif (( server_minute >= 185 )); then
+        info "allowing the scoped recovery agent to replay the pre-reset slot before the 03:25 cutoff"
     fi
     pre_reset_fight_deadline_epoch="$(
         TZ="${server_timezone}" date --date="$(TZ="${server_timezone}" date '+%F') 03:25:00" '+%s'
@@ -1560,7 +1567,9 @@ prepare_daily_drone_policy
 if [[ "${farming_contracts_ready}" != true ]]; then
     supervisor_record_phase depot degraded managed-task-contract-invalid \
         --detail "drone_mode=${drone_mode}" || true
-elif [[ "${depot_scan_outcome}" == ready && -f "${depot_evidence_log}" ]]; then
+elif [[ "${depot_scan_outcome}" == ready &&
+        ( "${drone_mode}" == PureGold || "${drone_mode}" == Money ) &&
+        -f "${depot_evidence_log}" ]]; then
     supervisor_record_phase depot succeeded inventory-snapshot-ready \
         --detail "drone_mode=${drone_mode}" \
         --evidence-file "${depot_evidence_log}" || true

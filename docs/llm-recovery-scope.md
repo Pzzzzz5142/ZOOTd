@@ -1,6 +1,6 @@
 # MAA unattended recovery scope
 
-Version: 4
+Version: 5
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -32,6 +32,13 @@ The agent must run the retry command supplied in the incident evidence. It must
 preserve `MAA_RECOVERY_ACTIVE=true` and must not start, stop, or restart the
 outer systemd unit that is currently hosting it. The controller, not the model,
 makes the final success decision.
+
+For a `pre-reset` incident, `MAA_RECOVERY_ACTIVE=true` allows the supplied
+`--pre-reset-slot` retry to start from 03:05 through 03:24 Asia/Shanghai. This
+exception is only for a nested recovery replay; an ordinary or suspend catch-up
+start is still limited to 03:00 through 03:04. At 03:25 the launcher refuses a
+new replay, so return `scope-blocked` if no already-started retry can satisfy the
+success proof within the outer service deadline.
 
 ## In scope
 
