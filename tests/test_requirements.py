@@ -386,8 +386,8 @@ class HighLevelRequirementTests(unittest.TestCase):
             launcher.index('\nmkdir -p -- "${project_root}/var/run"')
         ]
         self.assertIn('[[ "${MAA_RECOVERY_ACTIVE}" != true ]]', pre_reset_guard)
-        self.assertIn("server_minute >= 205", pre_reset_guard)
-        self.assertIn("03:25 cutoff", pre_reset_guard)
+        self.assertIn("server_minute >= 145", pre_reset_guard)
+        self.assertIn("02:25 cutoff", pre_reset_guard)
         self.assertIn(" supervisor-recover-run --run-id ", launcher)
         self.assertIn("--defer-to-recovery", launcher)
         recovery_scope = (ROOT / "docs/llm-recovery-scope.md").read_text()
@@ -556,7 +556,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         surface = (ROOT / "scripts/show-waydroid-scaled.sh").read_text()
         self.assertIn("OnCalendar=*-*-* 06:30:00 Asia/Shanghai", runtime_timer)
         self.assertIn("Persistent=false", runtime_timer)
-        self.assertIn("OnCalendar=*-*-* 03:00:00 Asia/Shanghai", pre_timer)
+        self.assertIn("OnCalendar=*-*-* 02:00:00 Asia/Shanghai", pre_timer)
         self.assertIn("OnCalendar=*-*-* 07:30:00 Asia/Shanghai", post_timer)
         self.assertIn("Persistent=true", post_timer)
         self.assertIn("--backend headless", surface)
@@ -778,6 +778,13 @@ class HighLevelRequirementTests(unittest.TestCase):
         unstable = plan_annihilation(
             **base, state=weekly_state(365, 1800, "unstable", stars=2)
         )
+        pre_reset_catch_up = plan_annihilation(
+            now=datetime(2026, 8, 30, 18, 0, tzinfo=UTC),
+            activities=[],
+            official_windows=[],
+            client="Official",
+            account="main",
+        )
         self.assertEqual(first["decision"], "RUN")
         self.assertEqual(partial["decision"], "RUN")
         self.assertEqual(complete["decision"], "COMPLETE")
@@ -786,6 +793,13 @@ class HighLevelRequirementTests(unittest.TestCase):
             operator_complete["reason"], "OPERATOR_WEEKLY_CAP_CONFIRMED"
         )
         self.assertEqual(unstable["decision"], "BLOCKED")
+        self.assertEqual(pre_reset_catch_up["decision"], "RUN")
+        self.assertEqual(
+            pre_reset_catch_up["reason"], "WEEK_DEADLINE_CATCH_UP"
+        )
+        self.assertEqual(
+            pre_reset_catch_up["execute_before"], "2026-08-30T20:00:00Z"
+        )
         self.assertTrue(jq_accepts(ROOT / "config/annihilation-decision.jq", first))
         self.assertTrue(
             jq_accepts(

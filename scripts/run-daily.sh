@@ -985,7 +985,7 @@ run_weekly_annihilation_if_due() {
     if (( pre_reset_fight_deadline_epoch > 0 &&
           pre_reset_fight_deadline_epoch < execute_before_epoch )); then
         execute_before_epoch="${pre_reset_fight_deadline_epoch}"
-        execute_before="03:25 ${server_timezone} pre-reset Fight cutoff"
+        execute_before="02:25 ${server_timezone} pre-reset Fight cutoff"
     fi
     now_epoch="$(date -u '+%s')"
     remaining_seconds=$(( execute_before_epoch - now_epoch - 35 ))
@@ -1374,26 +1374,26 @@ require_command waydroid
 
 if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]; then
     server_minute="$(server_minute_of_day_now)"
-    if (( server_minute < 180 )); then
-        info "missed the 03:00-03:04 pre-reset start window; old-game-day work is not recoverable now"
+    if (( server_minute < 120 )); then
+        info "missed the 02:00-02:04 pre-reset start window; old-game-day work is not recoverable now"
         exit 0
-    elif [[ "${MAA_RECOVERY_ACTIVE}" != true ]] && (( server_minute >= 185 )); then
-        info "missed the 03:00-03:04 pre-reset start window; old-game-day work is not recoverable now"
+    elif [[ "${MAA_RECOVERY_ACTIVE}" != true ]] && (( server_minute >= 125 )); then
+        info "missed the 02:00-02:04 pre-reset start window; old-game-day work is not recoverable now"
         exit 0
-    elif (( server_minute >= 205 )); then
-        info "missed the pre-reset recovery replay window ending at 03:25; old-game-day work is no longer safe to replay"
+    elif (( server_minute >= 145 )); then
+        info "missed the pre-reset recovery replay window ending at 02:25; old-game-day work is no longer safe to replay"
         exit 0
-    elif (( server_minute >= 185 )); then
-        info "allowing the scoped recovery agent to replay the pre-reset slot before the 03:25 cutoff"
+    elif (( server_minute >= 125 )); then
+        info "allowing the scoped recovery agent to replay the pre-reset slot before the 02:25 cutoff"
     fi
     pre_reset_fight_deadline_epoch="$(
-        TZ="${server_timezone}" date --date="$(TZ="${server_timezone}" date '+%F') 03:25:00" '+%s'
+        TZ="${server_timezone}" date --date="$(TZ="${server_timezone}" date '+%F') 02:25:00" '+%s'
     )"
     stop_user_service_if_active maa-waydroid.service
 elif [[ "${dry_run}" != true && "${post_reset_slot}" == true ]]; then
     server_minute="$(server_minute_of_day_now)"
-    if (( server_minute >= 180 && server_minute < 240 )); then
-        info "post-reset catch-up suppressed during the 03:00-04:00 old-game-day protection window"
+    if (( server_minute >= 120 && server_minute < 240 )); then
+        info "post-reset catch-up suppressed during the 02:00-04:00 old-game-day protection window"
         exit 0
     fi
     stop_user_service_if_active maa-waydroid-prereset.service

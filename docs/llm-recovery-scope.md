@@ -34,9 +34,9 @@ outer systemd unit that is currently hosting it. The controller, not the model,
 makes the final success decision.
 
 For a `pre-reset` incident, `MAA_RECOVERY_ACTIVE=true` allows the supplied
-`--pre-reset-slot` retry to start from 03:05 through 03:24 Asia/Shanghai. This
+`--pre-reset-slot` retry to start from 02:05 through 02:24 Asia/Shanghai. This
 exception is only for a nested recovery replay; an ordinary or suspend catch-up
-start is still limited to 03:00 through 03:04. At 03:25 the launcher refuses a
+start is still limited to 02:00 through 02:04. At 02:25 the launcher refuses a
 new replay, so return `scope-blocked` if no already-started retry can satisfy the
 success proof within the outer service deadline.
 

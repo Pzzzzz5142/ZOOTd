@@ -1,6 +1,6 @@
 # MAA + Waydroid 自动托管与材料规划
 
-这是一个面向国服官服的 MAA Waydroid 启动器。每天 03:00 和 07:30 两个正式槽位都会各执行一次完整 daily 维护。所有受管阶段（包括 daily）都可重入：单个 daily attempt 失败会直接重试一次，整轮失败则由恢复代理修复并重新执行完整链路。普通任务奖励从 daily 中隔离，并固定为整轮最后一个 MAA 阶段。
+这是一个面向国服官服的 MAA Waydroid 启动器。每天 02:00 和 07:30 两个正式槽位都会各执行一次完整 daily 维护。所有受管阶段（包括 daily）都可重入：单个 daily attempt 失败会直接重试一次，整轮失败则由恢复代理修复并重新执行完整链路。普通任务奖励从 daily 中隔离，并固定为整轮最后一个 MAA 阶段。
 
 默认还会扫描仓库，根据鹰角官方活动关卡时间、MAA 当前活动与导航能力、明日方舟一图流效率、库存目标以及本地不稳定代理隔离记录，输出确定性的 `FIGHT` 或 `NOOP`。游戏客户端始终是“该关是否保存代理作战”的 ground truth：本地状态未知时允许 MAA 尝试，只有本次日志明确出现非三星结果才会建立更高优先级的负面覆盖。活动关没有合格执行结果时，启动器再按 `AP-5`、`1-7` 顺序刷取。所有实际理智作战都允许使用 MaaCore 识别为两天内到期的药，普通药和源石仍禁用。
 
@@ -72,7 +72,7 @@ flowchart LR
 - `config/profiles/waydroid.toml`：Waydroid 连接配置。
 - `config/host.env`：Waydroid profile、`MAA_FARM_MODE` 和运行策略；统一入口固定执行 `daily`。
 - `scripts/update-maa-runtime.sh`：隔离安装 stable Core 和全部资源，验证整套候选后原子提升为 live；旧资源脚本仅保留为兼容入口。
-- `systemd/`：用户级 service/timer；06:30 安全更新完整 MAA runtime，03:00 槽位会在 04:00 前强制清理，07:30 完整链路预留 10 小时上限。
+- `systemd/`：用户级 service/timer；06:30 安全更新完整 MAA runtime，02:00 槽位会在 04:00 前强制清理，07:30 完整链路预留 10 小时上限。
 - `var/`：MaaCore、资源、来源缓存、决策、日志和运行状态，不提交 Git。
 
 ## 测试策略
@@ -172,20 +172,20 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 
 启动器会在 daily 前执行一次只读 Depot 扫描，并按赤金（物品 ID `3003`）库存确定 MAA 的无人机目标：少于 `150` 时选择 `PureGold` 加速赤金制造站，达到或超过 `150` 时选择 `Money` 加速贸易站。阈值由 `config/host.env` 的 `MAA_PURE_GOLD_DRONE_THRESHOLD` 配置。
 
-这个选择完全由确定性程序完成，不依赖 LLM。03:00 与 07:30 每轮都最多执行一次 Depot，并在 daily 前取得快照；同一快照既决定无人机，也供稍后的材料关求解器复用，因此 daily 期间由基建或信用商店带来的库存变化要到下一轮才会反映。前置扫描失败时 daily 仍照常运行，无人机安全回退为 `_NotUse`，但 Depot 阶段必须记为 `degraded`，从而在整轮清理后触发操作型恢复；MAA 命令非零、空 `{}` 结果或赤金未识别都不能伪装成成功快照。唯一一次 Depot 已执行但扫描不完整、快照过期或账号不匹配时，本轮不会二次扫描或猜测库存，恢复代理只能通过一轮新的完整 launcher 重试取得新快照。
+这个选择完全由确定性程序完成，不依赖 LLM。02:00 与 07:30 每轮都最多执行一次 Depot，并在 daily 前取得快照；同一快照既决定无人机，也供稍后的材料关求解器复用，因此 daily 期间由基建或信用商店带来的库存变化要到下一轮才会反映。前置扫描失败时 daily 仍照常运行，无人机安全回退为 `_NotUse`，但 Depot 阶段必须记为 `degraded`，从而在整轮清理后触发操作型恢复；MAA 命令非零、空 `{}` 结果或赤金未识别都不能伪装成成功快照。唯一一次 Depot 已执行但扫描不完整、快照过期或账号不匹配时，本轮不会二次扫描或猜测库存，恢复代理只能通过一轮新的完整 launcher 重试取得新快照。
 
 无人机与关卡都不是 maa-cli 用户输入。受管任务文件只保存普通字符串基线，启动器将确定性结果写入 `var/state/host/maa-config.*` 下权限隔离的临时配置视图，再让 MaaCore 读取；因此不会显示 `Select/Input` prompt，也不从终端读取答案。渲染器只接受 `_NotUse`、`PureGold`、`Money` 或通过关卡码白名单格式校验的值，并证明输出只改变目标字段；临时视图在本轮清理阶段删除。
 
 ## 每周剿灭排程
 
-游戏周按国服规则计算：先把当前时刻转换到 `Asia/Shanghai`，减去四小时得到游戏日，再取该游戏日所在星期一作为周键。因此周一 03:00 仍属于上周星期日，周一 07:30 才属于新周。
+游戏周按国服规则计算：先把当前时刻转换到 `Asia/Shanghai`，减去四小时得到游戏日，再取该游戏日所在星期一作为周键。因此周一 02:00 仍属于上周星期日，周一 07:30 才属于新周。
 
 规划器把本周 MAA 活动窗口与鹰角公告窗口按和材料规划相同的名称、时间及容差规则配对，并用两者的保守并集判断活动占用。这个活动日历有独立抓取路径，不访问一图流；因此材料效率接口故障不会把剿灭排程误降级为“活动来源不确定”。每次运行都会重新同步和计算：
 
 1. 当前实际执行窗口没有活动冲突时立即剿灭。
 2. 当前有活动、后面存在安全空窗时等待最早的 07:30 空窗。
 3. 活动关卡覆盖整周时，计划时间固定为周一 07:30；周一错过或失败则下一次运行补做。
-4. 双来源缺失或冲突不会被伪装成“无活动”，而是走周一保守回退；旧周最后一小时会重新评估，但不足以容纳完整 30 分钟事务时绝不开战。
+4. 双来源缺失或冲突不会被伪装成“无活动”，而是走周一保守回退；旧周最后两小时会重新评估，但不足以容纳完整 30 分钟事务时绝不开战。
 
 执行时每个 `annihilation` task 只进行一次单倍事务，并使用 MAA 原生 `stage = "Annihilation"` 路径：先尝试 PRTS“全权委托”卡；没有卡时回退到已保存的普通代理并实际跑完整场，而不是把“无卡”当成失败或跳过剿灭。因此每笔始终预留完整 30 分钟，不能按有代理卡时的短耗时缩小预算。下一次事务会重新检查客户端状态，最多连续十次。一次体力不足以打满周奖励并不是异常：已结算的 `progress` 会跨 service 保留，本轮体力耗尽后停止，后续定时任务继续补；玩家手动打出的客户端进度也以随后读到的周计数为准。剿灭不吃普通药、不碎石，只允许使用两天内到期的理智药。规划决策同时签出绝对 `execute_before`：执行器在每笔事务前重查剩余时间，并为 30 秒强制清理预留余量，因此“无活动的两小时窗口”不会扩张成十笔各 30 分钟。自动结算从本轮新增 MaaCore 日志读取客户端 OCR 的 `annihilation_weekly_process = [current, total]`；只有同一 `uuid + taskid` 随后正常完成，且 `current >= total > 0`，才原子登记客户端证明的本周 `complete`。星级、命令退出 0 或本地自行累计次数都不能替代周上限证明。MaaCore 的星级 OCR 为 `0`（未知）时仍接受独立的周进度；明确为 `2` 时先记进度，再把本游戏周标记为 `BLOCKED`，后续运行不会继续撞不稳定代理。
 
@@ -230,9 +230,9 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 默认顺序如下：
 
 1. 用一次纯本地检查核对静态安全契约和 06:30 更新器写入的 runtime generation receipt；不会启动 MaaCore。receipt 与 live Core、资源、API cache 或受管任务配置不一致时整轮失败关闭。
-2. 03:00 与 07:30 都用一个原生 `startup = true` 的 MAA task 同时启动游戏并执行本轮唯一的只读 Depot 扫描，以赤金 `150` 阈值确定本轮无人机目标；不再为 Depot 单独启动一个 StartUp Core。
+2. 02:00 与 07:30 都用一个原生 `startup = true` 的 MAA task 同时启动游戏并执行本轮唯一的只读 Depot 扫描，以赤金 `150` 阈值确定本轮无人机目标；不再为 Depot 单独启动一个 StartUp Core。
 3. 两个槽都运行同一份完整 daily（基建、普通公招、小车公招、信用商店）；daily 可重入，首次 attempt 未形成完整证明时直接重试一次，不受已有状态 marker 限制。
-4. 每轮只联网刷新一次完整规划来源；03:00 与 07:30 使用同一路径。live MAA 资源仍只由独立的受控更新器写入。
+4. 每轮只联网刷新一次完整规划来源；02:00 与 07:30 使用同一路径。live MAA 资源仍只由独立的受控更新器写入。
 5. 用本轮缓存离线计算本周剿灭窗口；到期时按单次代理事务执行，逐次读取客户端周进度，满额才登记完成。来源刷新失败不会在这个阶段再次轰炸同一端点。
 6. 材料规划复用 daily 前取得的 Depot 快照。已尝试但失败的 Depot 不会在同一轮重复；决策同样只离线校验并复用第 4 步缓存，不做第二轮网络刷新。
 7. 仅当 JSON 为合法 `FIGHT` 且启动器二次校验所有有序候选的关卡码、活动实例、材料及两天临期药参数后，逐关执行零次战斗导航与客户端代理勾选检查。
@@ -334,7 +334,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 - `var/state/supervisor/latest-probe.json` 与 `probes/`：异常监督器的合成连通性探针，不启动 Waydroid、MAA 或游戏。
 - `var/state/runtime/maa-resource.json`：最近候选/当前 Core 版本、资源提交、组合选择、验证结果、generation fingerprint 及回滚原因。
 - `var/cache/planner/http/`：响应正文和带请求身份、ETag、时间及 SHA-256 的 metadata。
-- `var/state/host/*-pre-daily-depot.log`：03:00 与 07:30 在 daily 前取得、同时用于无人机和材料规划的本轮唯一 Depot 日志。
+- `var/state/host/*-pre-daily-depot.log`：02:00 与 07:30 在 daily 前取得、同时用于无人机和材料规划的本轮唯一 Depot 日志。
 - `var/state/host/*-e2e-award.log`：只领取普通任务奖励的轻量 E2E 探针日志；必须仅含 `Award Completed` 与总链完成证明。
 - `var/state/host/*-award-final.log`：正式 service 最后的同一 Award-only 任务日志，同样禁止出现基建、公招、商店、邮件或战斗任务。
 - `var/state/host/*-depot.log`：仅在前置 Depot 尚未尝试时由材料规划补取的库存日志；`*-proxy-preflight-<stage>.log`、`*-annihilation-*.log`、`*-farm-<stage>.log`、`*-daily.log` 分别记录单进程客户端代理 preflight、剿灭、各候选刷图和日常执行。
@@ -350,7 +350,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 
 Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `var/data` 代际。通过候选使用 Linux 原子目录交换一次发布，随后再次验证；失败则用同一种原子交换恢复上一代。上一份完整 runtime 保存在 `var/cache/MaaRuntime.previous`。候选失败或网络不可用时不会接触 live；只要 live 自检仍通过，游戏 service 继续使用它。
 
-每次完整验证成功后，更新器把 schema 3 generation receipt 原子写入 `var/state/runtime/maa-resource.json`。它密封 `var/data` 的文件身份/大小/时间 metadata、MaaCore 主库 SHA-256、API tasks 与活动表 SHA-256，以及真正参与候选 dry-run 的 `cli.toml`、任务、profile 和受保护宿舍配置摘要。规划目标、阈值等运行策略不被不必要地钉死，仍由每轮静态契约独立校验。03:00、07:30 和轻量 Award E2E 只重算并比较这份 receipt，再执行一次静态契约检查；它们不再逐项启动 MaaCore dry-run。更新器会在交换 live 前先写 `status = "promoting"`，因此中途掉电也不会让新旧代际被误认成已验证。旧 schema 2 receipt 只作为现有 live 的只读迁移桥接：必须匹配两份 hot-cache 哈希和全部静态契约；下一次 06:30 成功验证后自然升级为完整 schema 3。
+每次完整验证成功后，更新器把 schema 3 generation receipt 原子写入 `var/state/runtime/maa-resource.json`。它密封 `var/data` 的文件身份/大小/时间 metadata、MaaCore 主库 SHA-256、API tasks 与活动表 SHA-256，以及真正参与候选 dry-run 的 `cli.toml`、任务、profile 和受保护宿舍配置摘要。规划目标、阈值等运行策略不被不必要地钉死，仍由每轮静态契约独立校验。02:00、07:30 和轻量 Award E2E 只重算并比较这份 receipt，再执行一次静态契约检查；它们不再逐项启动 MaaCore dry-run。更新器会在交换 live 前先写 `status = "promoting"`，因此中途掉电也不会让新旧代际被误认成已验证。旧 schema 2 receipt 只作为现有 live 的只读迁移桥接：必须匹配两份 hot-cache 哈希和全部静态契约；下一次 06:30 成功验证后自然升级为完整 schema 3。
 
 06:30 `maa-waydroid-runtime-update.timer` 每天同时检查 stable Core 与官方 MaaResource `main`，所以不会因为资源暂时要求更高 Core 而永久钉死旧版。`./bin/maa-host install-core`、`update` 和 `runtime-update` 都进入同一个事务式更新器；`resource-update` 只是旧命令的兼容别名。手工执行 `maa-planner sync` 也只调用这个入口；正式游戏 service 已持有全局锁，所以仅刷新 HTTP 规划来源，不会在任务中途改 runtime。状态证据位于 `var/state/runtime/maa-resource.json`。
 
@@ -414,13 +414,13 @@ jq . var/state/supervisor/latest-probe.json
 
 ## systemd 定时托管
 
-三个 timer 固定按国服时区 `Asia/Shanghai` 运行。`06:30` 只做隔离的 Core/资源候选验证，不启动 Waydroid；游戏任务在每天 `03:00` 与 `07:30` 运行。两个游戏槽位的业务步骤完全相同：先做 Depot 和无人机决策，再运行同一份完整 `daily.toml`，刷新同一组完整规划来源，规划剿灭和材料刷图，最后只执行 Award-only。明日方舟在 `04:00` 切换游戏日，因此 03:00 清即将结束的游戏日，07:30 清重置后的新游戏日。为了不让 03:00 的旧游戏日任务跨过重置，它的刷图阶段共用 03:25 硬截止；这只缩短可用执行窗口，不改变任务顺序、无人机策略、候选回退或来源范围。剿灭只有在截止前仍容得下完整 30 分钟事务时才启动，不会为了旧周补救而中途打断一场。两个槽位都不依赖宿主当前设置的时区。安装并启用：
+三个 timer 固定按国服时区 `Asia/Shanghai` 运行。`06:30` 只做隔离的 Core/资源候选验证，不启动 Waydroid；游戏任务在每天 `02:00` 与 `07:30` 运行。两个游戏槽位的业务步骤完全相同：先做 Depot 和无人机决策，再运行同一份完整 `daily.toml`，刷新同一组完整规划来源，规划剿灭和材料刷图，最后只执行 Award-only。明日方舟在 `04:00` 切换游戏日，因此 02:00 清即将结束的游戏日，07:30 清重置后的新游戏日。为了不让 02:00 的旧游戏日任务跨过重置，它的刷图阶段共用 02:25 硬截止；这只缩短可用执行窗口，不改变任务顺序、无人机策略、候选回退或来源范围。剿灭只有在截止前仍容得下完整 30 分钟事务时才启动，不会为了旧周补救而中途打断一场。两个槽位都不依赖宿主当前设置的时区。安装并启用：
 
 ```bash
 ./scripts/install-systemd.sh --enable
 ```
 
-两个游戏槽位使用独立 service，避免同一个 oneshot 吞掉第二次触发。03:00 service 使用 `--pre-reset-slot`（隐含 `--daily-first`）；普通启动只接受 `03:00`–`03:04`，休眠后的过时触发会直接跳过。若本轮确定性审计失败，controller 注入 `MAA_RECOVERY_ACTIVE=true` 的同一 `--pre-reset-slot` 命令可在 `03:05`–`03:24` 做一轮受控恢复重放；`03:25` 起拒绝新重放。原 service 的 50 分钟运行上限和 4 分钟清理上限仍保证在 04:00 前退出。07:30 service 使用 `--post-reset-slot` 和 `Persistent=true`，但在 `03:00`–`04:00` 保护窗内不做追补。两个入口都会先停止仍占用设备的另一个定时槽，再获取全局锁；每个槽位内部只启动一个 Waydroid 会话，并在整轮结束时统一关闭。06:30 runtime timer 使用 `Persistent=false`，避免开机补跑更新与 07:30 游戏任务争锁；候选失败只保留 live 旧版，不影响游戏 service。
+两个游戏槽位使用独立 service，避免同一个 oneshot 吞掉第二次触发。02:00 service 使用 `--pre-reset-slot`（隐含 `--daily-first`）；普通启动只接受 `02:00`–`02:04`，休眠后的过时触发会直接跳过。若本轮确定性审计失败，controller 注入 `MAA_RECOVERY_ACTIVE=true` 的同一 `--pre-reset-slot` 命令可在 `02:05`–`02:24` 做一轮受控恢复重放；`02:25` 起拒绝新重放。原 service 的 50 分钟运行上限和 4 分钟清理上限仍保证在 04:00 前退出。07:30 service 使用 `--post-reset-slot` 和 `Persistent=true`，但在 `02:00`–`04:00` 保护窗内不做追补。两个入口都会先停止仍占用设备的另一个定时槽，再获取全局锁；每个槽位内部只启动一个 Waydroid 会话，并在整轮结束时统一关闭。06:30 runtime timer 使用 `Persistent=false`，避免开机补跑更新与 07:30 游戏任务争锁；候选失败只保留 live 旧版，不影响游戏 service。
 
 定时任务不要求当时已经登录 Hyprland。安装器会确认 systemd user lingering 已启用，使 user manager 和 timer 能在开机后、登录桌面前运行。`MAA_WAYDROID_DISPLAY_MODE=auto` 会在存在有效 Hyprland socket 时显示原有的 1280×720 浮动窗口；无人登录时使用 Gamescope 官方 `headless` backend 提供同尺寸 Wayland surface。该 compositor 只属于本轮 service，结束时与 Waydroid 会话一起回收，不修改 Waydroid 系统脚本或防火墙。可用 `headless` 强制无人值守模式，或用 `desktop` 在没有图形会话时明确报错。
 

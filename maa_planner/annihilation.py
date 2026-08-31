@@ -548,8 +548,8 @@ def plan_annihilation(
             "evidence": evidence,
         }
 
-    # The 03:00 civil-time run is the old game week's final recovery slot.
-    if now >= deadline - timedelta(hours=1):
+    # The 02:00 civil-time run is the old game week's final recovery slot.
+    if now >= deadline - timedelta(hours=2):
         return {
             **base,
             "decision": "RUN",
