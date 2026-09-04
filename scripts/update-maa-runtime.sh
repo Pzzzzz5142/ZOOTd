@@ -16,8 +16,16 @@ mirror="${control_cache_dir}/MaaResource.git"
 remote_url="${MAA_RESOURCE_REMOTE_URL:-https://github.com/MaaAssistantArknights/MaaResource.git}"
 remote_branch="${MAA_RESOURCE_REMOTE_BRANCH:-main}"
 requested_commit=""
+rollback_requested=false
 candidate_root=""
 lock_dir="${project_root}/var/run"
+baseline_core=""
+baseline_commit=""
+baseline_checked_at=""
+baseline_activated_at=""
+baseline_previous_core=""
+baseline_previous_commit=""
+baseline_generation_sha256=""
 
 info() {
     printf '[maa-runtime] %s\n' "$*"
@@ -34,12 +42,14 @@ require_command() {
 
 usage() {
     cat <<'EOF'
-Usage: scripts/update-maa-runtime.sh [--ref FULL_COMMIT]
+Usage: scripts/update-maa-runtime.sh [--ref FULL_COMMIT] [--rollback]
 
 Stage the latest stable MaaCore, its bundled base resource, MaaResource, and
 the maa-cli API hot cache as one candidate. Promote the complete runtime only
 after every managed task passes a dry-run. --ref selects one MaaResource
 commit for repair or compatibility auditing while Core still follows stable.
+--rollback atomically restores the retained previous complete runtime after
+validating it against the currently checked-out task contracts.
 EOF
 }
 
@@ -50,6 +60,10 @@ while (( $# > 0 )); do
             requested_commit="$2"
             shift 2
             ;;
+        --rollback)
+            rollback_requested=true
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -59,6 +73,10 @@ while (( $# > 0 )); do
             ;;
     esac
 done
+
+if [[ "${rollback_requested}" == true && -n "${requested_commit}" ]]; then
+    die "--rollback and --ref are mutually exclusive"
+fi
 
 if [[ -n "${requested_commit}" && ! "${requested_commit}" =~ ^[0-9a-f]{40}$ ]]; then
     die "--ref must be a full lowercase Git commit hash"
@@ -126,19 +144,37 @@ write_state() {
     local temporary generation_json="null"
     local hot_tasks_sha256=""
     local activity_sha256=""
+    local checked_at activated_at previous_core previous_commit
+    local generation_sha256=""
 
     if [[ "${status}" == active || "${status}" == kept-previous ]]; then
         generation_json="$("${planner}" runtime-fingerprint)" ||
             die "validated runtime could not be sealed into a generation receipt"
         hot_tasks_sha256="$(jq -er '.hot_cache.tasks_sha256' <<<"${generation_json}")"
         activity_sha256="$(jq -er '.hot_cache.activity_sha256' <<<"${generation_json}")"
+        generation_sha256="$(jq -S -c . <<<"${generation_json}" | sha256sum | awk '{print $1}')"
+    fi
+
+    checked_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    activated_at="${baseline_activated_at:-${baseline_checked_at}}"
+    previous_core="${baseline_previous_core}"
+    previous_commit="${baseline_previous_commit}"
+    if [[ "${status}" == active &&
+          ( -z "${baseline_generation_sha256}" ||
+            "${generation_sha256}" != "${baseline_generation_sha256}" ) ]]; then
+        activated_at="${checked_at}"
+        previous_core="${baseline_core}"
+        previous_commit="${baseline_commit}"
+    fi
+    if [[ -z "${activated_at}" && ( "${status}" == active || "${status}" == kept-previous ) ]]; then
+        activated_at="${checked_at}"
     fi
 
     mkdir -p -- "${state_dir}"
     temporary="$(mktemp "${state_dir}/.maa-runtime.XXXXXX")"
     jq -n \
         --arg status "${status}" \
-        --arg checked_at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        --arg checked_at "${checked_at}" \
         --arg remote "${remote_url}" \
         --arg branch "${remote_branch}" \
         --arg candidate_commit "${candidate_commit}" \
@@ -149,6 +185,9 @@ write_state() {
         --arg cache_source "${cache_source}" \
         --arg hot_tasks_sha256 "${hot_tasks_sha256}" \
         --arg activity_sha256 "${activity_sha256}" \
+        --arg activated_at "${activated_at}" \
+        --arg previous_core "${previous_core}" \
+        --arg previous_commit "${previous_commit}" \
         --argjson generation "${generation_json}" \
         --arg reason "${reason}" '
         {
@@ -175,6 +214,11 @@ write_state() {
             candidate_commit: ($candidate_commit | select(length > 0) // null),
             active_commit: ($active_commit | select(length > 0) // null),
             generation: $generation,
+            transition: {
+                activated_at: ($activated_at | select(length > 0) // null),
+                previous_core_version: ($previous_core | select(length > 0) // null),
+                previous_resource_commit: ($previous_commit | select(length > 0) // null)
+            },
             reason: $reason,
             validation: {
                 mode: "candidate MaaCore dry-run",
@@ -428,6 +472,58 @@ keep_live_or_fail() {
     die "candidate and live runtime both failed validation"
 }
 
+rollback_runtime() {
+    local rollback_core rollback_commit restored_core
+
+    [[ -d "${data_dir}" && ! -L "${data_dir}" ]] ||
+        die "the active runtime is unavailable for rollback"
+    [[ -d "${previous_runtime}" && ! -L "${previous_runtime}" ]] ||
+        die "no retained previous runtime is available"
+    [[ -d "${previous_runtime}/cache" && ! -L "${previous_runtime}/cache" ]] ||
+        die "the retained previous runtime has no safe hot cache"
+    rollback_core="$(core_version_at "${previous_runtime}" \
+        "${previous_runtime}/cache" "${project_root}/config" || true)"
+    [[ -n "${rollback_core}" ]] ||
+        die "the retained previous runtime has no readable Core version"
+    validate_runtime_at "${previous_runtime}" "${previous_runtime}/cache" \
+        "${project_root}/config" ||
+        die "the retained previous runtime does not satisfy current task contracts"
+
+    rollback_commit="${baseline_previous_commit}"
+    info "atomically rolling back Core ${baseline_core:-unknown} to ${rollback_core}"
+    write_state promoting "${rollback_commit}" "${baseline_commit}" \
+        "${rollback_core}" "${baseline_core}" rollback rollback \
+        "validated previous runtime is awaiting atomic rollback proof"
+    mv --exchange --no-copy --no-target-directory -- \
+        "${data_dir}" "${previous_runtime}"
+    migrate_live_cache
+    if validate_runtime_at "${data_dir}" "${runtime_cache_dir}" \
+        "${project_root}/config"; then
+        write_state active "${rollback_commit}" "${rollback_commit}" \
+            "${rollback_core}" "${rollback_core}" rollback rollback \
+            "previous complete runtime was explicitly restored and revalidated"
+        info "active runtime rolled back to Core ${rollback_core}"
+        exit 0
+    fi
+
+    mv --exchange --no-copy --no-target-directory -- \
+        "${data_dir}" "${previous_runtime}"
+    migrate_live_cache
+    restored_core="$(core_version_at "${data_dir}" "${runtime_cache_dir}" \
+        "${project_root}/config" || true)"
+    if validate_runtime_at "${data_dir}" "${runtime_cache_dir}" \
+        "${project_root}/config"; then
+        write_state kept-previous "${rollback_commit}" "${baseline_commit}" \
+            "${rollback_core}" "${restored_core}" live live \
+            "rollback validation failed after exchange; original runtime was restored"
+    else
+        write_state failed "${rollback_commit}" "${baseline_commit}" \
+            "${rollback_core}" "${restored_core}" "" "" \
+            "rollback and restored active runtime both failed validation"
+    fi
+    die "rollback failed post-exchange validation; restored the original runtime"
+}
+
 require_command cp
 require_command diff
 require_command flock
@@ -435,6 +531,7 @@ require_command git
 require_command jq
 require_command mv
 require_command python3
+require_command sha256sum
 require_command tar
 mv --help | grep -Fq -- '--exchange' ||
     die "GNU mv with atomic --exchange support is required"
@@ -451,6 +548,19 @@ active_core=""
 if [[ -d "${data_dir}/lib" ]]; then
     active_core="$(core_version_at "${data_dir}" "${runtime_cache_dir}" \
         "${project_root}/config" || true)"
+fi
+baseline_core="${active_core}"
+baseline_commit="${active_commit}"
+if [[ -s "${state_file}" && ! -L "${state_file}" ]]; then
+    baseline_checked_at="$(jq -r '.checked_at // empty' "${state_file}" 2>/dev/null || true)"
+    baseline_activated_at="$(jq -r '.transition.activated_at // empty' "${state_file}" 2>/dev/null || true)"
+    baseline_previous_core="$(jq -r '.transition.previous_core_version // empty' "${state_file}" 2>/dev/null || true)"
+    baseline_previous_commit="$(jq -r '.transition.previous_resource_commit // empty' "${state_file}" 2>/dev/null || true)"
+    baseline_generation_sha256="$(jq -S -c '.generation // null' "${state_file}" 2>/dev/null | sha256sum | awk '{print $1}' || true)"
+fi
+
+if [[ "${rollback_requested}" == true ]]; then
+    rollback_runtime
 fi
 
 if ! git --git-dir="${mirror}" rev-parse --is-bare-repository \

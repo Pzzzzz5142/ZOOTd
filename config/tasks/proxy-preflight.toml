@@ -1,19 +1,19 @@
-# One read-only client preflight in one MaaCore process. Fight with times=0
-# navigates to the selected stage and stops before starting a battle; the
-# following Custom task checks the PRTS checkbox on that same screen.
+# One bounded client preflight in one MaaCore process. The single Fight is both
+# useful sanity spending and runtime proof that Core still navigates and uses
+# saved proxy play; the following Custom task re-checks PRTS on that screen.
 client_type = "Official"
 startup = false
 closedown = false
 
 [[tasks]]
-name = "Navigate without starting a battle"
+name = "Verify one saved-proxy battle"
 type = "Fight"
 
 [tasks.params]
 medicine = 0
 stone = 0
-times = 0
-series = -1
+times = 1
+series = 1
 # Replaced with the validated planner stage only in an isolated per-run copy.
 # The committed task keeps the launcher's final, universally available fallback.
 stage = "1-7"

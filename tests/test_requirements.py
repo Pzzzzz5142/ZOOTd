@@ -403,6 +403,10 @@ class HighLevelRequirementTests(unittest.TestCase):
             recovery_scope,
         )
         self.assertIn("adb install --no-streaming -r", recovery_scope)
+        self.assertIn("complete workflow through is the highest priority", recovery_scope)
+        self.assertIn("./bin/maa-host runtime-rollback", recovery_scope)
+        self.assertIn("Operational repair and Git/PR protocol", recovery_scope)
+        self.assertIn("choose a local repair branch", recovery_scope)
         self.assertNotIn("client-package-update", recovery_scope)
 
         proxy = tomllib.loads(
@@ -411,8 +415,8 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertEqual(
             [task["type"] for task in proxy["tasks"]], ["Fight", "Custom"]
         )
-        self.assertEqual(proxy["tasks"][0]["params"]["times"], 0)
-        self.assertEqual(proxy["tasks"][0]["params"]["series"], -1)
+        self.assertEqual(proxy["tasks"][0]["params"]["times"], 1)
+        self.assertEqual(proxy["tasks"][0]["params"]["series"], 1)
         self.assertEqual(proxy["tasks"][0]["params"]["stage"], "1-7")
         self.assertEqual(
             proxy["tasks"][1]["params"]["task_names"],
@@ -424,6 +428,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertEqual(proxy_function.count('run proxy-preflight'), 1)
         self.assertEqual(proxy_function.count('"${maa}"'), 1)
         self.assertIn('render_runtime_task proxy-preflight "${stage_code}"', proxy_function)
+        self.assertIn('"${planner}" check-fight', proxy_function)
         self.assertNotIn("printf '%s\\n'", proxy_function)
 
         activity_start = launcher.index("run_planned_activity_candidates() {")
@@ -523,6 +528,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         self.assertIn("mv --exchange --no-copy --no-target-directory", updater)
         self.assertIn("MaaRuntime.previous", updater)
+        self.assertIn("rollback_runtime", updater)
         self.assertIn('write_state promoting', updater)
         self.assertIn('"${planner}" runtime-fingerprint', updater)
         self.assertNotIn("printf '%s\\n' '1-7'", updater)
@@ -530,11 +536,15 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn("Direct maa hot-update is disabled", wrapper)
         self.assertNotIn("--dry-run", host)
         self.assertIn('"${planner}" validate-service-readiness', host)
+        self.assertIn("runtime-rollback", host)
 
         sdk = (ROOT / "maa_planner/codex_sdk.py").read_text()
+        recovery_adapter = (ROOT / "maa_planner/codex_recovery.py").read_text()
         self.assertIn("AsyncCodex", sdk)
         self.assertIn("output_schema=dict(request.output_schema)", sdk)
+        self.assertIn("thread_resume", sdk)
         self.assertNotIn("subprocess", sdk)
+        self.assertIn("ephemeral=False", recovery_adapter)
         self.assertFalse((ROOT / "maa_planner/codex_exec.py").exists())
         self.assertEqual(
             (ROOT / "requirements.txt").read_text().strip(),
@@ -844,7 +854,11 @@ class HighLevelRequirementTests(unittest.TestCase):
             path = Path(directory) / "asst.log"
             path.write_text(old_proof, encoding="utf-8")
             metadata = path.stat()
-            self.assertIsNone(extract_successful_fight(_read_log_suffix(path, metadata.st_size), "AT-6"))
+            self.assertIsNone(
+                extract_successful_fight(
+                    _read_log_suffix(path, metadata.st_size), "AT-6"
+                )
+            )
 
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(

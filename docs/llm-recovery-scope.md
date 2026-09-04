@@ -1,6 +1,6 @@
 # MAA unattended recovery scope
 
-Version: 5
+Version: 6
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -18,6 +18,12 @@ stage is reentrant, including daily, so partial or completed earlier stages may
 be replayed as part of a new full run. A recovery is not complete merely
 because Waydroid starts, the game reaches its home screen, one
 MAA task succeeds, or a command returns zero.
+
+Getting that complete workflow through is the highest priority. Spend the
+remaining game/scheduler window on evidence-backed operational repair and a
+full retry before doing repository housekeeping. A branch, commit, or pull
+request is durable follow-up work and never substitutes for clearing the
+operational failure.
 
 There are only three valid terminal states:
 
@@ -68,6 +74,14 @@ The agent may use unrestricted user-level shell commands and network access to:
 - retry downloads and endpoints with bounded backoff, consult public technical
   documentation through shell network tools, and run the supplied full
   launcher repeatedly;
+- run `./bin/maa-host runtime-rollback` to validate and atomically restore the
+  retained previous complete runtime when fresh evidence points to an upgrade
+  regression; use only the transactional updater/rollback entrypoints to
+  change a runtime receipt;
+- when a durable tracked fix is justified, choose a local repair branch, edit
+  source/configuration, test it, commit it, push it to the configured `origin`,
+  and open a pull request with existing non-interactive GitHub credentials;
+  never merge the pull request during unattended recovery;
 - create recovery notes only below ignored runtime state (`var/`) when useful.
 
 An unrestricted shell is a capability, not permission to broaden the mission.
@@ -89,8 +103,14 @@ Return `scope-blocked` instead of crossing any of these boundaries:
   launcher policy;
 - clearing app data/cache, reinstalling the game, deleting user data, changing
   credentials, or bypassing authentication/security controls;
-- editing tracked source, Git history, task policy, the recovery scope, runtime
-  receipts, or append-only audit events during unattended recovery;
+- committing directly on the recorded base branch, rewriting existing Git
+  history, force-pushing, merging a pull request, changing Git credentials, or
+  pushing to a remote other than the incident's configured `origin`;
+- weakening safety/spending policy, changing this recovery scope or the
+  currently running recovery verifier, manually editing runtime receipts, or
+  editing/deleting append-only audit events; a future controller/scope fix may
+  be proposed only on an isolated repair branch and must not be applied to the
+  current incident;
 - persistent host DNS/firewall/routing/package changes, disabling security
   controls, or a privileged action that requires an interactive password;
 - exceeding the protected game-day or scheduler time window.
@@ -98,6 +118,44 @@ Return `scope-blocked` instead of crossing any of these boundaries:
 Do not inspect or disclose credentials or unrelated personal files. Do not use
 the shell to weaken the controller's verification or to manufacture success
 evidence.
+
+## Operational repair and Git/PR protocol
+
+The incident provides the clean base branch/HEAD, configured remote, suggested
+ignored worktree location, current and retained runtime identity, the most
+recent successful full run, and phase/runtime comparisons. Validate these
+against fresh local evidence rather than assuming that the newest upgrade is
+good merely because its dry-run receipt is valid.
+
+1. First try the smallest evidence-backed runtime action that can restore the
+   full workflow. For an upgrade regression, the supported atomic runtime
+   rollback is preferred to hand-editing or swapping runtime directories.
+2. If tracked source/configuration must change, create an agent-selected repair
+   branch descended from the supplied base. Either check that branch out in the
+   primary repository before a full retry, or use the suggested ignored Git
+   worktree for a proposal that will not be applied to this run. Never commit
+   on the base branch.
+3. Commit before starting a managed retry: managed runs deliberately reject a
+   dirty tree. Run focused tests and the applicable static/runtime contracts.
+   A real full launcher audit is still the only operational success proof.
+4. Push the repair branch to `origin` and use `gh pr create` (or an equivalent
+   non-interactive GitHub command) to open a pull request against the supplied
+   default branch. Do not log in, alter credentials, force-push, or merge. A
+   GitHub/auth outage must be reported in `code_repair.pull_request_error`; it
+   does not erase a separately proven operational recovery.
+5. If the successful full run used the repair commit, leave that clean repair
+   branch active and report `applied_to_runtime=true`. If the successful run
+   used the base (for example after runtime rollback), leave the primary
+   checkout clean at the base and report an isolated PR with
+   `applied_to_runtime=false`. If recovery did not succeed, restore the primary
+   checkout to the exact clean base before returning, while preserving any
+   repair branch/commit/PR.
+
+Use `code_repair.status=not-needed` with no branch metadata when no tracked
+files changed. Use `pr-opened` with the branch, commit, HTTPS PR URL, and test
+commands after a successful publication. Use `pr-failed` with the same local
+branch/commit evidence and the concrete publication error when existing
+credentials or the remote cannot publish it.
 
 ## Policy-resolved game conditions
 
@@ -177,10 +235,12 @@ For `recovered`, report the exact retry command, its zero exit status, the new
 run ID, and its audit path. The controller then independently requires:
 
 - the new run ID differs from the failed parent run;
-- the new run is `full`, uses the clean Git HEAD recorded when recovery started,
-  and has one accepted terminal result for every expected phase;
+- the new run is `full`, uses either the recorded clean base HEAD or the exact
+  clean repair commit declared as applied, and has one accepted terminal result
+  for every expected phase;
 - its final hash-chained event reports process status 0 and overall success;
-- the repository is still clean.
+- the repository is still clean and its branch/HEAD, repair ancestry, changed
+  paths, and PR URL agree with the structured report.
 
 If any check fails, continue recovery or report the applicable scope blocker;
 do not claim success.

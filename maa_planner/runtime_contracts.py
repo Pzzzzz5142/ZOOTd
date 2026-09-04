@@ -372,11 +372,11 @@ def validate_farming_contracts(root: Path) -> None:
         {
             "medicine": 0,
             "stone": 0,
-            "times": 0,
-            "series": -1,
+            "times": 1,
+            "series": 1,
             "stage": stage_placeholder,
         },
-        task_type="zero-battle proxy-navigation Fight",
+        task_type="single-battle proxy-verification Fight",
     )
     _require_exact_params(
         proxy_path,

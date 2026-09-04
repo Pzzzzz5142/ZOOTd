@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, Literal, Mapping, Sequence
 
+from .util import atomic_write_json
+
 
 class CodexSDKError(RuntimeError):
     pass
@@ -93,6 +95,8 @@ class CodexSDKRequest:
     config_overrides: tuple[str, ...]
     ephemeral: bool = True
     approval_mode: Literal["deny-all"] = "deny-all"
+    resume_thread_id: str | None = None
+    thread_id_path: Path | None = None
 
 
 CodexSDKRunner = Callable[[CodexSDKRequest], str]
@@ -176,13 +180,40 @@ async def _invoke_sdk(request: CodexSDKRequest) -> str:
         env=dict(request.environment),
     )
     async with AsyncCodex(config) as codex:
-        thread = await codex.thread_start(
-            approval_mode=approval_modes[request.approval_mode],
-            cwd=str(request.cwd),
-            ephemeral=request.ephemeral,
-            model=request.model,
-            sandbox=sandboxes[request.sandbox],
-        )
+        if request.resume_thread_id is not None:
+            if (
+                not request.resume_thread_id
+                or len(request.resume_thread_id) > 256
+                or "\x00" in request.resume_thread_id
+            ):
+                raise CodexSDKError("Codex resume thread ID is invalid")
+            thread = await codex.thread_resume(
+                request.resume_thread_id,
+                approval_mode=approval_modes[request.approval_mode],
+                cwd=str(request.cwd),
+                model=request.model,
+                sandbox=sandboxes[request.sandbox],
+            )
+        else:
+            thread = await codex.thread_start(
+                approval_mode=approval_modes[request.approval_mode],
+                cwd=str(request.cwd),
+                ephemeral=request.ephemeral,
+                model=request.model,
+                sandbox=sandboxes[request.sandbox],
+            )
+        if request.thread_id_path is not None:
+            try:
+                state_path = request.thread_id_path.resolve(strict=False)
+                state_path.parent.resolve(strict=False).relative_to(request.cwd.resolve())
+            except (OSError, ValueError) as exc:
+                raise CodexSDKError("Codex thread state path is outside its workspace") from exc
+            state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(state_path.parent, 0o700)
+            atomic_write_json(
+                state_path,
+                {"schema_version": 1, "thread_id": thread.id},
+            )
         turn_input: str | list[Any]
         if request.images:
             turn_input = [TextInput(request.prompt)]

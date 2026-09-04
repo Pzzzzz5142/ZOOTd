@@ -289,6 +289,7 @@ Commands:
                         Recover a failed full audit; SLOT is manual (default),
                         pre-reset, or post-reset
   runtime-update        Validate stable Core plus staged resources, then atomically promote them
+  runtime-rollback      Validate and atomically restore the retained previous runtime
   resource-update       Compatibility alias for runtime-update
   probe                 Check live ADB authorization and the game package
   install-core          Install the first validated stable runtime
@@ -333,6 +334,12 @@ case "${command_name}" in
         shift
         [[ -x "${runtime_updater}" ]] || die "runtime updater is not executable: ${runtime_updater}"
         exec "${runtime_updater}" "$@"
+        ;;
+    runtime-rollback)
+        shift
+        (( $# == 0 )) || die "runtime-rollback accepts no arguments"
+        [[ -x "${runtime_updater}" ]] || die "runtime updater is not executable: ${runtime_updater}"
+        exec "${runtime_updater}" --rollback
         ;;
     probe)
         import_desktop_environment

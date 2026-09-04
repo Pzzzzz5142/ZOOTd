@@ -26,6 +26,19 @@ START = datetime(2026, 8, 28, 0, 0, tzinfo=UTC)
 
 
 class RecoveryTests(unittest.TestCase):
+    @staticmethod
+    def _no_code_repair(base_head: str) -> dict[str, object]:
+        return {
+            "status": "not-needed",
+            "base_head": base_head,
+            "branch": None,
+            "commit": None,
+            "applied_to_runtime": False,
+            "pull_request_url": None,
+            "pull_request_error": None,
+            "validation_commands": [],
+        }
+
     def _repo(self, directory: str) -> Path:
         repo = Path(directory) / "recovery-repo"
         (repo / "docs").mkdir(parents=True)
@@ -93,19 +106,78 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(final["payload"]["llm"]["status"], "recovery-pending")
         return run_id
 
+    def _successful_full_run(self, repo: Path, *, now: datetime) -> str:
+        run_id = start_run(repo, "full", now=now)
+        for index, phase in enumerate(PHASES, start=1):
+            record_phase(
+                repo,
+                run_id,
+                phase=phase,
+                result="succeeded",
+                outcome=f"{phase}-complete",
+                now=now + timedelta(seconds=index),
+            )
+        outcome = finish_run(
+            repo,
+            run_id,
+            process_status=0,
+            supervisor_enabled=True,
+            supervisor_required=True,
+            command=(),
+            timeout_seconds=1,
+            now=now + timedelta(minutes=1),
+        )
+        self.assertEqual(outcome.status, "success")
+        return run_id
+
+    @staticmethod
+    def _write_runtime_receipt(repo: Path, *, core: str, checked_at: str) -> None:
+        path = repo / "var/state/runtime/maa-resource.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 3,
+                    "status": "active",
+                    "checked_at": checked_at,
+                    "core": {
+                        "channel": "stable",
+                        "candidate_version": core,
+                        "active_version": core,
+                    },
+                    "resource": {"active_commit": core.removeprefix("v") * 40},
+                    "generation": {
+                        "runtime_tree_sha256": core.removeprefix("v") * 64,
+                        "managed_config_sha256": "a" * 64,
+                        "core_library_sha256": core.removeprefix("v") * 64,
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
     def test_codex_recovery_is_unsandboxed_and_keeps_session_access(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             failed_run_id = "20260828T000000.000000Z-12345678"
             scope = (ROOT / "docs/llm-recovery-scope.md").read_bytes()
+            base_head = "1" * 40
             evidence = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "kind": "operational-recovery",
                 "failed_run_id": failed_run_id,
                 "screenshot_paths": [],
+                "controller_repository": {"head": base_head},
+                "agent_session": {
+                    "ephemeral": False,
+                    "thread_state_path": (
+                        f"var/state/recovery/{failed_run_id}/codex-thread.json"
+                    ),
+                },
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 5,
+                    "version": 6,
                 },
             }
             seen: dict[str, object] = {}
@@ -119,7 +191,7 @@ class RecoveryTests(unittest.TestCase):
                     schema["properties"]["scope_blocker"]["enum"],
                 )
                 output = {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "failed_run_id": failed_run_id,
                     "status": "scope-blocked",
                     "classification": "scope",
@@ -131,6 +203,7 @@ class RecoveryTests(unittest.TestCase):
                         "successful_run_id": None,
                         "audit_path": None,
                     },
+                    "code_repair": self._no_code_repair(base_head),
                     "scope_blocker": "manual-login",
                 }
                 return json.dumps(output)
@@ -153,7 +226,12 @@ class RecoveryTests(unittest.TestCase):
             request = seen["request"]
             self.assertIsInstance(request, CodexSDKRequest)
             assert isinstance(request, CodexSDKRequest)
-            self.assertTrue(request.ephemeral)
+            self.assertFalse(request.ephemeral)
+            self.assertIsNone(request.resume_thread_id)
+            self.assertEqual(
+                request.thread_id_path,
+                ROOT / f"var/state/recovery/{failed_run_id}/codex-thread.json",
+            )
             self.assertEqual(request.approval_mode, "deny-all")
             self.assertEqual(request.sandbox, "full-access")
             disabled = {
@@ -225,7 +303,7 @@ class RecoveryTests(unittest.TestCase):
                     now=START + timedelta(minutes=2),
                 )
                 output = {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "failed_run_id": failed_run_id,
                     "status": "recovered",
                     "classification": "network",
@@ -241,6 +319,9 @@ class RecoveryTests(unittest.TestCase):
                         "successful_run_id": successful_run_id,
                         "audit_path": str(successful.event_path.relative_to(repo)),
                     },
+                    "code_repair": self._no_code_repair(
+                        evidence["controller_repository"]["head"]
+                    ),
                     "scope_blocker": "none",
                 }
                 return subprocess.CompletedProcess(
@@ -266,6 +347,176 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(final["status"], "recovered")
             self.assertEqual(final["controller_verification"]["status"], "success")
 
+    def test_incident_includes_runtime_upgrade_and_recent_phase_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            self._write_runtime_receipt(
+                repo, core="v1", checked_at="2026-08-27T23:30:00Z"
+            )
+            successful_run_id = self._successful_full_run(repo, now=START)
+            self._write_runtime_receipt(
+                repo, core="v2", checked_at="2026-08-28T00:30:00Z"
+            )
+            failed_run_id = self._failed_full_run(
+                repo, now=START + timedelta(hours=1)
+            )
+
+            def blocked_runner(
+                argv: tuple[str, ...], **kwargs: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                evidence = json.loads(kwargs["input"])
+                self.assertEqual(
+                    evidence["recent_successful_full_run"]["run_id"],
+                    successful_run_id,
+                )
+                comparison = evidence["runtime_context"]["comparison"]
+                self.assertIn("core_version", comparison["changed_fields"])
+                self.assertEqual(
+                    comparison["identities"]["recent_success"]["core_version"],
+                    "v1",
+                )
+                self.assertEqual(
+                    comparison["identities"]["failed_run_start"]["core_version"],
+                    "v2",
+                )
+                depot = next(
+                    item
+                    for item in evidence["phase_comparison"]
+                    if item["phase"] == "depot"
+                )
+                self.assertEqual(depot["recent_success"]["result"], "succeeded")
+                self.assertEqual(depot["failed_run"]["result"], "failed")
+                output = {
+                    "schema_version": 2,
+                    "failed_run_id": failed_run_id,
+                    "status": "scope-blocked",
+                    "classification": "scope",
+                    "summary": "Interactive login is required.",
+                    "actions_taken": ["Inspected enriched incident evidence."],
+                    "verification": {
+                        "command": evidence["retry_command"],
+                        "exit_status": None,
+                        "successful_run_id": None,
+                        "audit_path": None,
+                    },
+                    "code_repair": self._no_code_repair(
+                        evidence["controller_repository"]["head"]
+                    ),
+                    "scope_blocker": "manual-login",
+                }
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(output).encode(), b""
+                )
+
+            outcome = recover_failed_run(
+                repo,
+                failed_run_id,
+                slot="manual",
+                command=("fake-recovery",),
+                timeout_seconds=60,
+                runner=blocked_runner,
+            )
+            self.assertEqual(outcome.status, "scope-blocked")
+
+    def test_recovery_accepts_agent_selected_branch_and_pull_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            subprocess.run(
+                (
+                    "git",
+                    "remote",
+                    "add",
+                    "origin",
+                    "https://github.com/example/recovery-repo.git",
+                ),
+                cwd=repo,
+                check=True,
+            )
+            failed_run_id = self._failed_full_run(repo)
+
+            def repair_runner(
+                argv: tuple[str, ...], **kwargs: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                evidence = json.loads(kwargs["input"])
+                branch = "fix/agent-selected"
+                subprocess.run(("git", "switch", "-c", branch), cwd=repo, check=True)
+                (repo / "repair.txt").write_text("repair\n", encoding="utf-8")
+                subprocess.run(("git", "add", "repair.txt"), cwd=repo, check=True)
+                subprocess.run(
+                    ("git", "commit", "-qm", "fix: recover workflow"),
+                    cwd=repo,
+                    check=True,
+                )
+                commit = subprocess.run(
+                    ("git", "rev-parse", "HEAD"),
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                successful_run_id = self._successful_full_run(
+                    repo, now=START + timedelta(minutes=1)
+                )
+                successful_events = load_run_events(repo, successful_run_id)
+                audit_path = (
+                    repo
+                    / "var/state/supervisor/runs"
+                    / successful_run_id
+                    / "events"
+                    / f"{len(successful_events) - 1:04d}-run-finished.json"
+                )
+                output = {
+                    "schema_version": 2,
+                    "failed_run_id": failed_run_id,
+                    "status": "recovered",
+                    "classification": "configuration",
+                    "summary": "The committed repair passed a complete full run.",
+                    "actions_taken": ["Committed and verified a repair branch."],
+                    "verification": {
+                        "command": evidence["retry_command"],
+                        "exit_status": 0,
+                        "successful_run_id": successful_run_id,
+                        "audit_path": str(audit_path.relative_to(repo)),
+                    },
+                    "code_repair": {
+                        "status": "pr-opened",
+                        "base_head": evidence["controller_repository"]["head"],
+                        "branch": branch,
+                        "commit": commit,
+                        "applied_to_runtime": True,
+                        "pull_request_url": (
+                            "https://github.com/example/recovery-repo/pull/7"
+                        ),
+                        "pull_request_error": None,
+                        "validation_commands": ["python -m unittest"],
+                    },
+                    "scope_blocker": "none",
+                }
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(output).encode(), b""
+                )
+
+            outcome = recover_failed_run(
+                repo,
+                failed_run_id,
+                slot="manual",
+                command=("fake-recovery",),
+                timeout_seconds=60,
+                runner=repair_runner,
+            )
+            self.assertEqual(outcome.status, "recovered")
+            self.assertEqual(outcome.repair_branch, "fix/agent-selected")
+            self.assertEqual(
+                outcome.pull_request_url,
+                "https://github.com/example/recovery-repo/pull/7",
+            )
+            self.assertEqual(
+                load_run_events(repo, failed_run_id)[-1]["payload"][
+                    "controller_verification"
+                ]["code_repair"]["applied_to_runtime"],
+                True,
+            )
+
     def test_scope_blocker_is_audited_but_not_reported_as_success(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repo = self._repo(directory)
@@ -278,7 +529,7 @@ class RecoveryTests(unittest.TestCase):
             ) -> subprocess.CompletedProcess[bytes]:
                 evidence = json.loads(kwargs["input"])
                 output = {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "failed_run_id": failed_run_id,
                     "status": "scope-blocked",
                     "classification": "scope",
@@ -290,6 +541,9 @@ class RecoveryTests(unittest.TestCase):
                         "successful_run_id": None,
                         "audit_path": None,
                     },
+                    "code_repair": self._no_code_repair(
+                        evidence["controller_repository"]["head"]
+                    ),
                     "scope_blocker": "manual-login",
                 }
                 return subprocess.CompletedProcess(
@@ -312,6 +566,56 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(
                 final["controller_verification"]["status"], "scope-accepted"
             )
+
+    def test_adapter_transport_failure_retries_with_continuation_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            failed_run_id = self._failed_full_run(repo)
+            attempts: list[dict[str, object]] = []
+
+            def flaky_runner(
+                argv: tuple[str, ...], **kwargs: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                evidence = json.loads(kwargs["input"])
+                attempts.append(evidence["adapter_attempt"])
+                if len(attempts) == 1:
+                    return subprocess.CompletedProcess(argv, 1, b"", b"Bad Request")
+                output = {
+                    "schema_version": 2,
+                    "failed_run_id": failed_run_id,
+                    "status": "scope-blocked",
+                    "classification": "scope",
+                    "summary": "Interactive login is required.",
+                    "actions_taken": ["Resumed recovery after the transport error."],
+                    "verification": {
+                        "command": evidence["retry_command"],
+                        "exit_status": None,
+                        "successful_run_id": None,
+                        "audit_path": None,
+                    },
+                    "code_repair": self._no_code_repair(
+                        evidence["controller_repository"]["head"]
+                    ),
+                    "scope_blocker": "manual-login",
+                }
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(output).encode(), b""
+                )
+
+            outcome = recover_failed_run(
+                repo,
+                failed_run_id,
+                slot="manual",
+                command=("fake-recovery",),
+                timeout_seconds=60,
+                runner=flaky_runner,
+            )
+            self.assertEqual(outcome.status, "scope-blocked")
+            self.assertEqual([item["number"] for item in attempts], [1, 2])
+            self.assertEqual(attempts[0]["prior_errors"], [])
+            self.assertIn("Bad Request", attempts[1]["prior_errors"][0])
+            final = load_run_events(repo, failed_run_id)[-1]["payload"]
+            self.assertEqual(len(final["agent"]["attempt_errors"]), 1)
 
     def test_stateful_daily_parent_still_invokes_reentrant_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -391,7 +695,7 @@ class RecoveryTests(unittest.TestCase):
                     evidence["client_update_policy"]["allow_uninstall"]
                 )
                 output = {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "failed_run_id": failed_run_id,
                     "status": "scope-blocked",
                     "classification": "scope",
@@ -405,6 +709,9 @@ class RecoveryTests(unittest.TestCase):
                         "successful_run_id": None,
                         "audit_path": None,
                     },
+                    "code_repair": self._no_code_repair(
+                        evidence["controller_repository"]["head"]
+                    ),
                     "scope_blocker": "manual-login",
                 }
                 return subprocess.CompletedProcess(
@@ -434,7 +741,7 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "complete success evidence"):
             validate_recovery_report(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "failed_run_id": failed_run_id,
                     "status": "recovered",
                     "classification": "network",
@@ -446,6 +753,7 @@ class RecoveryTests(unittest.TestCase):
                         "successful_run_id": None,
                         "audit_path": None,
                     },
+                    "code_repair": self._no_code_repair("0" * 40),
                     "scope_blocker": "none",
                 },
                 failed_run_id=failed_run_id,

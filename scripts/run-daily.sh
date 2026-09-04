@@ -696,7 +696,11 @@ game_client_has_saved_proxy() {
 
     farming_evidence_log="${preflight_log}"
     supervisor_active_evidence="${preflight_log}"
-    info "checking ${stage_code} navigation and saved proxy in one zero-battle MAA task"
+    if ! capture_core_log_cursor; then
+        info "${stage_code} proxy preflight skipped because a fresh MaaCore log cursor could not be captured"
+        return 1
+    fi
+    info "checking ${stage_code} navigation and saved proxy with one bounded battle"
     render_runtime_task proxy-preflight "${stage_code}"
     if ! run_farming_soft_with_timeout 1080 env \
        MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" \
@@ -706,11 +710,18 @@ game_client_has_saved_proxy() {
         return 1
     fi
     if ! proxy_preflight_log_is_complete "${preflight_log}"; then
-        info "${stage_code} proxy preflight returned without complete zero-battle and PRTS evidence"
+        info "${stage_code} proxy preflight returned without complete Fight and PRTS evidence"
+        return 1
+    fi
+    if ! timeout --signal=TERM --kill-after=2s 1m "${planner}" check-fight \
+        --log "${core_log}" --since-byte "${fight_core_offset}" \
+        "${core_log_cursor_args[@]}" --stage "${stage_code}" \
+        8>&- 9>&- >/dev/null 2>&1; then
+        info "${stage_code} proxy preflight produced no fresh three-star Fight proof"
         return 1
     fi
 
-    info "the game client confirmed saved proxy play on ${stage_code}"
+    info "the game client confirmed one saved-proxy battle on ${stage_code}"
 }
 
 run_sanity_fight() {

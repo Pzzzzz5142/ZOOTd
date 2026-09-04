@@ -124,6 +124,10 @@ esac
             self._write(root / "var/data/core-version", "v1\n")
             self._write(root / "var/data/lib/libMaaCore.so", "live core\n")
             self._write(root / "var/data/resource/base", "live base\n")
+            shutil.copy2(
+                root / "config/item-index.fixture.json",
+                root / "var/data/resource/item_index.json",
+            )
             self._write(root / "var/data/MaaResource/live", "compatible overlay\n")
             self._write(root / "var/cache/maa-runtime/StageActivityV2.json", "{}\n")
             self._write(root / "var/cache/maa-runtime/StageActivityV2.json.etag", "old\n")
@@ -172,6 +176,40 @@ esac
             self.assertEqual(state["hot_cache"]["selected_source"], "fresh")
             self.assertEqual(state["schema_version"], 3)
             self.assertEqual(state["generation"]["schema_version"], 1)
+            self.assertIsInstance(state["transition"]["activated_at"], str)
+            self.assertEqual(state["transition"]["previous_core_version"], "v1")
+            self.assertEqual(
+                state["transition"]["previous_resource_commit"], "1" * 40
+            )
+            self.assertEqual(validate_runtime_receipt(root), "sealed-schema-3")
+
+            rolled_back = subprocess.run(
+                [str(root / "scripts/update-maa-runtime.sh"), "--rollback"],
+                cwd=root,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(
+                rolled_back.returncode, 0, rolled_back.stdout + rolled_back.stderr
+            )
+            self.assertEqual((root / "var/data/core-version").read_text().strip(), "v1")
+            self.assertEqual(
+                (root / "var/cache/MaaRuntime.previous/core-version").read_text().strip(),
+                "v2",
+            )
+            rollback_state = json.loads(
+                (root / "var/state/runtime/maa-resource.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(rollback_state["status"], "active")
+            self.assertEqual(rollback_state["core"]["active_version"], "v1")
+            self.assertEqual(
+                rollback_state["transition"]["previous_core_version"], "v2"
+            )
             self.assertEqual(validate_runtime_receipt(root), "sealed-schema-3")
 
             proxy_config = root / "config/tasks/proxy-preflight.toml"

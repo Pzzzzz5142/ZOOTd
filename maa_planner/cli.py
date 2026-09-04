@@ -607,9 +607,16 @@ def command_supervisor_recover_run(args: argparse.Namespace) -> int:
         print(f"cannot recover failed supervisor run: {exc}", file=sys.stderr)
         return 1
     if outcome.status == "recovered":
+        repair = (
+            f"; repair PR: {outcome.pull_request_url}"
+            if outcome.pull_request_url
+            else f"; local repair branch: {outcome.repair_branch}"
+            if outcome.repair_branch
+            else ""
+        )
         print(
             f"recovery completed through full run {outcome.successful_run_id}; "
-            f"audit: {outcome.event_path}"
+            f"audit: {outcome.event_path}{repair}"
         )
         return 0
     if outcome.status == "scope-blocked":
@@ -620,7 +627,12 @@ def command_supervisor_recover_run(args: argparse.Namespace) -> int:
         )
         return 2
     print(
-        f"recovery did not complete: {outcome.summary}; audit: {outcome.event_path}",
+        f"recovery did not complete: {outcome.summary}; audit: {outcome.event_path}"
+        + (
+            f"; repair PR: {outcome.pull_request_url}"
+            if outcome.pull_request_url
+            else ""
+        ),
         file=sys.stderr,
     )
     return 1
