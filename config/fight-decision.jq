@@ -5,8 +5,10 @@ and .evidence.client_proxy_policy.ground_truth == "game-client"
 and .evidence.client_proxy_policy.unknown_allowed == true
 and .evidence.client_proxy_policy.positive_ledger_required == false
 and .evidence.client_proxy_policy.local_quarantine_overrides == true
-and .evidence.client_proxy_policy.preflight == "fight-times-zero-plus-use-prts-success-check"
-and .evidence.client_proxy_policy.preflight_consumes_sanity == false
+and .evidence.client_proxy_policy.preflight == "one-fight-plus-use-prts-success-check"
+and .evidence.client_proxy_policy.preflight_consumes_sanity == true
+and .evidence.activity_window_policy.source == "maa-stage-activity-v2"
+and .evidence.activity_window_policy.half_open_interval == true
 and (.evidence.execution_candidates | type == "array" and length > 0)
 and all(.evidence.execution_candidates[];
     (.stage_code | type == "string"

@@ -53,6 +53,7 @@ PHASE_RESULTS = frozenset(
 ACCEPTED_RESULTS = frozenset({"succeeded", "policy-resolved", "not-applicable"})
 
 _RUN_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
+_RECOVERY_ATTEMPT_RE = re.compile(r"[0-9a-f]{32}")
 _DETAIL_KEY_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _OUTCOME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/+ -]{0,511}")
 _MAX_EXTERNAL_OUTPUT = 128 * 1024
@@ -343,6 +344,29 @@ def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
         "llm_policy": "exception-only",
         "recovery_policy": "unsandboxed-scoped-v4",
     }
+    recovery_active = os.environ.get("MAA_RECOVERY_ACTIVE", "false")
+    recovery_values = {
+        "parent_run_id": os.environ.get("MAA_RECOVERY_PARENT_RUN_ID"),
+        "attempt_id": os.environ.get("MAA_RECOVERY_ATTEMPT_ID"),
+        "slot": os.environ.get("MAA_RECOVERY_SLOT"),
+    }
+    if recovery_active == "true":
+        if (
+            not isinstance(recovery_values["parent_run_id"], str)
+            or _RUN_ID_RE.fullmatch(recovery_values["parent_run_id"]) is None
+            or not isinstance(recovery_values["attempt_id"], str)
+            or _RECOVERY_ATTEMPT_RE.fullmatch(recovery_values["attempt_id"]) is None
+            or recovery_values["slot"] not in {"pre-reset", "post-reset", "manual"}
+        ):
+            raise SupervisorError("recovery run environment is incomplete or invalid")
+        payload["recovery_context"] = recovery_values
+    elif recovery_active == "false":
+        if any(value is not None for value in recovery_values.values()):
+            raise SupervisorError(
+                "non-recovery run inherited a partial recovery identity"
+            )
+    else:
+        raise SupervisorError("MAA_RECOVERY_ACTIVE must be true or false")
     event = _event_core(
         run_id=run_id,
         sequence=0,

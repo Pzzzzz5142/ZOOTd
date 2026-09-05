@@ -6,8 +6,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Iterable, Literal, Mapping
 from zoneinfo import ZoneInfo
 
-from .models import Activity, OfficialWindow
-from .policy import _official_confirmation
+from .models import Activity
 from .util import isoformat, parse_iso_datetime
 
 
@@ -75,9 +74,7 @@ def _source_occupancy(
     *,
     week: GameWeek,
     activities: Iterable[Activity],
-    official_windows: Iterable[OfficialWindow],
     client: str,
-    tolerance: timedelta,
 ) -> tuple[list[OccupancyWindow], list[str]]:
     activities = [
         item
@@ -85,51 +82,17 @@ def _source_occupancy(
         if item.client == client
         and _overlaps(item.start, item.end, week.start, week.end)
     ]
-    official_windows = [
-        item
-        for item in official_windows
-        if _overlaps(item.start, item.end, week.start, week.end)
-    ]
     occupancy: list[OccupancyWindow] = []
-    uncertainty: list[str] = []
-    matched_official: set[tuple[str, datetime, datetime]] = set()
 
     for activity in activities:
-        official, rejection = _official_confirmation(
-            activity, official_windows, tolerance
-        )
-        if official is None:
-            uncertainty.append(
-                f"{activity.instance_id}:{rejection or 'OFFICIAL_ACTIVITY_MISSING'}"
-            )
-            clipped = _clip_to_week(activity.start, activity.end, week)
-            if clipped is not None:
-                occupancy.append(OccupancyWindow(*clipped, ("maa",), activity.name))
-            continue
-
-        matched_official.add((official.article_id, official.start, official.end))
-        clipped = _clip_to_week(
-            min(activity.start, official.start),
-            max(activity.end, official.end),
-            week,
-        )
+        clipped = _clip_to_week(activity.start, activity.end, week)
         if clipped is not None:
             occupancy.append(
-                OccupancyWindow(*clipped, ("maa", "official"), activity.name)
-            )
-
-    for official in official_windows:
-        if (official.article_id, official.start, official.end) in matched_official:
-            continue
-        uncertainty.append(f"official:{official.article_id}:MAA_ACTIVITY_MISSING")
-        clipped = _clip_to_week(official.start, official.end, week)
-        if clipped is not None:
-            occupancy.append(
-                OccupancyWindow(*clipped, ("official",), official.activity_name)
+                OccupancyWindow(*clipped, ("maa",), activity.name)
             )
 
     occupancy.sort(key=lambda item: (item.start, item.end, item.activity_name))
-    return occupancy, sorted(set(uncertainty))
+    return occupancy, []
 
 
 def _window_is_free(
@@ -422,13 +385,11 @@ def plan_annihilation(
     *,
     now: datetime,
     activities: Iterable[Activity],
-    official_windows: Iterable[OfficialWindow],
     client: str,
     account: str,
     state: object = None,
     source_available: bool = True,
     source_error: str | None = None,
-    window_tolerance: timedelta = timedelta(seconds=60),
     execution_budget: timedelta = timedelta(hours=2),
     transaction_timeout: timedelta = timedelta(minutes=30),
     max_transactions_per_run: int = 10,
@@ -521,16 +482,14 @@ def plan_annihilation(
     occupancy, uncertainty = _source_occupancy(
         week=week,
         activities=activities,
-        official_windows=official_windows,
         client=client,
-        tolerance=window_tolerance,
     )
     if not source_available:
         uncertainty.append(f"SOURCE_UNAVAILABLE:{source_error or 'unspecified'}")
     uncertainty = sorted(set(uncertainty))
     monday = _post_reset_slots(week)[0]
     evidence: dict[str, Any] = {
-        "source_policy": "official-and-maa-consensus-conservative-union",
+        "source_policy": "maa-stage-activity-v2",
         "source_uncertainty": uncertainty,
         "occupancy": [item.as_dict() for item in occupancy],
         "execution_budget_seconds": budget_seconds,

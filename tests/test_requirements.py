@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -43,7 +44,6 @@ from maa_planner.materials import load_blue_material_chains
 from maa_planner.models import (
     Activity,
     ActivityStage,
-    OfficialWindow,
     StageEfficiency,
     StockTarget,
 )
@@ -54,7 +54,6 @@ from maa_planner.sources import (
     HttpCache,
     SourceError,
     build_yituliu_efficiencies,
-    fetch_official_bulletin_windows,
     parse_maa_activities,
 )
 from maa_planner.supervisor import (
@@ -103,23 +102,6 @@ def make_activity(
     )
 
 
-def official_window(
-    activity: Activity,
-    *,
-    start: datetime | None = None,
-    end: datetime | None = None,
-) -> OfficialWindow:
-    return OfficialWindow(
-        activity_name=activity.name,
-        label="stage:活动关卡开放时间",
-        start=start or activity.start,
-        end=end or activity.end,
-        article_id="activity-42",
-        article_title="SideStory「墟」复刻活动公告",
-        article_url="https://official.invalid/activity-42",
-    )
-
-
 def efficiency(stage: str, item: str, expected_ap: float, overall: float) -> StageEfficiency:
     return StageEfficiency(
         stage_code=stage,
@@ -140,7 +122,6 @@ def select_plan(**overrides: object):
     defaults: dict[str, object] = {
         "now": START + timedelta(hours=1),
         "activities": [activity],
-        "official_windows": [official_window(activity)],
         "efficiencies": {
             "AT-6": efficiency("AT-6", "30013", 20.0, 1.1),
             "AT-7": efficiency("AT-7", "30053", 27.0, 1.2),
@@ -161,9 +142,7 @@ def select_plan(**overrides: object):
         "verified_stages": set(),
         "quarantined_stages": set(),
         "navigation_stages": {stage.code for stage in activity.stages},
-        "require_official": True,
         "end_safety_margin": timedelta(minutes=15),
-        "window_tolerance": timedelta(seconds=60),
         "when_satisfied": "best_event",
         "configured_series": 0,
         "large_deficit_runs": 6,
@@ -278,45 +257,6 @@ class _Fetched:
         self.network_validated = True
 
 
-class _BulletinCache:
-    def fetch_json(self, key: str, _url: str, **_: object) -> tuple[object, _Fetched]:
-        if key == "official-bulletin-list":
-            return (
-                {
-                    "status": 0,
-                    "code": 0,
-                    "data": {
-                        "list": [
-                            {
-                                "category": 1,
-                                "cid": "activity-42",
-                                "displayTime": "2026-08-20",
-                            }
-                        ]
-                    },
-                },
-                _Fetched("list-sha"),
-            )
-        if key == "official-bulletin-activity-42":
-            return (
-                {
-                    "status": 0,
-                    "code": 0,
-                    "data": {
-                        "header": "SideStory「墟」复刻活动公告",
-                        "content": (
-                            "<h2>活动关卡开放时间</h2>"
-                            "<p>8月22日 04:00 - 9月1日 03:59</p>"
-                            "<h2>活动商店开放时间</h2>"
-                            "<p>8月22日 04:00 - 9月8日 03:59</p>"
-                        ),
-                    },
-                },
-                _Fetched("detail-sha"),
-            )
-        raise AssertionError(f"unexpected bulletin key: {key}")
-
-
 class HighLevelRequirementTests(unittest.TestCase):
     def test_service_files_encode_the_unattended_safety_contract(self) -> None:
         validate_runtime_contracts(ROOT)
@@ -417,6 +357,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         self.assertEqual(proxy["tasks"][0]["params"]["times"], 1)
         self.assertEqual(proxy["tasks"][0]["params"]["series"], 1)
+        self.assertEqual(proxy["tasks"][0]["params"]["medicine_expire_days"], 2)
         self.assertEqual(proxy["tasks"][0]["params"]["stage"], "1-7")
         self.assertEqual(
             proxy["tasks"][1]["params"]["task_names"],
@@ -438,13 +379,38 @@ class HighLevelRequirementTests(unittest.TestCase):
         activity_function = launcher[activity_start:activity_end]
         self.assertEqual(activity_function.count("reconcile-fight"), 1)
         self.assertNotIn("check-fight", activity_function)
-        self.assertNotIn("record-fight", activity_function)
+        self.assertEqual(activity_function.count("record-fight"), 1)
+        self.assertIn("proxy_preflight_core_offset", activity_function)
+        self.assertIn("activity_fight_completed=true", activity_function)
+        self.assertIn("activity_fight_evidence_log", activity_function)
         self.assertNotIn("quarantine-fight", activity_function)
         self.assertNotIn("pre_reset_slot", activity_function)
 
         fallback_start = launcher.index("run_regular_fallback() {")
         fallback_end = launcher.index("\nactivity_decision_is_safe() {", fallback_start)
         self.assertNotIn("pre_reset_slot", launcher[fallback_start:fallback_end])
+        self.assertIn("fight_log_proves_sanity_below", launcher[fallback_start:fallback_end])
+        self.assertIn("any_fight_proof", launcher[fallback_start:fallback_end])
+        self.assertIn("last_fight_proof_log", launcher[fallback_start:fallback_end])
+
+        final_fallback_start = launcher.rindex(
+            'if [[ -z "${stage}" && "${farm_mode}" == auto &&\n'
+            '      "${farming_contracts_ready}" == true &&'
+        )
+        final_fallback_end = launcher.index(
+            '\nif [[ -n "${farming_evidence_log}"', final_fallback_start
+        )
+        final_fallback = launcher[final_fallback_start:final_fallback_end]
+        self.assertIn('"${planner_helpers_ready}" == true', final_fallback)
+        self.assertIn("farming_phase_result=degraded", final_fallback)
+        self.assertNotIn("farming_phase_result=policy-resolved", final_fallback)
+
+        source_code = (ROOT / "maa_planner/sources.py").read_text()
+        source_config = (ROOT / "maa_planner/config.py").read_text()
+        self.assertNotIn("fetch_official_bulletin_windows", source_code)
+        self.assertNotIn("HTMLParser", source_code)
+        self.assertNotIn("ak-webview.hypergryph.com", source_config)
+        self.assertNotIn("sources.official", (ROOT / "config/farming.toml").read_text())
 
         self.assertNotIn("start_game_for_depot_with_retry", launcher)
         self.assertNotIn("startup Official", launcher)
@@ -622,7 +588,205 @@ class HighLevelRequirementTests(unittest.TestCase):
                 (ROOT / f"config/tasks/{task_name}.toml").read_bytes(), expected
             )
 
-    def test_cross_checked_sources_and_inventory_authorize_one_safe_fight(self) -> None:
+    def test_regular_fallback_uses_one_battle_preflight_then_clears_tail(self) -> None:
+        launcher = (ROOT / "scripts/run-daily.sh").read_text()
+        helper_start = launcher.index("fight_log_observes_sanity_below() {")
+        helper_end = launcher.index("\nrun_sanity_fight() {", helper_start)
+        fallback_start = launcher.index("run_regular_fallback() {")
+        fallback_end = launcher.index(
+            "\nactivity_decision_is_safe() {", fallback_start
+        )
+        functions = (
+            launcher[helper_start:helper_end]
+            + "\n"
+            + launcher[fallback_start:fallback_end]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            state_dir = Path(directory) / "var/state/host"
+            state_dir.mkdir(parents=True)
+            script = f"""
+set -u
+{functions}
+project_root="$TEST_ROOT"
+planner=fake-planner
+core_log="$TEST_ROOT/core.log"
+regular_fallback_stages=(AP-5 1-7)
+regular_fallback_outcome=not-attempted
+farming_contracts_ready=true
+planner_helpers_ready=true
+fight_core_offset=0
+core_log_cursor_args=(--log-was-missing)
+proxy_preflight_evidence_log=""
+farming_evidence_log=""
+info() {{ :; }}
+game_client_has_saved_proxy() {{ printf '%s\n' "$1" >> "$TEST_ROOT/calls"; return 0; }}
+capture_core_log_cursor() {{ fight_core_offset=0; core_log_cursor_args=(--log-was-missing); return 0; }}
+run_sanity_fight() {{
+    local sanity=10
+    [[ "$1" == 1-7 ]] && sanity=4
+    printf '%s\n' 'Fight Start' "Current sanity: ${{sanity}}/210" 'Fight Completed' 'AllTasksCompleted' > "$2"
+    return 0
+}}
+timeout() {{ return 1; }}
+run_regular_fallback
+printf '%s\n' "$regular_fallback_outcome"
+"""
+            completed_process = subprocess.run(
+                ["bash", "-c", script],
+                env={**os.environ, "TEST_ROOT": directory},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(completed_process.returncode, 0, completed_process.stderr)
+            self.assertEqual(
+                (Path(directory) / "calls").read_text().splitlines(),
+                ["AP-5", "1-7"],
+            )
+            self.assertEqual(
+                completed_process.stdout.strip(), "sanity-below-global-minimum"
+            )
+
+    def test_fallback_requires_fresh_evidence_and_preserves_earlier_proof(self) -> None:
+        launcher = (ROOT / "scripts/run-daily.sh").read_text()
+        helper_start = launcher.index("fight_log_observes_sanity_below() {")
+        helper_end = launcher.index("\nrun_sanity_fight() {", helper_start)
+        fallback_start = launcher.index("run_regular_fallback() {")
+        fallback_end = launcher.index(
+            "\nactivity_decision_is_safe() {", fallback_start
+        )
+        functions = (
+            launcher[helper_start:helper_end]
+            + "\n"
+            + launcher[fallback_start:fallback_end]
+        )
+        common = f"""
+set -u
+{functions}
+project_root="$TEST_ROOT"
+planner=fake-planner
+core_log="$TEST_ROOT/core.log"
+regular_fallback_stages=(AP-5 1-7)
+regular_fallback_outcome=not-attempted
+farming_contracts_ready=true
+planner_helpers_ready=true
+fight_core_offset=0
+core_log_cursor_args=(--log-was-missing)
+proxy_preflight_evidence_log=""
+farming_evidence_log=""
+info() {{ :; }}
+timeout() {{ return 1; }}
+run_sanity_fight() {{ return 1; }}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            preserve_script = common + r'''
+game_client_has_saved_proxy() {
+    if [[ "$1" == AP-5 ]]; then
+        proxy_preflight_evidence_log="$TEST_ROOT/ap5-proof.log"
+        farming_evidence_log="$proxy_preflight_evidence_log"
+        printf '%s\n' 'Fight Completed' 'AllTasksCompleted' > "$farming_evidence_log"
+        return 0
+    fi
+    proxy_preflight_evidence_log=""
+    farming_evidence_log="$TEST_ROOT/1-7-failure.log"
+    printf '%s\n' 'Fight Error' > "$farming_evidence_log"
+    return 1
+}
+capture_core_log_cursor() { return 1; }
+run_regular_fallback
+printf '%s\n%s\n' "$regular_fallback_outcome" "$farming_evidence_log"
+'''
+            preserved = subprocess.run(
+                ["bash", "-c", preserve_script],
+                env={**os.environ, "TEST_ROOT": directory},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(preserved.returncode, 0, preserved.stderr)
+            self.assertEqual(
+                preserved.stdout.splitlines(),
+                [
+                    "bounded-fight-three-star-verified",
+                    f"{directory}/ap5-proof.log",
+                ],
+            )
+
+            low_sanity_script = common + r'''
+game_client_has_saved_proxy() {
+    proxy_preflight_evidence_log=""
+    farming_evidence_log="$TEST_ROOT/low-sanity.log"
+    printf '%s\n' 'Current sanity: 4/210' 'Fight Error' > "$farming_evidence_log"
+    return 1
+}
+capture_core_log_cursor() { return 1; }
+run_regular_fallback
+printf '%s\n' "$regular_fallback_outcome"
+'''
+            low_sanity = subprocess.run(
+                ["bash", "-c", low_sanity_script],
+                env={**os.environ, "TEST_ROOT": directory},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(low_sanity.returncode, 0, low_sanity.stderr)
+            self.assertEqual(
+                low_sanity.stdout.strip(), "sanity-below-global-minimum"
+            )
+
+            no_evidence_script = common + r'''
+game_client_has_saved_proxy() {
+    proxy_preflight_evidence_log=""
+    farming_evidence_log="$TEST_ROOT/operational-failure.log"
+    printf '%s\n' 'Fight Error' > "$farming_evidence_log"
+    return 1
+}
+capture_core_log_cursor() { return 1; }
+if run_regular_fallback; then exit 99; fi
+printf '%s\n' "$regular_fallback_outcome"
+'''
+            no_evidence = subprocess.run(
+                ["bash", "-c", no_evidence_script],
+                env={**os.environ, "TEST_ROOT": directory},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(no_evidence.returncode, 0, no_evidence.stderr)
+            self.assertEqual(
+                no_evidence.stdout.strip(), "no-client-authorized-fight"
+            )
+
+    def test_recovery_invocation_rejects_partial_or_wrong_slot_replays(self) -> None:
+        launcher = ROOT / "scripts/run-daily.sh"
+        base_env = {
+            **os.environ,
+            "MAA_RECOVERY_ACTIVE": "true",
+            "MAA_RECOVERY_PARENT_RUN_ID": "20260905T000000.000000Z-12345678",
+            "MAA_RECOVERY_ATTEMPT_ID": "a" * 32,
+        }
+        cases = (
+            ("manual", ["--no-farm"], "complete automatic farming workflow"),
+            ("manual", ["--dry-run"], "complete automatic farming workflow"),
+            ("pre-reset", [], "does not match --pre-reset-slot"),
+            ("post-reset", ["--pre-reset-slot"], "does not match --post-reset-slot"),
+        )
+        for slot, arguments, expected_error in cases:
+            with self.subTest(slot=slot, arguments=arguments):
+                completed = subprocess.run(
+                    [str(launcher), *arguments],
+                    cwd=ROOT,
+                    env={**base_env, "MAA_RECOVERY_SLOT": slot},
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=10,
+                )
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn(expected_error, completed.stderr)
+
+    def test_maa_activity_and_inventory_authorize_one_safe_fight(self) -> None:
         maa_payload = {
             "Official": {
                 "sideStoryStage": {
@@ -642,15 +806,6 @@ class HighLevelRequirementTests(unittest.TestCase):
         }
         activities = parse_maa_activities(maa_payload, "Official", "maa-sha")
         now = datetime(2026, 8, 22, 8, 0, tzinfo=UTC)
-        with patch("maa_planner.sources.utc_now", return_value=now):
-            windows, _evidence = fetch_official_bulletin_windows(
-                _BulletinCache(),  # type: ignore[arg-type]
-                list_url="https://official.invalid/list",
-                detail_url_template="https://official.invalid/{cid}",
-                max_articles=10,
-                cache_max_stale=timedelta(minutes=30),
-                article_lookback=timedelta(days=120),
-            )
         efficiencies = build_yituliu_efficiencies(
             {
                 "data": [
@@ -685,7 +840,6 @@ class HighLevelRequirementTests(unittest.TestCase):
         decision = select_farming_plan(
             now=now,
             activities=activities,
-            official_windows=windows,
             efficiencies=efficiencies,
             inventory=InventorySnapshot(
                 # 150 blue + floor((245 green + floor(15 / 3)) / 5)
@@ -700,9 +854,7 @@ class HighLevelRequirementTests(unittest.TestCase):
             verified_stages=set(),
             quarantined_stages=set(),
             navigation_stages={"AT-6"},
-            require_official=True,
             end_safety_margin=timedelta(minutes=15),
-            window_tolerance=timedelta(seconds=60),
             when_satisfied="best_event",
             configured_series=0,
             large_deficit_runs=6,
@@ -723,12 +875,10 @@ class HighLevelRequirementTests(unittest.TestCase):
 
     def test_planner_fails_closed_or_uses_next_candidate_for_unsafe_inputs(self) -> None:
         activity = make_activity()
-        conflict = official_window(
-            activity,
-            start=activity.start + timedelta(minutes=2),
-            end=activity.end + timedelta(minutes=2),
+        self.assertEqual(
+            select_plan(now=activity.end - timedelta(minutes=10)).decision,
+            "NOOP",
         )
-        self.assertEqual(select_plan(official_windows=[conflict]).decision, "NOOP")
         self.assertEqual(select_plan(navigation_stages=set()).decision, "NOOP")
         self.assertEqual(
             select_plan(
@@ -765,7 +915,6 @@ class HighLevelRequirementTests(unittest.TestCase):
         base = {
             "now": now,
             "activities": [],
-            "official_windows": [],
             "client": "Official",
             "account": "main",
         }
@@ -791,7 +940,6 @@ class HighLevelRequirementTests(unittest.TestCase):
         pre_reset_catch_up = plan_annihilation(
             now=datetime(2026, 8, 30, 18, 0, tzinfo=UTC),
             activities=[],
-            official_windows=[],
             client="Official",
             account="main",
         )

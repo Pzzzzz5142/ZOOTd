@@ -11,11 +11,10 @@ from .models import (
     Activity,
     CandidateReport,
     Decision,
-    OfficialWindow,
     StageEfficiency,
     StockTarget,
 )
-from .util import normalize_activity_name, version_at_least
+from .util import version_at_least
 
 
 def _candidate_selection_key(item: CandidateReport) -> tuple[int, float, float, int, str]:
@@ -67,35 +66,10 @@ def _execution_candidate(
     }
 
 
-def _official_confirmation(
-    activity: Activity,
-    windows: Iterable[OfficialWindow],
-    tolerance: timedelta,
-) -> tuple[OfficialWindow | None, str | None]:
-    activity_name = normalize_activity_name(activity.name)
-    named = [
-        window
-        for window in windows
-        if normalize_activity_name(window.activity_name) == activity_name
-    ]
-    if not named:
-        return None, "OFFICIAL_ACTIVITY_MISSING"
-    ranked = sorted(
-        named,
-        key=lambda window: abs((window.start - activity.start).total_seconds())
-        + abs((window.end - activity.end).total_seconds()),
-    )
-    best = ranked[0]
-    if abs(best.start - activity.start) > tolerance or abs(best.end - activity.end) > tolerance:
-        return None, "OFFICIAL_WINDOW_CONFLICT"
-    return best, None
-
-
 def select_farming_plan(
     *,
     now: datetime,
     activities: Iterable[Activity],
-    official_windows: Iterable[OfficialWindow],
     efficiencies: Mapping[str, StageEfficiency],
     inventory: InventorySnapshot,
     targets: Mapping[str, StockTarget],
@@ -105,9 +79,7 @@ def select_farming_plan(
     verified_stages: set[tuple[str, str]],
     quarantined_stages: set[tuple[str, str]],
     navigation_stages: set[str],
-    require_official: bool,
     end_safety_margin: timedelta,
-    window_tolerance: timedelta,
     when_satisfied: str,
     configured_series: int,
     large_deficit_runs: int,
@@ -132,7 +104,6 @@ def select_farming_plan(
     }
     candidates: list[CandidateReport] = []
     activity_by_instance: dict[str, Activity] = {}
-    official_matches: dict[str, OfficialWindow] = {}
     active_activities: list[Activity] = []
 
     for activity in activities:
@@ -168,19 +139,6 @@ def select_farming_plan(
             common_rejections.append("CORE_VERSION_TOO_OLD")
         if not activity.stages:
             common_rejections.append("NO_NUMERIC_MATERIAL_STAGE")
-        if require_official:
-            match, rejection = _official_confirmation(activity, official_windows, window_tolerance)
-            if rejection:
-                common_rejections.append(rejection)
-            elif match:
-                official_matches[activity.instance_id] = match
-                official_start = match.start.astimezone(UTC)
-                official_end = match.end.astimezone(UTC)
-                if not official_start <= now < official_end:
-                    common_rejections.append("OUTSIDE_OFFICIAL_WINDOW")
-                elif now + end_safety_margin >= official_end:
-                    common_rejections.append("OFFICIAL_END_SAFETY_MARGIN")
-
         for stage in activity.stages:
             report = CandidateReport(
                 stage_code=stage.code,
@@ -278,11 +236,12 @@ def select_farming_plan(
                     "unknown_allowed": True,
                     "positive_ledger_required": False,
                     "local_quarantine_overrides": True,
-                    "preflight": "fight-times-zero-plus-use-prts-success-check",
-                    "preflight_consumes_sanity": False,
+                    "preflight": "one-fight-plus-use-prts-success-check",
+                    "preflight_consumes_sanity": True,
                 },
-                "official_matches": {
-                    key: value.as_dict() for key, value in official_matches.items()
+                "activity_window_policy": {
+                    "source": "maa-stage-activity-v2",
+                    "half_open_interval": True,
                 },
             },
         )
@@ -325,13 +284,14 @@ def select_farming_plan(
                 "unknown_allowed": True,
                 "positive_ledger_required": False,
                 "local_quarantine_overrides": True,
-                "preflight": "fight-times-zero-plus-use-prts-success-check",
-                "preflight_consumes_sanity": False,
+                "preflight": "one-fight-plus-use-prts-success-check",
+                "preflight_consumes_sanity": True,
             },
             "execution_candidates": execution_candidates,
-            "official_window": official_matches.get(activity.instance_id).as_dict()
-            if activity.instance_id in official_matches
-            else None,
+            "activity_window_policy": {
+                "source": "maa-stage-activity-v2",
+                "half_open_interval": True,
+            },
             "selection_order": [
                 "hard_floor",
                 "target_deficit",

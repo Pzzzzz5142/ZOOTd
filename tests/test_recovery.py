@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from maa_planner.codex_recovery import CodexRecoveryError, run_codex_recovery
-from maa_planner.codex_sdk import CodexSDKRequest
+from maa_planner.codex_sdk import CodexSDKRequest, run_sdk_request
 from maa_planner.recovery import recover_failed_run, validate_recovery_report
 from maa_planner.supervisor import (
     PHASES,
@@ -44,6 +48,14 @@ class RecoveryTests(unittest.TestCase):
         (repo / "docs").mkdir(parents=True)
         (repo / "docs/llm-recovery-scope.md").write_bytes(
             (ROOT / "docs/llm-recovery-scope.md").read_bytes()
+        )
+        (repo / "config/tasks").mkdir(parents=True)
+        (repo / "config/tasks/proxy-preflight.toml").write_text(
+            "client_type = \"Official\"\n", encoding="utf-8"
+        )
+        (repo / "scripts").mkdir()
+        (repo / "scripts/run-daily.sh").write_text(
+            "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
         )
         (repo / ".gitignore").write_text("/var/\n", encoding="utf-8")
         subprocess.run(("git", "init", "-q"), cwd=repo, check=True)
@@ -106,8 +118,31 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(final["payload"]["llm"]["status"], "recovery-pending")
         return run_id
 
-    def _successful_full_run(self, repo: Path, *, now: datetime) -> str:
-        run_id = start_run(repo, "full", now=now)
+    def _successful_full_run(
+        self,
+        repo: Path,
+        *,
+        now: datetime,
+        recovery_evidence: dict[str, object] | None = None,
+    ) -> str:
+        if recovery_evidence is None:
+            run_id = start_run(repo, "full", now=now)
+        else:
+            attempt = recovery_evidence["recovery_attempt"]
+            assert isinstance(attempt, dict)
+            with patch.dict(
+                os.environ,
+                {
+                    "MAA_RECOVERY_ACTIVE": "true",
+                    "MAA_RECOVERY_PARENT_RUN_ID": str(
+                        recovery_evidence["failed_run_id"]
+                    ),
+                    "MAA_RECOVERY_ATTEMPT_ID": str(attempt["attempt_id"]),
+                    "MAA_RECOVERY_SLOT": str(attempt["slot"]),
+                },
+                clear=False,
+            ):
+                run_id = start_run(repo, "full", now=now)
         for index, phase in enumerate(PHASES, start=1):
             record_phase(
                 repo,
@@ -166,6 +201,10 @@ class RecoveryTests(unittest.TestCase):
                 "schema_version": 2,
                 "kind": "operational-recovery",
                 "failed_run_id": failed_run_id,
+                "recovery_attempt": {
+                    "attempt_id": "a" * 32,
+                    "slot": "manual",
+                },
                 "screenshot_paths": [],
                 "controller_repository": {"head": base_head},
                 "agent_session": {
@@ -177,7 +216,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 6,
+                    "version": 7,
                 },
             }
             seen: dict[str, object] = {}
@@ -251,6 +290,17 @@ class RecoveryTests(unittest.TestCase):
             assert isinstance(child_env, dict)
             self.assertEqual(child_env["MAA_RECOVERY_ACTIVE"], "true")
             self.assertEqual(child_env["MAA_RECOVERY_PARENT_RUN_ID"], failed_run_id)
+            self.assertEqual(child_env["MAA_RECOVERY_ATTEMPT_ID"], "a" * 32)
+            self.assertEqual(child_env["MAA_RECOVERY_SLOT"], "manual")
+            self.assertEqual(
+                request.thread_state_context,
+                {
+                    "failed_run_id": failed_run_id,
+                    "attempt_id": "a" * 32,
+                    "base_head": base_head,
+                    "scope_sha256": sha256_bytes(scope),
+                },
+            )
             self.assertEqual(child_env["DISPLAY"], ":0")
             self.assertIn("OPENAI_API_KEY", child_env)
             self.assertNotIn("MAA_SECRET", child_env)
@@ -280,27 +330,18 @@ class RecoveryTests(unittest.TestCase):
                 argv: tuple[str, ...], **kwargs: object
             ) -> subprocess.CompletedProcess[bytes]:
                 evidence = json.loads(kwargs["input"])
-                successful_run_id = start_run(
-                    repo, "full", now=START + timedelta(minutes=1)
-                )
-                for index, phase in enumerate(PHASES, start=1):
-                    record_phase(
-                        repo,
-                        successful_run_id,
-                        phase=phase,
-                        result="succeeded",
-                        outcome=f"{phase}-complete",
-                        now=START + timedelta(minutes=1, seconds=index),
-                    )
-                successful = finish_run(
+                successful_run_id = self._successful_full_run(
                     repo,
-                    successful_run_id,
-                    process_status=0,
-                    supervisor_enabled=True,
-                    supervisor_required=True,
-                    command=(),
-                    timeout_seconds=1,
-                    now=START + timedelta(minutes=2),
+                    now=datetime.now(UTC) + timedelta(seconds=1),
+                    recovery_evidence=evidence,
+                )
+                successful_events = load_run_events(repo, successful_run_id)
+                audit_path = (
+                    repo
+                    / "var/state/supervisor/runs"
+                    / successful_run_id
+                    / "events"
+                    / f"{len(successful_events) - 1:04d}-run-finished.json"
                 )
                 output = {
                     "schema_version": 2,
@@ -317,7 +358,7 @@ class RecoveryTests(unittest.TestCase):
                         "command": evidence["retry_command"],
                         "exit_status": 0,
                         "successful_run_id": successful_run_id,
-                        "audit_path": str(successful.event_path.relative_to(repo)),
+                        "audit_path": str(audit_path.relative_to(repo)),
                     },
                     "code_repair": self._no_code_repair(
                         evidence["controller_repository"]["head"]
@@ -440,8 +481,16 @@ class RecoveryTests(unittest.TestCase):
                 evidence = json.loads(kwargs["input"])
                 branch = "fix/agent-selected"
                 subprocess.run(("git", "switch", "-c", branch), cwd=repo, check=True)
-                (repo / "repair.txt").write_text("repair\n", encoding="utf-8")
-                subprocess.run(("git", "add", "repair.txt"), cwd=repo, check=True)
+                task_path = repo / "config/tasks/proxy-preflight.toml"
+                task_path.write_text(
+                    task_path.read_text(encoding="utf-8") + "# repaired\n",
+                    encoding="utf-8",
+                )
+                subprocess.run(
+                    ("git", "add", "config/tasks/proxy-preflight.toml"),
+                    cwd=repo,
+                    check=True,
+                )
                 subprocess.run(
                     ("git", "commit", "-qm", "fix: recover workflow"),
                     cwd=repo,
@@ -455,7 +504,9 @@ class RecoveryTests(unittest.TestCase):
                     text=True,
                 ).stdout.strip()
                 successful_run_id = self._successful_full_run(
-                    repo, now=START + timedelta(minutes=1)
+                    repo,
+                    now=datetime.now(UTC) + timedelta(seconds=1),
+                    recovery_evidence=evidence,
                 )
                 successful_events = load_run_events(repo, successful_run_id)
                 audit_path = (
@@ -496,6 +547,19 @@ class RecoveryTests(unittest.TestCase):
                     argv, 0, json.dumps(output).encode(), b""
                 )
 
+            def verify_pull_request(
+                _root: Path,
+                url: str,
+                branch: str,
+                commit: str,
+                base_branch: str,
+            ) -> dict[str, object]:
+                self.assertEqual(url, "https://github.com/example/recovery-repo/pull/7")
+                self.assertEqual(branch, "fix/agent-selected")
+                self.assertRegex(commit, r"^[0-9a-f]{40}$")
+                self.assertEqual(base_branch, "master")
+                return {"status": "verified"}
+
             outcome = recover_failed_run(
                 repo,
                 failed_run_id,
@@ -503,6 +567,7 @@ class RecoveryTests(unittest.TestCase):
                 command=("fake-recovery",),
                 timeout_seconds=60,
                 runner=repair_runner,
+                pull_request_verifier=verify_pull_request,
             )
             self.assertEqual(outcome.status, "recovered")
             self.assertEqual(outcome.repair_branch, "fix/agent-selected")
@@ -572,12 +637,14 @@ class RecoveryTests(unittest.TestCase):
             repo = self._repo(directory)
             failed_run_id = self._failed_full_run(repo)
             attempts: list[dict[str, object]] = []
+            attempt_ids: list[str] = []
 
             def flaky_runner(
                 argv: tuple[str, ...], **kwargs: object
             ) -> subprocess.CompletedProcess[bytes]:
                 evidence = json.loads(kwargs["input"])
                 attempts.append(evidence["adapter_attempt"])
+                attempt_ids.append(evidence["recovery_attempt"]["attempt_id"])
                 if len(attempts) == 1:
                     return subprocess.CompletedProcess(argv, 1, b"", b"Bad Request")
                 output = {
@@ -612,10 +679,239 @@ class RecoveryTests(unittest.TestCase):
             )
             self.assertEqual(outcome.status, "scope-blocked")
             self.assertEqual([item["number"] for item in attempts], [1, 2])
+            self.assertEqual(len(set(attempt_ids)), 1)
             self.assertEqual(attempts[0]["prior_errors"], [])
             self.assertIn("Bad Request", attempts[1]["prior_errors"][0])
             final = load_run_events(repo, failed_run_id)[-1]["payload"]
             self.assertEqual(len(final["agent"]["attempt_errors"]), 1)
+
+    def test_historical_success_cannot_masquerade_as_this_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            historical_run_id = self._successful_full_run(repo, now=START)
+            failed_run_id = self._failed_full_run(
+                repo, now=START + timedelta(hours=1)
+            )
+
+            def replay_runner(
+                argv: tuple[str, ...], **kwargs: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                evidence = json.loads(kwargs["input"])
+                historical_events = load_run_events(repo, historical_run_id)
+                historical_audit = (
+                    repo
+                    / "var/state/supervisor/runs"
+                    / historical_run_id
+                    / "events"
+                    / f"{len(historical_events) - 1:04d}-run-finished.json"
+                )
+                (repo / "var/state/supervisor/latest-run.json").write_text(
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "run_id": historical_run_id,
+                            "status": "success",
+                            "llm_invoked": False,
+                            "event_sha256": historical_events[-1]["event_sha256"],
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                output = {
+                    "schema_version": 2,
+                    "failed_run_id": failed_run_id,
+                    "status": "recovered",
+                    "classification": "runtime",
+                    "summary": "Claimed a prior successful run.",
+                    "actions_taken": ["Repointed the latest-run index."],
+                    "verification": {
+                        "command": evidence["retry_command"],
+                        "exit_status": 0,
+                        "successful_run_id": historical_run_id,
+                        "audit_path": str(historical_audit.relative_to(repo)),
+                    },
+                    "code_repair": self._no_code_repair(
+                        evidence["controller_repository"]["head"]
+                    ),
+                    "scope_blocker": "none",
+                }
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(output).encode(), b""
+                )
+
+            outcome = recover_failed_run(
+                repo,
+                failed_run_id,
+                slot="manual",
+                command=("fake-recovery",),
+                timeout_seconds=60,
+                runner=replay_runner,
+            )
+            self.assertEqual(outcome.status, "failed")
+            final = load_run_events(repo, failed_run_id)[-1]["payload"]
+            self.assertIn(
+                "not linked to this recovery attempt",
+                final["controller_verification"]["error"],
+            )
+
+    def test_applied_source_repair_cannot_rewrite_audit_producers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            failed_run_id = self._failed_full_run(repo)
+
+            def repair_runner(
+                argv: tuple[str, ...], **kwargs: object
+            ) -> subprocess.CompletedProcess[bytes]:
+                evidence = json.loads(kwargs["input"])
+                branch = "fix/unsafe-launcher"
+                subprocess.run(("git", "switch", "-c", branch), cwd=repo, check=True)
+                launcher = repo / "scripts/run-daily.sh"
+                launcher.write_text(
+                    "#!/usr/bin/env bash\n# fabricate accepted phases\nexit 0\n",
+                    encoding="utf-8",
+                )
+                subprocess.run(
+                    ("git", "add", "scripts/run-daily.sh"), cwd=repo, check=True
+                )
+                subprocess.run(
+                    ("git", "commit", "-qm", "fix: unsafe launcher"),
+                    cwd=repo,
+                    check=True,
+                )
+                commit = subprocess.run(
+                    ("git", "rev-parse", "HEAD"),
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                successful_run_id = self._successful_full_run(
+                    repo,
+                    now=datetime.now(UTC) + timedelta(seconds=1),
+                    recovery_evidence=evidence,
+                )
+                successful_events = load_run_events(repo, successful_run_id)
+                audit_path = (
+                    repo
+                    / "var/state/supervisor/runs"
+                    / successful_run_id
+                    / "events"
+                    / f"{len(successful_events) - 1:04d}-run-finished.json"
+                )
+                output = {
+                    "schema_version": 2,
+                    "failed_run_id": failed_run_id,
+                    "status": "recovered",
+                    "classification": "configuration",
+                    "summary": "Applied a launcher change.",
+                    "actions_taken": ["Changed the audit-producing launcher."],
+                    "verification": {
+                        "command": evidence["retry_command"],
+                        "exit_status": 0,
+                        "successful_run_id": successful_run_id,
+                        "audit_path": str(audit_path.relative_to(repo)),
+                    },
+                    "code_repair": {
+                        "status": "pr-failed",
+                        "base_head": evidence["controller_repository"]["head"],
+                        "branch": branch,
+                        "commit": commit,
+                        "applied_to_runtime": True,
+                        "pull_request_url": None,
+                        "pull_request_error": "offline test remote",
+                        "validation_commands": ["python -m unittest"],
+                    },
+                    "scope_blocker": "none",
+                }
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(output).encode(), b""
+                )
+
+            outcome = recover_failed_run(
+                repo,
+                failed_run_id,
+                slot="manual",
+                command=("fake-recovery",),
+                timeout_seconds=60,
+                runner=repair_runner,
+            )
+            self.assertEqual(outcome.status, "failed")
+            final = load_run_events(repo, failed_run_id)[-1]["payload"]
+            self.assertIn(
+                "declarative task files",
+                final["controller_verification"]["error"],
+            )
+
+    def test_sdk_resume_path_calls_thread_resume_and_rewrites_bound_state(self) -> None:
+        calls: dict[str, object] = {}
+
+        class FakeThread:
+            id = "thread-resumed"
+
+            async def run(self, _turn_input: object, **_: object) -> object:
+                return types.SimpleNamespace(final_response="{}")
+
+        class FakeAsyncCodex:
+            def __init__(self, _config: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FakeAsyncCodex":
+                return self
+
+            async def __aexit__(self, *_args: object) -> None:
+                return None
+
+            async def thread_resume(self, thread_id: str, **_: object) -> FakeThread:
+                calls["resumed"] = thread_id
+                return FakeThread()
+
+            async def thread_start(self, **_: object) -> FakeThread:
+                raise AssertionError("thread_start must not be called")
+
+        fake_sdk = types.SimpleNamespace(
+            ApprovalMode=types.SimpleNamespace(deny_all="deny-all"),
+            AsyncCodex=FakeAsyncCodex,
+            CodexConfig=lambda **kwargs: kwargs,
+            LocalImageInput=lambda value: value,
+            Sandbox=types.SimpleNamespace(
+                read_only="read-only",
+                workspace_write="workspace-write",
+                full_access="full-access",
+            ),
+            TextInput=lambda value: value,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            state_path = workspace / "state/thread.json"
+            context = {
+                "failed_run_id": "20260828T000000.000000Z-12345678",
+                "attempt_id": "b" * 32,
+                "base_head": "c" * 40,
+                "scope_sha256": "d" * 64,
+            }
+            request = CodexSDKRequest(
+                prompt="resume",
+                output_schema={"type": "object"},
+                cwd=workspace,
+                sandbox="full-access",
+                images=(),
+                model=None,
+                timeout_seconds=10,
+                environment={"HOME": directory},
+                config_overrides=(),
+                ephemeral=False,
+                resume_thread_id="thread-original",
+                thread_id_path=state_path,
+                thread_state_context=context,
+            )
+            with patch.dict(sys.modules, {"openai_codex": fake_sdk}):
+                self.assertEqual(run_sdk_request(request), "{}")
+            self.assertEqual(calls["resumed"], "thread-original")
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["schema_version"], 2)
+            self.assertEqual(saved["thread_id"], "thread-resumed")
+            self.assertEqual(saved["context"], context)
 
     def test_stateful_daily_parent_still_invokes_reentrant_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

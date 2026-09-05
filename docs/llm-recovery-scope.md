@@ -1,6 +1,6 @@
 # MAA unattended recovery scope
 
-Version: 6
+Version: 7
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -35,9 +35,11 @@ There are only three valid terminal states:
    repair attempt are not terminal failures; continue investigating and retry.
 
 The agent must run the retry command supplied in the incident evidence. It must
-preserve `MAA_RECOVERY_ACTIVE=true` and must not start, stop, or restart the
-outer systemd unit that is currently hosting it. The controller, not the model,
-makes the final success decision.
+preserve `MAA_RECOVERY_ACTIVE=true` together with the supplied
+`MAA_RECOVERY_PARENT_RUN_ID`, `MAA_RECOVERY_ATTEMPT_ID`, and
+`MAA_RECOVERY_SLOT`, and must not start, stop, or restart the outer systemd unit
+that is currently hosting it. The controller, not the model, makes the final
+success decision.
 
 For a `pre-reset` incident, `MAA_RECOVERY_ACTIVE=true` allows the supplied
 `--pre-reset-slot` retry to start from 02:05 through 02:24 Asia/Shanghai. This
@@ -131,10 +133,12 @@ good merely because its dry-run receipt is valid.
    full workflow. For an upgrade regression, the supported atomic runtime
    rollback is preferred to hand-editing or swapping runtime directories.
 2. If tracked source/configuration must change, create an agent-selected repair
-   branch descended from the supplied base. Either check that branch out in the
-   primary repository before a full retry, or use the suggested ignored Git
-   worktree for a proposal that will not be applied to this run. Never commit
-   on the base branch.
+   branch descended from the supplied base. The controller may apply a repair
+   to the current incident only when every changed path is an existing regular
+   declarative task file in its explicit `config/tasks/*.toml` allowlist. Source,
+   shell, executable-entrypoint, policy, scope, and audit-producer changes must
+   stay in the suggested ignored Git worktree as a proposal and cannot be used
+   as current-incident success evidence. Never commit on the base branch.
 3. Commit before starting a managed retry: managed runs deliberately reject a
    dirty tree. Run focused tests and the applicable static/runtime contracts.
    A real full launcher audit is still the only operational success proof.
@@ -143,19 +147,22 @@ good merely because its dry-run receipt is valid.
    default branch. Do not log in, alter credentials, force-push, or merge. A
    GitHub/auth outage must be reported in `code_repair.pull_request_error`; it
    does not erase a separately proven operational recovery.
-5. If the successful full run used the repair commit, leave that clean repair
-   branch active and report `applied_to_runtime=true`. If the successful run
-   used the base (for example after runtime rollback), leave the primary
-   checkout clean at the base and report an isolated PR with
-   `applied_to_runtime=false`. If recovery did not succeed, restore the primary
-   checkout to the exact clean base before returning, while preserving any
-   repair branch/commit/PR.
+5. If the successful full run used an allowlisted declarative-task repair
+   commit, leave that clean repair branch active and report
+   `applied_to_runtime=true`. Otherwise leave the primary checkout clean at the
+   base and report any isolated PR with `applied_to_runtime=false`. If recovery
+   did not succeed, also restore the primary checkout to the exact clean base,
+   while preserving any repair branch/commit/PR.
 
 Use `code_repair.status=not-needed` with no branch metadata when no tracked
 files changed. Use `pr-opened` with the branch, commit, HTTPS PR URL, and test
 commands after a successful publication. Use `pr-failed` with the same local
 branch/commit evidence and the concrete publication error when existing
-credentials or the remote cannot publish it.
+credentials or the remote cannot publish it. The controller independently asks
+GitHub for PR metadata and checks that it is open, belongs to the expected
+repository, and has the declared head branch/commit and base branch. An invalid
+or unverifiable PR is prominently audited but does not erase a separately
+proved operational recovery.
 
 ## Policy-resolved game conditions
 
@@ -235,12 +242,15 @@ For `recovered`, report the exact retry command, its zero exit status, the new
 run ID, and its audit path. The controller then independently requires:
 
 - the new run ID differs from the failed parent run;
+- the new run started after this recovery attempt and its start event contains
+  the exact parent run ID, 128-bit attempt ID, and scheduler slot supplied by
+  the controller;
 - the new run is `full`, uses either the recorded clean base HEAD or the exact
-  clean repair commit declared as applied, and has one accepted terminal result
-  for every expected phase;
+  clean allowlisted task-repair commit declared as applied, and has one accepted
+  terminal result for every expected phase;
 - its final hash-chained event reports process status 0 and overall success;
 - the repository is still clean and its branch/HEAD, repair ancestry, changed
-  paths, and PR URL agree with the structured report.
+  paths, and independently fetched PR metadata agree with the structured report.
 
 If any check fails, continue recovery or report the applicable scope blocker;
 do not claim success.

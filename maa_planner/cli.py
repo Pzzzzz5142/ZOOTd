@@ -166,7 +166,7 @@ def _activity_instance_from_snapshot(
 ) -> str:
     """Resolve bookkeeping scope from the last atomic source snapshot.
 
-    This deliberately does not refresh Yituliu or the bulletin after a fight.
+    This deliberately does not refresh Yituliu or MAA activity data after a fight.
     The snapshot must have been generated recently (the launcher syncs it before
     starting the device), and the exact activity must still be active.
     """
@@ -285,8 +285,6 @@ _AGENT_DIAGNOSTIC_REJECTIONS = frozenset(
         "INVALID_STAGE_CODE",
         "MAA_NAVIGATION_UNSUPPORTED",
         "NO_NUMERIC_MATERIAL_STAGE",
-        "OFFICIAL_ACTIVITY_MISSING",
-        "OFFICIAL_WINDOW_CONFLICT",
         "YITULIU_STAGE_UNAVAILABLE",
     }
 )
@@ -659,14 +657,13 @@ def command_sync(args: argparse.Namespace) -> int:
         return 1
     print(
         f"sources ready: {len(bundle.activities)} MAA activities, "
-        f"{len(bundle.official_windows)} official stage windows, "
         f"{len(bundle.efficiencies)} efficiency records"
     )
     return 0
 
 
 def command_sync_calendar(args: argparse.Namespace) -> int:
-    """Refresh only the sources shared by activity and Annihilation planning."""
+    """Refresh the MAA activity source shared by both planners."""
 
     root = Path(args.project_root).resolve()
     try:
@@ -675,10 +672,7 @@ def command_sync_calendar(args: argparse.Namespace) -> int:
     except (ConfigError, SourceError, OSError) as exc:
         print(f"activity-calendar sync failed: {exc}", file=sys.stderr)
         return 1
-    print(
-        f"activity calendar ready: {len(calendar.activities)} MAA activities, "
-        f"{len(calendar.official_windows)} official stage windows"
-    )
+    print(f"activity calendar ready: {len(calendar.activities)} MAA activities")
     return 0
 
 
@@ -961,7 +955,6 @@ def command_plan_annihilation(args: argparse.Namespace) -> int:
     source_available = True
     source_error: str | None = None
     activities = ()
-    official_windows = ()
     saved_state = valid_annihilation_state(
         state,
         client=config.client_type,
@@ -979,7 +972,6 @@ def command_plan_annihilation(args: argparse.Namespace) -> int:
                 online=not args.offline,
             )
             activities = calendar.activities
-            official_windows = calendar.official_windows
         except (SourceError, OSError) as exc:
             # Weekly completion has a deterministic Monday/deadline fallback
             # even when the activity calendar is unavailable. LLM advice is
@@ -991,15 +983,11 @@ def command_plan_annihilation(args: argparse.Namespace) -> int:
         decision = plan_annihilation(
             now=now,
             activities=activities,
-            official_windows=official_windows,
             client=config.client_type,
             account=config.account,
             state=state,
             source_available=source_available,
             source_error=source_error,
-            window_tolerance=timedelta(
-                seconds=config.activity.window_tolerance_seconds
-            ),
             execution_budget=timedelta(
                 minutes=config.annihilation.execution_budget_minutes
             ),
@@ -1264,7 +1252,6 @@ def command_plan(args: argparse.Namespace) -> int:
             decision = select_farming_plan(
                 now=now,
                 activities=bundle.activities,
-                official_windows=bundle.official_windows,
                 efficiencies=bundle.efficiencies,
                 inventory=snapshot,
                 targets=config.targets,
@@ -1274,9 +1261,7 @@ def command_plan(args: argparse.Namespace) -> int:
                 verified_stages=verified,
                 quarantined_stages=quarantined,
                 navigation_stages=navigation_stages(root),
-                require_official="official" in config.activity.require_sources,
                 end_safety_margin=timedelta(minutes=config.activity.end_safety_margin_minutes),
-                window_tolerance=timedelta(seconds=config.activity.window_tolerance_seconds),
                 when_satisfied=config.policy.when_satisfied,
                 configured_series=config.policy.series,
                 large_deficit_runs=config.policy.large_deficit_runs,
@@ -1337,7 +1322,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync_calendar = subparsers.add_parser(
         "sync-calendar",
-        help="refresh only MAA and official activity-window sources",
+        help="refresh the MAA activity-window source",
     )
     sync_calendar.add_argument(
         "--offline", action="store_true", help="validate fresh cached data only"

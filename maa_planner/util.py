@@ -73,16 +73,6 @@ def load_json(path: Path) -> Any:
         return json.load(handle)
 
 
-_EVENT_DECORATION = re.compile(
-    r"(?:SideStory|故事集|主题曲|限时|活动|开启|复刻|即将|关卡|「|」|『|』|【|】|\s|[·・—_-])+",
-    re.IGNORECASE,
-)
-
-
-def normalize_activity_name(value: str) -> str:
-    return _EVENT_DECORATION.sub("", value).strip().casefold()
-
-
 def parse_version(value: str) -> tuple[int, ...]:
     match = re.search(r"(\d+(?:\.\d+)+)", value)
     if not match:
@@ -99,4 +89,3 @@ def version_at_least(actual: str, required: str) -> bool:
         return False
     width = max(len(left), len(right))
     return left + (0,) * (width - len(left)) >= right + (0,) * (width - len(right))
-

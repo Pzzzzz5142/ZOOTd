@@ -97,6 +97,7 @@ class CodexSDKRequest:
     approval_mode: Literal["deny-all"] = "deny-all"
     resume_thread_id: str | None = None
     thread_id_path: Path | None = None
+    thread_state_context: dict[str, str] | None = None
 
 
 CodexSDKRunner = Callable[[CodexSDKRequest], str]
@@ -210,10 +211,13 @@ async def _invoke_sdk(request: CodexSDKRequest) -> str:
                 raise CodexSDKError("Codex thread state path is outside its workspace") from exc
             state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             os.chmod(state_path.parent, 0o700)
-            atomic_write_json(
-                state_path,
-                {"schema_version": 1, "thread_id": thread.id},
-            )
+            state: dict[str, Any] = {
+                "schema_version": 2,
+                "thread_id": thread.id,
+            }
+            if request.thread_state_context is not None:
+                state["context"] = dict(request.thread_state_context)
+            atomic_write_json(state_path, state)
         turn_input: str | list[Any]
         if request.images:
             turn_input = [TextInput(request.prompt)]

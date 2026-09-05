@@ -371,6 +371,7 @@ def validate_farming_contracts(root: Path) -> None:
         proxy_fight,
         {
             "medicine": 0,
+            "medicine_expire_days": 2,
             "stone": 0,
             "times": 1,
             "series": 1,

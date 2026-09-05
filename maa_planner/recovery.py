@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from secrets import token_hex
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
@@ -27,16 +28,21 @@ class RecoveryError(RuntimeError):
     pass
 
 
+PullRequestVerifier = Callable[[Path, str, str, str, str], Mapping[str, Any]]
+
+
 _RUN_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
 _GIT_HASH_RE = re.compile(r"[0-9a-f]{40,64}")
 _BRANCH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
-_CURRENT_RECOVERY_CONTROL_PATHS = frozenset(
+_APPLIED_REPAIR_PATHS = frozenset(
     {
-        "docs/llm-recovery-scope.md",
-        "maa_planner/codex_recovery.py",
-        "maa_planner/codex_sdk.py",
-        "maa_planner/recovery.py",
-        "maa_planner/supervisor.py",
+        "config/tasks/annihilation.toml",
+        "config/tasks/award-only.toml",
+        "config/tasks/daily.toml",
+        "config/tasks/depot.toml",
+        "config/tasks/proxy-preflight.toml",
+        "config/tasks/sanity-fight.toml",
+        "config/tasks/verify-fight.toml",
     }
 )
 _CLASSIFICATIONS = frozenset(
@@ -68,7 +74,7 @@ _BLOCKERS = frozenset(
         "unknown",
     }
 )
-_MAX_EXTERNAL_OUTPUT = 256 * 1024
+_MAX_EXTERNAL_OUTPUT = 128 * 1024
 
 
 @dataclass(frozen=True)
@@ -671,6 +677,7 @@ def _incident_evidence(
     events: Sequence[Mapping[str, Any]],
     *,
     slot: str,
+    attempt_id: str,
 ) -> dict[str, Any]:
     start, finished = _failed_run(events)
     scope_path = root / "docs/llm-recovery-scope.md"
@@ -721,6 +728,7 @@ def _incident_evidence(
         "schema_version": 2,
         "kind": "operational-recovery",
         "failed_run_id": failed_run_id,
+        "recovery_attempt": {"attempt_id": attempt_id, "slot": slot},
         "slot": slot,
         "retry_argv": retry,
         "retry_command": shlex.join(retry),
@@ -756,7 +764,7 @@ def _incident_evidence(
         "scope": {
             "path": "docs/llm-recovery-scope.md",
             "sha256": sha256_bytes(scope_bytes),
-            "version": 6,
+            "version": 7,
         },
         "controller_repository": controller_repository,
         "repair_policy": {
@@ -885,12 +893,61 @@ def _git_identity(root: Path) -> tuple[str, bool]:
     return head, bool(status_result.stdout)
 
 
+def _verify_github_pull_request(
+    root: Path,
+    url: str,
+    branch: str,
+    commit: str,
+    base_branch: str,
+) -> Mapping[str, Any]:
+    fields = "url,state,headRefName,headRefOid,baseRefName,isCrossRepository"
+    try:
+        completed = subprocess.run(
+            ("gh", "pr", "view", url, "--json", fields),
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "unverified", "error": str(exc)[-2000:]}
+    if completed.returncode != 0 or len(completed.stdout) > 64 * 1024:
+        detail = completed.stderr.decode("utf-8", errors="replace")[-2000:].strip()
+        return {
+            "status": "unverified",
+            "error": detail or f"gh pr view exited {completed.returncode}",
+        }
+    try:
+        metadata = json.loads(completed.stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {"status": "unverified", "error": f"invalid gh output: {exc}"}
+    expected = {
+        "url": url,
+        "state": "OPEN",
+        "headRefName": branch,
+        "headRefOid": commit,
+        "baseRefName": base_branch,
+        "isCrossRepository": False,
+    }
+    if not isinstance(metadata, dict) or any(
+        metadata.get(key) != value for key, value in expected.items()
+    ):
+        return {
+            "status": "invalid",
+            "expected": expected,
+            "observed": metadata if isinstance(metadata, dict) else None,
+        }
+    return {"status": "verified", "metadata": expected}
+
+
 def _verify_code_repair(
     root: Path,
     repair: Mapping[str, Any],
     repository: Mapping[str, Any],
     *,
     recovered: bool,
+    pull_request_verifier: PullRequestVerifier,
 ) -> dict[str, Any]:
     base_head = repository.get("head")
     base_branch = repository.get("branch")
@@ -934,7 +991,16 @@ def _verify_code_repair(
     if ancestor.returncode != 0:
         raise RecoveryError("agent's repair commit is not descended from the recovery base")
     changed = subprocess.run(
-        ("git", "diff", "--name-only", "-z", str(base_head), commit, "--"),
+        (
+            "git",
+            "diff",
+            "--no-renames",
+            "--name-status",
+            "-z",
+            str(base_head),
+            commit,
+            "--",
+        ),
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -943,17 +1009,22 @@ def _verify_code_repair(
     if changed.returncode != 0 or not changed.stdout:
         raise RecoveryError("agent's repair commit has no verifiable tracked changes")
     try:
-        changed_paths = [
+        fields = [
             item.decode("utf-8") for item in changed.stdout.split(b"\0") if item
         ]
     except UnicodeDecodeError as exc:
         raise RecoveryError("agent's repair commit contains an invalid path") from exc
+    if len(fields) % 2 != 0:
+        raise RecoveryError("agent's repair commit has invalid Git diff metadata")
+    changed_entries = list(zip(fields[0::2], fields[1::2], strict=True))
+    changed_paths = [path for _status, path in changed_entries]
     if len(changed_paths) > 256 or any(
         not path or path.startswith("/") or "\x00" in path for path in changed_paths
     ):
         raise RecoveryError("agent's repair commit changed an unsafe path set")
 
     pull_request_url = repair.get("pull_request_url")
+    pull_request_verification: Mapping[str, Any] | None = None
     if repair.get("status") == "pr-opened":
         prefix = repository.get("pull_request_url_prefix")
         if (
@@ -963,14 +1034,53 @@ def _verify_code_repair(
             is None
         ):
             raise RecoveryError("agent's pull request URL does not match the configured remote")
+        default_branch = repository.get("default_branch")
+        if not isinstance(default_branch, str) or not _valid_branch_name(default_branch):
+            raise RecoveryError("controller default branch is invalid")
+        assert isinstance(branch, str)
+        assert isinstance(commit, str)
+        pull_request_verification = pull_request_verifier(
+            root,
+            pull_request_url,
+            branch,
+            commit,
+            default_branch,
+        )
+        if pull_request_verification.get("status") not in {
+            "verified",
+            "invalid",
+            "unverified",
+        }:
+            raise RecoveryError("pull request verifier returned an invalid result")
 
     applied = repair.get("applied_to_runtime") is True
     if applied and not recovered:
         raise RecoveryError("agent left an incomplete repair active")
-    if applied and _CURRENT_RECOVERY_CONTROL_PATHS.intersection(changed_paths):
-        raise RecoveryError(
-            "agent applied changes to the current recovery control plane"
-        )
+    if applied:
+        if any(
+            status != "M" or path not in _APPLIED_REPAIR_PATHS
+            for status, path in changed_entries
+        ):
+            raise RecoveryError(
+                "an applied repair may modify only existing declarative task files"
+            )
+        for path in changed_paths:
+            tree_entry = subprocess.run(
+                ("git", "ls-tree", "-z", commit, "--", path),
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            prefix = b"100644 blob "
+            if (
+                tree_entry.returncode != 0
+                or not tree_entry.stdout.startswith(prefix)
+                or not tree_entry.stdout.endswith(b"\0")
+            ):
+                raise RecoveryError(
+                    "an applied task repair must remain a regular tracked file"
+                )
     expected_head = commit if applied else base_head
     expected_branch = branch if applied else base_branch
     if current_head != expected_head or current_branch != expected_branch:
@@ -985,6 +1095,7 @@ def _verify_code_repair(
         "active_branch": current_branch,
         "changed_paths": changed_paths,
         "pull_request_url": pull_request_url,
+        "pull_request_verification": pull_request_verification,
         "pull_request_error": repair.get("pull_request_error"),
         "validation_commands": repair.get("validation_commands"),
     }
@@ -1008,6 +1119,8 @@ def verify_recovered_run(
     *,
     expected_command: str,
     expected_git_head: str,
+    expected_recovery_context: Mapping[str, str],
+    recovery_started_at: datetime,
 ) -> dict[str, Any]:
     verification = report.get("verification")
     if not isinstance(verification, dict):
@@ -1042,6 +1155,10 @@ def verify_recovered_run(
     start = success_events[0].get("payload")
     if not isinstance(start, dict) or start.get("mode") != "full":
         raise RecoveryError("claimed recovery audit is not a full run")
+    if start.get("recovery_context") != dict(expected_recovery_context):
+        raise RecoveryError("claimed success is not linked to this recovery attempt")
+    if _recorded_at(success_events[0]) <= recovery_started_at:
+        raise RecoveryError("claimed success predates this recovery attempt")
     expected = start.get("expected_phases")
     if (
         not isinstance(expected, list)
@@ -1117,21 +1234,30 @@ def recover_failed_run(
     command: Sequence[str],
     timeout_seconds: int,
     runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+    pull_request_verifier: PullRequestVerifier = _verify_github_pull_request,
 ) -> RecoveryOutcome:
     root = root.resolve()
+    attempt_id = token_hex(16)
     try:
         events = load_run_events(root, failed_run_id)
-        evidence = _incident_evidence(root, failed_run_id, events, slot=slot)
+        evidence = _incident_evidence(
+            root,
+            failed_run_id,
+            events,
+            slot=slot,
+            attempt_id=attempt_id,
+        )
     except (OSError, SupervisorError, ValueError) as exc:
         raise RecoveryError(f"cannot build failed-run recovery evidence: {exc}") from exc
 
-    record_recovery_started(
+    recovery_started_path = record_recovery_started(
         root,
         failed_run_id,
         {
             "schema_version": 1,
             "policy": "unsandboxed-scoped-v4",
             "slot": slot,
+            "recovery_attempt": evidence["recovery_attempt"],
             "scope": evidence["scope"],
             "controller_repository": evidence["controller_repository"],
             "repair_policy": evidence["repair_policy"],
@@ -1145,6 +1271,10 @@ def recover_failed_run(
             "screenshot_paths": evidence["screenshot_paths"],
         },
     )
+    try:
+        recovery_started_at = _recorded_at(load_json(recovery_started_path))
+    except (OSError, json.JSONDecodeError, RecoveryError) as exc:
+        raise RecoveryError("cannot reload the recovery attempt identity") from exc
 
     report: dict[str, Any] | None = None
     adapter_error: str | None = None
@@ -1197,11 +1327,23 @@ def recover_failed_run(
                 repair,
                 evidence["controller_repository"],
                 recovered=report["status"] == "recovered",
+                pull_request_verifier=pull_request_verifier,
             )
         except RecoveryError as exc:
             controller = {"status": "rejected", "error": str(exc)}
             summary = f"Agent returned with invalid repository state: {exc}"
         else:
+            publication = repair_verification.get("pull_request_verification")
+            if (
+                repair.get("status") == "pr-opened"
+                and isinstance(publication, Mapping)
+                and publication.get("status") != "verified"
+            ):
+                pull_request_url = None
+                summary = (
+                    f"{summary} The local repair is retained, but its pull request "
+                    "could not be independently verified."
+                )
             controller = {
                 "status": "repository-verified",
                 "code_repair": repair_verification,
@@ -1219,6 +1361,12 @@ def recover_failed_run(
                     report,
                     expected_command=evidence["retry_command"],
                     expected_git_head=expected_git_head,
+                    expected_recovery_context={
+                        "parent_run_id": failed_run_id,
+                        "attempt_id": attempt_id,
+                        "slot": slot,
+                    },
+                    recovery_started_at=recovery_started_at,
                 )
             except (OSError, SupervisorError, RecoveryError) as exc:
                 controller = {
