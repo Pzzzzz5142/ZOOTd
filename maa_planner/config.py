@@ -22,9 +22,7 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True)
 class ActivityPolicyConfig:
-    require_sources: tuple[str, ...]
     end_safety_margin_minutes: int
-    window_tolerance_seconds: int
 
 
 @dataclass(frozen=True)
@@ -36,7 +34,6 @@ class AnnihilationConfig:
 
 @dataclass(frozen=True)
 class FreshnessConfig:
-    official_seconds: int
     maa_activity_seconds: int
     yituliu_stage_seconds: int
     yituliu_matrix_seconds: int
@@ -59,10 +56,6 @@ class PolicyConfig:
 @dataclass(frozen=True)
 class SourceConfig:
     maa_activity_url: str
-    official_list_url: str
-    official_article_url: str
-    official_max_articles: int
-    official_article_lookback_days: int
     yituliu_stage_url: str
     yituliu_matrix_url: str
     yituliu_value_url: str
@@ -130,18 +123,11 @@ def _source_url(
     default: str,
     *,
     host: str,
-    cid_template: bool = False,
 ) -> str:
     value = _string(table, key, default)
-    if cid_template:
-        if value.count("{cid}") != 1 or value.replace("{cid}", "").count("{") or "}" in value.replace("{cid}", ""):
-            raise ConfigError(f"{key} must contain exactly one {{cid}} placeholder")
-        parsed_value = value.replace("{cid}", "probe")
-    else:
-        if "{" in value or "}" in value:
-            raise ConfigError(f"{key} must not contain template placeholders")
-        parsed_value = value
-    parsed = urllib.parse.urlparse(parsed_value)
+    if "{" in value or "}" in value:
+        raise ConfigError(f"{key} must not contain template placeholders")
+    parsed = urllib.parse.urlparse(value)
     if (
         parsed.scheme != "https"
         or parsed.hostname != host
@@ -168,7 +154,7 @@ def load_config(path: Path) -> PlannerConfig:
     client_type = _string(payload, "client_type", "Official")
     if client_type != "Official":
         raise ConfigError(
-            "planner schema v1 supports only Official; other clients lack an equivalent verified activity gate"
+            "planner schema v1 supports only Official; other client/channel runtime contracts are not implemented"
         )
     account = _string(payload, "account", "default")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", account):
@@ -178,15 +164,13 @@ def load_config(path: Path) -> PlannerConfig:
         raise ConfigError("mode must be auto or off")
 
     activity_raw = _table(payload, "activity")
-    required = activity_raw.get("require_sources", ["official", "maa"])
-    if not isinstance(required, list) or not all(item in {"official", "maa"} for item in required):
-        raise ConfigError("activity.require_sources may only contain official and maa")
-    if set(required) != {"official", "maa"}:
-        raise ConfigError("automatic farming requires both official and maa activity sources")
+    if set(activity_raw) - {"end_safety_margin_minutes"}:
+        raise ConfigError(
+            "activity may contain only end_safety_margin_minutes; "
+            "MAA StageActivityV2 is the sole activity-window source"
+        )
     activity = ActivityPolicyConfig(
-        require_sources=tuple(dict.fromkeys(required)),
         end_safety_margin_minutes=_integer(activity_raw, "end_safety_margin_minutes", 15),
-        window_tolerance_seconds=_integer(activity_raw, "window_tolerance_seconds", 300),
     )
 
     annihilation_raw = _table(payload, "annihilation")
@@ -216,8 +200,15 @@ def load_config(path: Path) -> PlannerConfig:
         raise ConfigError("annihilation.max_transactions_per_run must be <= 20")
 
     fresh = _table(payload, "freshness")
+    if set(fresh) - {
+        "maa_activity_seconds",
+        "yituliu_stage_seconds",
+        "yituliu_matrix_seconds",
+        "yituliu_value_seconds",
+        "inventory_seconds",
+    }:
+        raise ConfigError("freshness contains an unsupported source cache")
     freshness = FreshnessConfig(
-        official_seconds=_integer(fresh, "official_seconds", 1800, minimum=1),
         maa_activity_seconds=_integer(fresh, "maa_activity_seconds", 1800, minimum=1),
         yituliu_stage_seconds=_integer(fresh, "yituliu_stage_seconds", 86400, minimum=1),
         yituliu_matrix_seconds=_integer(fresh, "yituliu_matrix_seconds", 259200, minimum=1),
@@ -229,9 +220,9 @@ def load_config(path: Path) -> PlannerConfig:
     when_satisfied = _string(policy_raw, "when_satisfied", "best_event")
     if when_satisfied not in {"best_event", "skip"}:
         raise ConfigError("policy.when_satisfied must be best_event or skip")
-    series = _integer(policy_raw, "series", 0)
-    if series != 0:
-        raise ConfigError("policy.series must be 0 (automatic)")
+    series = _integer(policy_raw, "series", 1)
+    if series != 1:
+        raise ConfigError("policy.series must be 1 (host-controlled single battles)")
     medicine = _integer(policy_raw, "medicine", 0)
     medicine_expire_days = _integer(policy_raw, "medicine_expire_days", 2)
     stone = _integer(policy_raw, "stone", 0)
@@ -278,8 +269,9 @@ def load_config(path: Path) -> PlannerConfig:
         raise ConfigError(str(exc)) from exc
 
     sources_raw = _table(payload, "sources")
+    if set(sources_raw) != {"maa", "yituliu"}:
+        raise ConfigError("sources must contain exactly maa and yituliu")
     maa_raw = _table(sources_raw, "maa")
-    official_raw = _table(sources_raw, "official")
     yituliu_raw = _table(sources_raw, "yituliu")
     sources = SourceConfig(
         maa_activity_url=_source_url(
@@ -288,21 +280,6 @@ def load_config(path: Path) -> PlannerConfig:
             "https://api.maa.plus/MaaAssistantArknights/api/gui/StageActivityV2.json",
             host="api.maa.plus",
         ),
-        official_list_url=_source_url(
-            official_raw,
-            "list_url",
-            "https://ak-webview.hypergryph.com/api/game/bulletinList?target=Android",
-            host="ak-webview.hypergryph.com",
-        ),
-        official_article_url=_source_url(
-            official_raw,
-            "article_url",
-            "https://ak-webview.hypergryph.com/api/game/bulletin/{cid}",
-            host="ak-webview.hypergryph.com",
-            cid_template=True,
-        ),
-        official_max_articles=_integer(official_raw, "max_articles", 12, minimum=1),
-        official_article_lookback_days=_integer(official_raw, "article_lookback_days", 120, minimum=1),
         yituliu_stage_url=_source_url(
             yituliu_raw,
             "stage_url",

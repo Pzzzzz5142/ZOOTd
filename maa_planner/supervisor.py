@@ -53,9 +53,11 @@ PHASE_RESULTS = frozenset(
 ACCEPTED_RESULTS = frozenset({"succeeded", "policy-resolved", "not-applicable"})
 
 _RUN_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
+_RECOVERY_ATTEMPT_RE = re.compile(r"[0-9a-f]{32}")
 _DETAIL_KEY_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _OUTCOME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._:/+ -]{0,511}")
 _MAX_EXTERNAL_OUTPUT = 128 * 1024
+_MAX_RUNTIME_RECEIPT = 128 * 1024
 
 
 @dataclass(frozen=True)
@@ -232,6 +234,90 @@ def _git_snapshot(root: Path) -> dict[str, Any]:
     }
 
 
+def runtime_snapshot(root: Path) -> dict[str, Any]:
+    """Capture bounded runtime identity without making run startup depend on it."""
+
+    path = root.resolve() / "var/state/runtime/maa-resource.json"
+    try:
+        before = path.lstat()
+    except FileNotFoundError:
+        return {
+            "available": False,
+            "receipt_path": "var/state/runtime/maa-resource.json",
+            "reason": "receipt-missing",
+        }
+    except OSError as exc:
+        return {
+            "available": False,
+            "receipt_path": "var/state/runtime/maa-resource.json",
+            "reason": f"receipt-unreadable: {exc}",
+        }
+    if path.is_symlink() or not path.is_file() or before.st_size > _MAX_RUNTIME_RECEIPT:
+        return {
+            "available": False,
+            "receipt_path": "var/state/runtime/maa-resource.json",
+            "reason": "receipt-is-not-a-bounded-regular-file",
+        }
+    try:
+        raw = path.read_bytes()
+        after = path.stat()
+        value = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {
+            "available": False,
+            "receipt_path": "var/state/runtime/maa-resource.json",
+            "reason": f"receipt-invalid: {exc}",
+        }
+    if (
+        not isinstance(value, dict)
+        or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    ):
+        return {
+            "available": False,
+            "receipt_path": "var/state/runtime/maa-resource.json",
+            "reason": "receipt-changed-or-is-not-an-object",
+        }
+
+    receipt: dict[str, Any] = {}
+    for key in ("schema_version", "status", "checked_at", "reason"):
+        if key in value:
+            receipt[key] = value[key]
+    nested_fields = {
+        "core": ("channel", "candidate_version", "active_version"),
+        "resource": (
+            "branch",
+            "candidate_commit",
+            "active_commit",
+            "selected_source",
+        ),
+        "hot_cache": ("selected_source", "tasks_sha256", "activity_sha256"),
+        "transition": (
+            "activated_at",
+            "previous_core_version",
+            "previous_resource_commit",
+        ),
+        "generation": (
+            "schema_version",
+            "runtime_tree_sha256",
+            "managed_config_sha256",
+            "core_library_sha256",
+            "hot_cache",
+        ),
+        "validation": ("mode", "tasks"),
+    }
+    for key, fields in nested_fields.items():
+        nested = value.get(key)
+        if isinstance(nested, dict):
+            receipt[key] = {field: nested[field] for field in fields if field in nested}
+    return {
+        "available": True,
+        "receipt_path": "var/state/runtime/maa-resource.json",
+        "receipt_sha256": sha256_bytes(raw),
+        "receipt": receipt,
+    }
+
+
 def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
     root = root.resolve()
     expected = RUN_MODES.get(mode)
@@ -254,9 +340,33 @@ def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
         "mode": mode,
         "expected_phases": list(expected),
         "repository": repository,
+        "runtime": runtime_snapshot(root),
         "llm_policy": "exception-only",
-        "recovery_policy": "unsandboxed-scoped-v3",
+        "recovery_policy": "unsandboxed-scoped-v4",
     }
+    recovery_active = os.environ.get("MAA_RECOVERY_ACTIVE", "false")
+    recovery_values = {
+        "parent_run_id": os.environ.get("MAA_RECOVERY_PARENT_RUN_ID"),
+        "attempt_id": os.environ.get("MAA_RECOVERY_ATTEMPT_ID"),
+        "slot": os.environ.get("MAA_RECOVERY_SLOT"),
+    }
+    if recovery_active == "true":
+        if (
+            not isinstance(recovery_values["parent_run_id"], str)
+            or _RUN_ID_RE.fullmatch(recovery_values["parent_run_id"]) is None
+            or not isinstance(recovery_values["attempt_id"], str)
+            or _RECOVERY_ATTEMPT_RE.fullmatch(recovery_values["attempt_id"]) is None
+            or recovery_values["slot"] not in {"pre-reset", "post-reset", "manual"}
+        ):
+            raise SupervisorError("recovery run environment is incomplete or invalid")
+        payload["recovery_context"] = recovery_values
+    elif recovery_active == "false":
+        if any(value is not None for value in recovery_values.values()):
+            raise SupervisorError(
+                "non-recovery run inherited a partial recovery identity"
+            )
+    else:
+        raise SupervisorError("MAA_RECOVERY_ACTIVE must be true or false")
     event = _event_core(
         run_id=run_id,
         sequence=0,

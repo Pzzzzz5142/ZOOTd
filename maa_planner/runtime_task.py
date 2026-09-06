@@ -22,7 +22,7 @@ _STAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9@._-]{0,63}")
 class RuntimeParameter:
     task_index: int
     name: str
-    placeholder: str
+    placeholder: str | list[str]
     validate: Callable[[str], bool]
 
 
@@ -36,7 +36,10 @@ def _valid_stage(value: str) -> bool:
 
 RUNTIME_PARAMETERS: dict[str, RuntimeParameter] = {
     "daily": RuntimeParameter(0, "drones", "_NotUse", _valid_drone_mode),
-    "proxy-preflight": RuntimeParameter(0, "stage", "1-7", _valid_stage),
+    "proxy-preflight": RuntimeParameter(
+        1, "task_names", ["1-7"],
+        lambda value: re.fullmatch(r"(?:[A-Z]{1,5}|[A-Z]{0,3}[0-9]{1,2})-[0-9]{1,2}", value) is not None,
+    ),
     "sanity-fight": RuntimeParameter(0, "stage", "1-7", _valid_stage),
     "verify-fight": RuntimeParameter(0, "stage", "1-7", _valid_stage),
 }
@@ -87,7 +90,8 @@ def render_runtime_task(
         )
 
     placeholder_line = f'{parameter.name} = {json.dumps(parameter.placeholder)}'
-    replacement_line = f'{parameter.name} = {json.dumps(value)}'
+    rendered_value = [value] if isinstance(parameter.placeholder, list) else value
+    replacement_line = f'{parameter.name} = {json.dumps(rendered_value)}'
     if text.splitlines().count(placeholder_line) != 1:
         raise RuntimeTaskError(
             f"managed task must contain exactly one canonical {parameter.name} placeholder"
@@ -100,7 +104,7 @@ def render_runtime_task(
 
     expected_config = copy.deepcopy(source_config)
     expected_params = _task_params(expected_config, parameter.task_index, source)
-    expected_params[parameter.name] = value
+    expected_params[parameter.name] = rendered_value
     if rendered_config != expected_config:
         raise RuntimeTaskError(
             f"rendering {task_name} changed fields other than {parameter.name}"

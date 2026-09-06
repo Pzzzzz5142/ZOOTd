@@ -69,7 +69,6 @@ waydroid_ui_log=""
 core_log="${MAA_STATE_DIR:-${project_root}/var/state}/debug/asst.log"
 regular_fallback_stages=(AP-5 1-7)
 activity_fight_completed=false
-fight_attempted=false
 server_timezone=Asia/Shanghai
 daily_completed_game_day=""
 daily_attempt_timeout=3h
@@ -80,6 +79,13 @@ depot_scan_attempted=false
 inventory_snapshot_ready=false
 depot_scan_outcome=not-attempted
 core_log_cursor_args=()
+proxy_preflight_evidence_log=""
+stage_fight_completed=false
+stage_fight_evidence_log=""
+stage_run_outcome=not-attempted
+farming_sanity_cleared=false
+regular_proxy_scope="29c76524662bd6e6e945f273"
+regular_fallback_outcome=not-attempted
 planner_source_args=()
 source_refresh_outcome=not-applicable
 source_refresh_evidence=""
@@ -150,6 +156,8 @@ ensure_runtime_task_config_view() {
         "${runtime_task_config_dir}/profiles"
     ln -s -- "${project_root}/config/infrast" \
         "${runtime_task_config_dir}/infrast"
+    ln -s -- "${project_root}/config/resource" \
+        "${runtime_task_config_dir}/resource"
 }
 
 render_runtime_task() {
@@ -206,9 +214,8 @@ Options:
                  available and otherwise runs unattended with Gamescope headless.
   --e2e-award    Run only the contract-locked ordinary Award claim as a light
                  end-to-end probe; no base, recruitment, shop, mail, or fight.
-  --verify-proxy Compatibility audit mode: run each solver-selected candidate
-                 at most once. Normal automatic mode already trusts the game
-                 client as the ground truth for saved proxy play.
+  --verify-proxy Compatibility flag; all automatic runs now use zero-sanity
+                 proxy screens and the same three-consecutive-failure policy.
   --daily-first  Compatibility flag; daily-first is now the default order.
   --pre-reset-slot
   --post-reset-slot
@@ -310,7 +317,34 @@ case "${MAA_RECOVERY_ACTIVE}" in
         die "invalid MAA_RECOVERY_ACTIVE value: ${MAA_RECOVERY_ACTIVE}"
         ;;
 esac
-export MAA_RECOVERY_ACTIVE
+validate_recovery_invocation() {
+    [[ "${MAA_RECOVERY_ACTIVE}" == true ]] || return 0
+
+    [[ "${MAA_RECOVERY_PARENT_RUN_ID:-}" =~ ^[0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8}$ &&
+       "${MAA_RECOVERY_ATTEMPT_ID:-}" =~ ^[0-9a-f]{32}$ ]] ||
+        die "recovery invocation has an invalid parent or attempt identity"
+    [[ "${farm_mode}" == auto && -z "${stage}" &&
+       "${e2e_award}" == false && "${verify_proxy}" == false &&
+       "${dry_run}" == false && "${check_device}" == false ]] ||
+        die "recovery must replay the complete automatic farming workflow"
+    case "${MAA_RECOVERY_SLOT:-}" in
+        pre-reset)
+            [[ "${pre_reset_slot}" == true && "${post_reset_slot}" == false ]] ||
+                die "recovery slot does not match --pre-reset-slot"
+            ;;
+        post-reset)
+            [[ "${post_reset_slot}" == true && "${pre_reset_slot}" == false ]] ||
+                die "recovery slot does not match --post-reset-slot"
+            ;;
+        manual)
+            [[ "${pre_reset_slot}" == false && "${post_reset_slot}" == false ]] ||
+                die "manual recovery must not use a scheduler slot flag"
+            ;;
+        *)
+            die "recovery invocation has an invalid slot identity"
+            ;;
+    esac
+}
 export MAA_WAYDROID_DISPLAY_MODE="${display_mode}"
 if [[ ! "${drone_threshold}" =~ ^[0-9]{1,9}$ ]]; then
     die "invalid Pure Gold drone threshold: ${drone_threshold}"
@@ -338,6 +372,9 @@ fi
 if [[ "${pre_reset_slot}" == true && "${post_reset_slot}" == true ]]; then
     die "--pre-reset-slot and --post-reset-slot are mutually exclusive"
 fi
+validate_recovery_invocation
+export MAA_RECOVERY_ACTIVE MAA_RECOVERY_PARENT_RUN_ID \
+    MAA_RECOVERY_ATTEMPT_ID MAA_RECOVERY_SLOT
 if [[ "${pre_reset_slot}" == true ]]; then
     # Bound a stuck first attempt so the reentrant retry still fits before the
     # old-game-day cutoff.
@@ -662,16 +699,15 @@ scan_depot_inventory_once() {
         command_succeeded=true
     fi
 
-    if [[ "${command_succeeded}" == true ]]; then
-        depot_scan_outcome=snapshot-invalid
+    if [[ "${command_succeeded}" != true ]]; then
+        info "combined startup and Depot task failed before producing a valid snapshot"
+        return 1
     fi
+
+    depot_scan_outcome=snapshot-invalid
     if ! run_farming_soft_with_timeout 60 "${planner}" inventory-from-log \
         --log "${log_file}"; then
-        if [[ "${command_succeeded}" == true ]]; then
-            info "Depot task completed but produced no valid inventory snapshot"
-        else
-            info "combined startup and Depot task failed before producing a valid snapshot"
-        fi
+        info "Depot task completed but produced no valid inventory snapshot"
         return 1
     fi
 
@@ -683,36 +719,68 @@ proxy_preflight_log_is_complete() {
     local log_file="$1"
 
     [[ -s "${log_file}" ]] || return 1
-    [[ "$(grep -Fc -- "Fight Start" "${log_file}")" -eq 1 ]] || return 1
-    [[ "$(grep -Fc -- "Fight Completed" "${log_file}")" -eq 1 ]] || return 1
-    [[ "$(grep -Fc -- "Custom Start" "${log_file}")" -eq 1 ]] || return 1
-    [[ "$(grep -Fc -- "Custom Completed" "${log_file}")" -eq 1 ]] || return 1
+    [[ "$(grep -Fc -- "Custom Start" "${log_file}")" -eq 3 ]] || return 1
+    [[ "$(grep -Fc -- "Custom Completed" "${log_file}")" -eq 3 ]] || return 1
     grep -Fq -- "AllTasksCompleted" "${log_file}" || return 1
-    ! grep -Eq -- "(Fight|Custom) Error" "${log_file}"
+    ! grep -Eq -- "Fight (Start|Completed|Error)|Custom Error|Mission started|Use [0-9]+ .*medicine|GameOffline" "${log_file}"
 }
 
 game_client_has_saved_proxy() {
     local stage_code="$1"
     local log_prefix="$2"
     local preflight_log="${log_prefix}-proxy-preflight-${stage_code}.log"
+    local fight_core_offset
 
+    proxy_preflight_evidence_log=""
     farming_evidence_log="${preflight_log}"
     supervisor_active_evidence="${preflight_log}"
-    info "checking ${stage_code} navigation and saved proxy in one zero-battle MAA task"
+    capture_core_log_cursor || return 1
+    info "checking ${stage_code} navigation and saved proxy without spending sanity"
     render_runtime_task proxy-preflight "${stage_code}"
-    if ! run_farming_soft_with_timeout 1080 env \
+    if ! run_farming_soft_with_timeout 180 env \
        MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" \
            --log-file="${preflight_log}" run proxy-preflight \
-           --profile "${MAA_HOST_PROFILE}"; then
-        info "${stage_code} proxy preflight was unavailable"
+           --profile "${MAA_HOST_PROFILE}" --user-resource; then
         return 1
     fi
-    if ! proxy_preflight_log_is_complete "${preflight_log}"; then
-        info "${stage_code} proxy preflight returned without complete zero-battle and PRTS evidence"
+    proxy_preflight_log_is_complete "${preflight_log}" || return 1
+    # Custom completion alone does not prove navigation or proxy state.
+    # Require fresh target navigation and the following read-only PRTS match.
+    if ! timeout --signal=TERM --kill-after=2s 1m "${planner}" check-proxy \
+        --log "${core_log}" --since-byte "${fight_core_offset}" \
+        "${core_log_cursor_args[@]}" --stage "${stage_code}" \
+        8>&- 9>&- >/dev/null 2>&1; then
+        info "${stage_code} has no fresh saved-proxy screen proof"
         return 1
     fi
+    proxy_preflight_evidence_log="${preflight_log}"
+    info "the game client enables saved proxy on ${stage_code}; no battle was run"
+}
 
-    info "the game client confirmed saved proxy play on ${stage_code}"
+fight_log_observes_sanity_below() {
+    local log_file="$1"
+    local minimum="$2"
+    local line current="" total=""
+
+    [[ -s "${log_file}" ]] || return 1
+    while IFS= read -r line; do
+        if [[ "${line}" =~ Current[[:space:]]sanity:[[:space:]]([0-9]+)/([0-9]+) ]]; then
+            current="${BASH_REMATCH[1]}"
+            total="${BASH_REMATCH[2]}"
+        fi
+    done < "${log_file}"
+    [[ "${current}" =~ ^[0-9]+$ && "${total}" =~ ^[0-9]+$ ]] || return 1
+    (( 10#${total} > 0 && 10#${current} < minimum ))
+}
+
+fight_log_proves_sanity_below() {
+    local log_file="$1"
+    local minimum="$2"
+
+    grep -Fq -- "Fight Completed" "${log_file}" || return 1
+    grep -Fq -- "AllTasksCompleted" "${log_file}" || return 1
+    ! grep -Eq -- "Fight Error|GameOffline" "${log_file}" || return 1
+    fight_log_observes_sanity_below "${log_file}" "${minimum}"
 }
 
 run_sanity_fight() {
@@ -728,7 +796,6 @@ run_sanity_fight() {
         info "pre-reset Fight window is closed; preserving time for final Award"
         return 1
     fi
-    fight_attempted=true
     render_runtime_task sanity-fight "${stage_code}"
     run_soft_with_timeout "${duration_seconds}s" env \
         MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${log_file}" \
@@ -747,7 +814,6 @@ run_verify_fight() {
         info "pre-reset Fight window is closed; skipping proxy verification"
         return 1
     fi
-    fight_attempted=true
     render_runtime_task verify-fight "${stage_code}"
     run_soft_with_timeout "${duration_seconds}s" env \
         MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${log_file}" \
@@ -989,7 +1055,7 @@ run_weekly_annihilation_if_due() {
     if (( pre_reset_fight_deadline_epoch > 0 &&
           pre_reset_fight_deadline_epoch < execute_before_epoch )); then
         execute_before_epoch="${pre_reset_fight_deadline_epoch}"
-        execute_before="03:25 ${server_timezone} pre-reset Fight cutoff"
+        execute_before="02:25 ${server_timezone} pre-reset Fight cutoff"
     fi
     now_epoch="$(date -u '+%s')"
     remaining_seconds=$(( execute_before_epoch - now_epoch - 35 ))
@@ -1029,7 +1095,6 @@ run_weekly_annihilation_if_due() {
             break
         fi
         command_succeeded=false
-        fight_attempted=true
         info "weekly Annihilation transaction ${transaction}/${max_transactions}; client proxy state is re-checked"
         if run_soft_with_timeout "${transaction_timeout_seconds}s" "${maa}" --batch \
             --log-file="${transaction_log}" run annihilation \
@@ -1086,44 +1151,114 @@ run_weekly_annihilation_if_due() {
     return 0
 }
 
-run_regular_fallback() {
-    local stage_code fallback_stamp fallback_log fight_core_offset
+run_stage_with_proxy_retries() {
+    local stage_code="$1" activity_instance="$2" log_prefix="$3"
+    local failures=0 attempt=0 fight_core_offset fight_log status reconciliation
+    local outcome recorded streak command_succeeded
+    local deadline=$((SECONDS + 14400))
 
-    if [[ "${farming_contracts_ready}" != true ]]; then
-        info "regular-stage fallback skipped because the sanity-spending contract is invalid"
+    stage_fight_completed=false
+    stage_fight_evidence_log=""
+    stage_run_outcome=failed
+    if ! status="$(timeout 1m "${planner}" proxy-status \
+        --stage "${stage_code}" --activity-instance "${activity_instance}" \
+        8>&- 9>&- 2>/dev/null)" ||
+       ! status="$(jq -er '.status | select(. == "unknown" or . == "verified" or . == "retry" or . == "quarantined")' <<<"${status}")"; then
+        info "${stage_code} local proxy state is unreadable"
         return 1
     fi
-    if [[ "${planner_helpers_ready}" != true ]]; then
-        info "regular-stage fallback skipped because fresh fight proof cannot be checked"
+    if [[ "${status}" == quarantined ]]; then
+        stage_run_outcome=quarantined
+        info "${stage_code} is locally quarantined; use maa-host proxy-reset after repairing its saved proxy"
         return 1
     fi
-    for stage_code in "${regular_fallback_stages[@]}"; do
-        fallback_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
-        fallback_log="${project_root}/var/state/host/${fallback_stamp}-fallback-${stage_code}.log"
-        if ! game_client_has_saved_proxy "${stage_code}" \
-            "${project_root}/var/state/host/${fallback_stamp}-fallback"; then
-            info "${stage_code} has no confirmed client proxy; trying the next fallback"
+
+    while (( failures < 3 && SECONDS < deadline )); do
+        attempt=$((attempt + 1))
+        info "${stage_code} attempt ${attempt}: ${failures}/3 consecutive unsuccessful attempts"
+        if ! game_client_has_saved_proxy "${stage_code}" "${log_prefix}-attempt-${attempt}"; then
+            failures=$((failures + 1))
+            info "${stage_code} screen check unavailable (${failures}/3); no proxy-failure mark is written"
             continue
         fi
         if ! capture_core_log_cursor; then
-            info "${stage_code} skipped because a fresh MaaCore log cursor could not be captured"
+            failures=$((failures + 1))
             continue
         fi
-        info "regular fallback trying ${stage_code}"
-        run_sanity_fight "${stage_code}" "${fallback_log}" || true
-        if timeout --signal=TERM --kill-after=2s 1m "${planner}" check-fight \
-            --log "${core_log}" --since-byte "${fight_core_offset}" \
-            "${core_log_cursor_args[@]}" \
-            --stage "${stage_code}" 8>&- 9>&- >/dev/null 2>&1; then
-            info "regular fallback selected ${stage_code} and has fresh three-star proof"
+        fight_log="${log_prefix}-attempt-${attempt}-fight-${stage_code}.log"
+        command_succeeded=false
+        if run_sanity_fight "${stage_code}" "${fight_log}" 900; then
+            command_succeeded=true
+        fi
+        reconciliation=""
+        outcome=unknown
+        recorded=false
+        streak=0
+        if reconciliation="$(timeout --signal=TERM --kill-after=2s 1m \
+            "${planner}" reconcile-fight --log "${core_log}" \
+            --since-byte "${fight_core_offset}" "${core_log_cursor_args[@]}" \
+            --stage "${stage_code}" --activity-instance "${activity_instance}" \
+            8>&- 9>&- 2>/dev/null)"; then
+            IFS=$'\t' read -r outcome recorded streak < <(
+                jq -er '[.outcome, .recorded, .consecutive_failures] | @tsv' <<<"${reconciliation}"
+            ) || outcome=unknown
+        fi
+        if [[ "${outcome}" == verified ]]; then
+            stage_fight_completed=true
+            stage_fight_evidence_log="${fight_log}"
+            failures=0
+        fi
+        if [[ "${outcome}" == quarantined ]]; then
+            stage_run_outcome=quarantined
+            info "${stage_code} reached three consecutive observed proxy failures; moving to the next candidate"
+            return 1
+        fi
+        if [[ "${outcome}" == retry ]]; then
+            failures=$((failures + 1))
+            info "${stage_code} proxy failure streak=${streak}/3; retrying this same candidate"
+            continue
+        fi
+        if [[ "${command_succeeded}" == true ]] &&
+           fight_log_proves_sanity_below "${fight_log}" 6; then
+            farming_sanity_cleared=true
+            stage_run_outcome=sanity-below-global-minimum
             return 0
         fi
-        info "${stage_code} was unavailable or produced no fresh proof; trying the next fallback"
-        if [[ "${pre_reset_slot}" == true && "${fight_attempted}" == true ]]; then
-            info "pre-reset Fight was attempted; returning immediately for final Award"
-            break
+        if [[ "${outcome}" == verified && "${command_succeeded}" == true ]]; then
+            info "${stage_code} battle succeeded; failure streak reset, continuing actual farming"
+            continue
+        fi
+        # A clean no-battle transaction with fresh sanity means no further
+        # battle was affordable. A completed one-battle transaction is progress,
+        # NOT stage exhaustion; success above loops until there is a real tail.
+        if [[ "${command_succeeded}" == true ]] &&
+           fight_log_proves_sanity_below "${fight_log}" 1000000 &&
+           [[ "${outcome}" == unknown ]] &&
+           ! grep -Fq -- "Mission started" "${fight_log}"; then
+            stage_run_outcome=stage-exhausted
+            return 0
+        fi
+        failures=$((failures + 1))
+        info "${stage_code} has no clean terminal Fight result (${failures}/3); retrying without a local instability mark"
+    done
+    info "${stage_code} exhausted three attempts; moving to the next candidate"
+    return 1
+}
+
+run_regular_fallback() {
+    local stage_code fallback_stamp
+    regular_fallback_outcome=no-client-authorized-fight
+    [[ "${farming_contracts_ready}" == true && "${planner_helpers_ready}" == true ]] || return 1
+    for stage_code in "${regular_fallback_stages[@]}"; do
+        fallback_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
+        run_stage_with_proxy_retries "${stage_code}" "${regular_proxy_scope}" \
+            "${project_root}/var/state/host/${fallback_stamp}-fallback" || true
+        if [[ "${farming_sanity_cleared}" == true ]]; then
+            regular_fallback_outcome=sanity-below-global-minimum
+            return 0
         fi
     done
+    # A prior single battle is progress, not proof that the sanity tail cleared.
     return 1
 }
 
@@ -1135,91 +1270,20 @@ activity_decision_is_safe() {
 }
 
 run_planned_activity_candidates() {
-    local decision_file="$1"
-    local farm_stamp="$2"
+    local decision_file="$1" farm_stamp="$2"
     local stage_code item_id activity_instance
-    local candidate_log fight_core_offset
-    local reconciliation outcome recorded
 
     while IFS=$'\t' read -r stage_code item_id activity_instance; do
-        if ! game_client_has_saved_proxy "${stage_code}" \
-            "${project_root}/var/state/host/${farm_stamp}"; then
-            info "local state is unchanged; trying the next activity candidate"
-            continue
+        if run_stage_with_proxy_retries "${stage_code}" "${activity_instance}" \
+            "${project_root}/var/state/host/${farm_stamp}-activity-${stage_code}"; then
+            activity_fight_completed="${stage_fight_completed}"
+            return 0
         fi
-        candidate_log="${project_root}/var/state/host/${farm_stamp}-farm-${stage_code}.log"
-        info "automatic farming trying ${stage_code} after the client proxy preflight"
-        if ! capture_core_log_cursor; then
-            info "${stage_code} skipped because a fresh MaaCore log cursor could not be captured"
-            continue
-        fi
-        if [[ "${verify_proxy}" == true ]]; then
-            run_verify_fight "${stage_code}" "${candidate_log}"
-        else
-            run_sanity_fight "${stage_code}" "${candidate_log}"
-        fi || {
-            info "${stage_code} was unavailable or the fight command failed; inspecting fresh client evidence"
-        }
-
-        reconciliation=""
-        if reconciliation="$(timeout --signal=TERM --kill-after=2s 1m \
-            "${planner}" reconcile-fight \
-                --log "${core_log}" --since-byte "${fight_core_offset}" \
-                "${core_log_cursor_args[@]}" \
-                --stage "${stage_code}" --activity-instance "${activity_instance}" \
-                8>&- 9>&- 2>/dev/null)" &&
-           IFS=$'\t' read -r outcome recorded < <(
-               jq -er '[.outcome, .recorded] | @tsv' <<<"${reconciliation}" 2>/dev/null
-           ); then
-            case "${outcome}" in
-                verified)
-                    activity_fight_completed=true
-                    info "${stage_code} has fresh three-star completion proof"
-                    if [[ "${recorded}" != true ]]; then
-                        info "fresh fight proof was accepted, but audit bookkeeping failed"
-                    fi
-                    if [[ "${verify_proxy}" == true ]]; then
-                        info "proxy verification succeeded; continuing the selected stage without a medicine-count stop"
-                        if ! run_sanity_fight "${stage_code}" \
-                            "${project_root}/var/state/host/${farm_stamp}-farm-${stage_code}-consume.log"; then
-                            info "verified stage completed once, but its unlimited 48-hour medicine continuation stopped early"
-                        fi
-                    fi
-                    return 0
-                    ;;
-                quarantined)
-                    if [[ "${recorded}" == true ]]; then
-                        info "${stage_code} produced an explicit non-three-star result and is quarantined for this activity"
-                    else
-                        info "${stage_code} produced an explicit non-three-star result, but quarantine bookkeeping failed"
-                    fi
-                    ;;
-                unknown)
-                    info "${stage_code} produced no stable proxy proof; local capability state is unchanged"
-                    ;;
-                *)
-                    info "${stage_code} produced an invalid reconciliation result; local capability state is unchanged"
-                    ;;
-            esac
-        else
-            info "${stage_code} fight evidence could not be reconciled; local capability state is unchanged"
-        fi
-        if [[ "${pre_reset_slot}" == true && "${fight_attempted}" == true ]]; then
-            info "pre-reset Fight was attempted; returning immediately for final Award"
-            return 1
-        fi
+        info "${stage_code} unavailable after its retry policy; trying the next planned activity candidate"
     done < <(
-        jq -r '
-            .evidence.execution_candidates[]
-            | [
-                .stage_code,
-                .item_id,
-                .activity_instance
-            ]
-            | @tsv
-        ' "${decision_file}"
+        jq -r '.evidence.execution_candidates[]
+            | [.stage_code, .item_id, .activity_instance] | @tsv' "${decision_file}"
     )
-
     return 1
 }
 
@@ -1240,9 +1304,8 @@ refresh_planner_sources_if_needed() {
 
     # Refresh network sources exactly once. Every later planner in this
     # launcher run revalidates the resulting cache offline, so Annihilation and
-    # material planning cannot each redownload the same MAA/official payloads.
-    if [[ "${pre_reset_slot}" == true || -n "${stage}" ||
-          "${auto_farm_ready}" != true ]]; then
+    # material planning cannot each redownload the same MAA payload.
+    if [[ -n "${stage}" || "${auto_farm_ready}" != true ]]; then
         info "refreshing the shared activity calendar once; this path does not need a new efficiency download"
         source_refresh_evidence="${project_root}/var/state/planner/latest-activity-calendar.json"
         if run_farming_soft_with_timeout 300 "${planner}" sync-calendar; then
@@ -1251,7 +1314,7 @@ refresh_planner_sources_if_needed() {
     else
         info "refreshing all planner sources once for this launcher run"
         source_refresh_evidence="${project_root}/var/state/planner/latest-sources.json"
-        if run_soft_with_timeout 15m "${planner}" sync --skip-maa-hot-update; then
+        if run_farming_soft_with_timeout 900 "${planner}" sync --skip-maa-hot-update; then
             refresh_succeeded=true
         fi
     fi
@@ -1302,12 +1365,6 @@ prepare_daily_drone_policy() {
         return 0
     fi
 
-    if [[ "${pre_reset_slot}" == true ]]; then
-        drone_mode=_NotUse
-        info "pre-reset skips only the auxiliary drone Depot; the complete old-game-day daily still runs"
-        return 0
-    fi
-
     stamp="$(date '+%Y%m%d-%H%M%S-%N')"
     depot_log="${project_root}/var/state/host/${stamp}-pre-daily-depot.log"
     info "starting the game and taking the run's single Depot snapshot in one MAA task chain"
@@ -1323,8 +1380,8 @@ prepare_daily_drone_policy() {
                 info "drone policy fallback: inventory is unavailable; drones disabled"
                 ;;
         esac
-    else
-        select_daily_drone_policy_from_snapshot || true
+    elif ! select_daily_drone_policy_from_snapshot; then
+        depot_scan_outcome=drone-target-unavailable
     fi
 }
 
@@ -1394,18 +1451,26 @@ require_command waydroid
 
 if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]; then
     server_minute="$(server_minute_of_day_now)"
-    if (( server_minute < 180 || server_minute >= 185 )); then
-        info "missed the 03:00-03:04 pre-reset start window; old-game-day work is not recoverable now"
+    if (( server_minute < 120 )); then
+        info "missed the 02:00-02:04 pre-reset start window; old-game-day work is not recoverable now"
         exit 0
+    elif [[ "${MAA_RECOVERY_ACTIVE}" != true ]] && (( server_minute >= 125 )); then
+        info "missed the 02:00-02:04 pre-reset start window; old-game-day work is not recoverable now"
+        exit 0
+    elif (( server_minute >= 145 )); then
+        info "missed the pre-reset recovery replay window ending at 02:25; old-game-day work is no longer safe to replay"
+        exit 0
+    elif (( server_minute >= 125 )); then
+        info "allowing the scoped recovery agent to replay the pre-reset slot before the 02:25 cutoff"
     fi
     pre_reset_fight_deadline_epoch="$(
-        TZ="${server_timezone}" date --date="$(TZ="${server_timezone}" date '+%F') 03:25:00" '+%s'
+        TZ="${server_timezone}" date --date="$(TZ="${server_timezone}" date '+%F') 02:25:00" '+%s'
     )"
     stop_user_service_if_active maa-waydroid.service
 elif [[ "${dry_run}" != true && "${post_reset_slot}" == true ]]; then
     server_minute="$(server_minute_of_day_now)"
-    if (( server_minute >= 180 && server_minute < 240 )); then
-        info "post-reset catch-up suppressed during the 03:00-04:00 old-game-day protection window"
+    if (( server_minute >= 120 && server_minute < 240 )); then
+        info "post-reset catch-up suppressed during the 02:00-04:00 old-game-day protection window"
         exit 0
     fi
     stop_user_service_if_active maa-waydroid-prereset.service
@@ -1576,13 +1641,12 @@ fi
 info "daily-first mode: protecting the game day that ends at 04:00 ${server_timezone}"
 supervisor_begin_phase depot
 prepare_daily_drone_policy
-if [[ "${pre_reset_slot}" == true ]]; then
-    supervisor_record_phase depot not-applicable pre-reset-auxiliary-scan-skipped \
-        --detail "drone_mode=${drone_mode}" || true
-elif [[ "${farming_contracts_ready}" != true ]]; then
+if [[ "${farming_contracts_ready}" != true ]]; then
     supervisor_record_phase depot degraded managed-task-contract-invalid \
         --detail "drone_mode=${drone_mode}" || true
-elif [[ "${depot_scan_outcome}" == ready && -f "${depot_evidence_log}" ]]; then
+elif [[ "${depot_scan_outcome}" == ready &&
+        ( "${drone_mode}" == PureGold || "${drone_mode}" == Money ) &&
+        -f "${depot_evidence_log}" ]]; then
     supervisor_record_phase depot succeeded inventory-snapshot-ready \
         --detail "drone_mode=${drone_mode}" \
         --evidence-file "${depot_evidence_log}" || true
@@ -1653,44 +1717,15 @@ fi
 
 supervisor_begin_phase farming
 if [[ -n "${stage}" && "${farming_contracts_ready}" == true ]]; then
-    fight_stamp="$(date '+%Y%m%d-%H%M%S')"
-    manual_fight_log="${project_root}/var/state/host/${fight_stamp}-fight.log"
+    fight_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
+    manual_activity_instance="$(active_activity_instance_for_stage "${stage}" 2>/dev/null || true)"
+    [[ "${manual_activity_instance}" =~ ^[0-9a-f]{24}$ ]] || manual_activity_instance="${regular_proxy_scope}"
     farming_phase_result=degraded
     farming_phase_outcome=explicit-stage-unverified
-    info "spending sanity on ${stage}; all medicine expiring within two days is enabled"
-    if ! game_client_has_saved_proxy "${stage}" \
+    if run_stage_with_proxy_retries "${stage}" "${manual_activity_instance}" \
         "${project_root}/var/state/host/${fight_stamp}-manual"; then
-        farming_phase_outcome=proxy-preflight-failed
-        info "explicit stage farming skipped because the game client did not confirm saved proxy play"
-    elif ! capture_core_log_cursor; then
-        farming_phase_outcome=core-log-cursor-unavailable
-        info "explicit stage farming skipped because a fresh MaaCore log cursor could not be captured"
-    else
-        if ! run_sanity_fight "${stage}" "${manual_fight_log}"; then
-            info "explicit stage farming command failed; checking fresh client evidence before final Award"
-        fi
-        if [[ "${planner_helpers_ready}" == true ]] &&
-           timeout --signal=TERM --kill-after=2s 1m "${planner}" check-fight \
-               --log "${core_log}" --since-byte "${fight_core_offset}" \
-               "${core_log_cursor_args[@]}" --stage "${stage}" \
-               8>&- 9>&- >/dev/null 2>&1; then
-            farming_phase_result=succeeded
-            farming_phase_outcome=explicit-stage-three-star-verified
-            manual_activity_instance="$(active_activity_instance_for_stage "${stage}" 2>/dev/null || true)"
-            if [[ "${manual_activity_instance}" =~ ^[0-9a-f]{24}$ ]]; then
-                if ! run_soft_with_timeout 1m "${planner}" record-fight \
-                    --log "${core_log}" --since-byte "${fight_core_offset}" \
-                    "${core_log_cursor_args[@]}" \
-                    --stage "${stage}" --activity-instance "${manual_activity_instance}"; then
-                    info "manual fight completed, but its proxy capability could not be recorded"
-                fi
-            else
-                info "manual fight completed; no unique active activity instance was found to record"
-            fi
-        else
-            farming_phase_outcome=explicit-stage-proof-missing
-            info "explicit stage produced no fresh three-star proof; final audit will request diagnosis"
-        fi
+        farming_phase_result=succeeded
+        farming_phase_outcome="explicit-${stage_run_outcome}"
     fi
 elif [[ -z "${stage}" && "${farm_mode}" == auto && "${auto_farm_ready}" == true ]]; then
     farming_phase_result=degraded
@@ -1743,31 +1778,31 @@ else
     farming_phase_outcome=automatic-farming-unavailable
 fi
 
-if [[ "${pre_reset_slot}" == true && "${fight_attempted}" == true ]]; then
-    info "pre-reset Fight was attempted; skipping fallback and proceeding to final Award"
-    if [[ "${activity_fight_completed}" == true ]]; then
+if [[ -z "${stage}" && "${farm_mode}" == auto &&
+      "${farming_contracts_ready}" == true &&
+      "${planner_helpers_ready}" == true ]]; then
+    if [[ "${farming_sanity_cleared}" == true ]]; then
         farming_phase_result=succeeded
-        farming_phase_outcome=activity-fight-three-star-verified
-    elif [[ -z "${stage}" ]]; then
-        farming_phase_result=policy-resolved
-        farming_phase_outcome=pre-reset-cutoff-after-fight-attempt
-    fi
-elif [[ -z "${stage}" && "${farm_mode}" == auto &&
-        "${activity_fight_completed}" != true ]]; then
-    info "no activity-stage fight was completed; entering AP-5 -> 1-7 fallback"
-    if run_regular_fallback; then
-        farming_phase_result=succeeded
-        farming_phase_outcome=regular-fallback-three-star-verified
+        farming_phase_outcome=activity-sanity-below-global-minimum
     else
-        farming_phase_result=degraded
-        farming_phase_outcome=regular-fallback-proof-missing
-        info "regular-stage fallback produced no fresh fight proof; continuing with final Award"
+        if [[ "${activity_fight_completed}" == true ]]; then
+            info "an activity fight completed; entering AP-5 -> 1-7 fallback to clear the remaining sanity tail"
+        else
+            info "no activity-stage fight was completed; entering AP-5 -> 1-7 fallback"
+        fi
+        if run_regular_fallback; then
+            farming_phase_result=succeeded
+            if [[ "${activity_fight_completed}" == true ]]; then
+                farming_phase_outcome="activity-fight-plus-${regular_fallback_outcome}"
+            else
+                farming_phase_outcome="regular-fallback-${regular_fallback_outcome}"
+            fi
+        else
+            farming_phase_result=degraded
+            farming_phase_outcome=no-client-authorized-fight
+            info "no fresh proof that remaining sanity is below 6; recovery must inspect the unfinished tail"
+        fi
     fi
-fi
-
-if [[ "${activity_fight_completed}" == true ]]; then
-    farming_phase_result=succeeded
-    farming_phase_outcome=activity-fight-three-star-verified
 fi
 if [[ -n "${farming_evidence_log}" && -f "${farming_evidence_log}" ]]; then
     supervisor_record_phase farming "${farming_phase_result}" "${farming_phase_outcome}" \

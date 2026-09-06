@@ -9,12 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from .config import PlannerConfig
-from .models import Activity, OfficialWindow, StageEfficiency
+from .models import Activity, StageEfficiency
 from .sources import (
     HttpCache,
     SourceError,
     build_yituliu_efficiencies,
-    fetch_official_bulletin_windows,
     parse_maa_activities,
 )
 from .util import atomic_write_json, isoformat, sha256_bytes, utc_now
@@ -23,7 +22,6 @@ from .util import atomic_write_json, isoformat, sha256_bytes, utc_now
 @dataclass(frozen=True)
 class ActivityCalendarBundle:
     activities: tuple[Activity, ...]
-    official_windows: tuple[OfficialWindow, ...]
     evidence: dict[str, Any]
 
     def as_dict(self) -> dict[str, Any]:
@@ -31,7 +29,6 @@ class ActivityCalendarBundle:
             "schema_version": 1,
             "generated_at": isoformat(utc_now()),
             "activities": [activity.as_dict() for activity in self.activities],
-            "official_windows": [window.as_dict() for window in self.official_windows],
             "evidence": self.evidence,
         }
 
@@ -39,7 +36,6 @@ class ActivityCalendarBundle:
 @dataclass(frozen=True)
 class SourceBundle:
     activities: tuple[Activity, ...]
-    official_windows: tuple[OfficialWindow, ...]
     efficiencies: dict[str, StageEfficiency]
     evidence: dict[str, Any]
 
@@ -48,7 +44,6 @@ class SourceBundle:
             "schema_version": 1,
             "generated_at": isoformat(utc_now()),
             "activities": [activity.as_dict() for activity in self.activities],
-            "official_windows": [window.as_dict() for window in self.official_windows],
             "efficiencies": {
                 stage: efficiency.as_dict()
                 for stage, efficiency in sorted(self.efficiencies.items())
@@ -78,7 +73,7 @@ def _validate_matrix(value: Any) -> None:
 def load_activity_calendar(
     root: Path, config: PlannerConfig, *, online: bool
 ) -> ActivityCalendarBundle:
-    """Load only the two sources that establish activity-stage windows.
+    """Load MAA's StageActivityV2 activity-stage windows.
 
     Weekly Annihilation scheduling must not be degraded by an unrelated item
     value or drop-efficiency outage, so this path intentionally excludes every
@@ -87,10 +82,7 @@ def load_activity_calendar(
 
     cache = HttpCache(
         root / "var/cache/planner/http",
-        allowed_hosts={
-            "api.maa.plus",
-            "ak-webview.hypergryph.com",
-        },
+        allowed_hosts={"api.maa.plus"},
         network_enabled=online,
     )
     maa_payload, maa_fetch = cache.fetch_json(
@@ -101,15 +93,6 @@ def load_activity_calendar(
     )
     activities = parse_maa_activities(maa_payload, config.client_type, maa_fetch.sha256)
 
-    official_windows, official_evidence = fetch_official_bulletin_windows(
-        cache,
-        list_url=config.sources.official_list_url,
-        detail_url_template=config.sources.official_article_url,
-        max_articles=config.sources.official_max_articles,
-        cache_max_stale=timedelta(seconds=config.freshness.official_seconds),
-        article_lookback=timedelta(days=config.sources.official_article_lookback_days),
-    )
-
     evidence = {
         "maa_activity": {
             "url": config.sources.maa_activity_url,
@@ -117,11 +100,8 @@ def load_activity_calendar(
             "fetched_at": maa_fetch.metadata["fetched_at"],
             "network_validated": maa_fetch.network_validated,
         },
-        "official": official_evidence,
     }
-    bundle = ActivityCalendarBundle(
-        tuple(activities), tuple(official_windows), evidence
-    )
+    bundle = ActivityCalendarBundle(tuple(activities), evidence)
     atomic_write_json(
         root / "var/state/planner/latest-activity-calendar.json",
         bundle.as_dict(),
@@ -204,7 +184,6 @@ def load_source_bundle(root: Path, config: PlannerConfig, *, online: bool) -> So
     }
     bundle = SourceBundle(
         calendar.activities,
-        calendar.official_windows,
         efficiencies,
         evidence,
     )

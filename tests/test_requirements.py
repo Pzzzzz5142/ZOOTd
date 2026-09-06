@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,7 @@ from maa_planner.codex_supervisor import (
     run_codex_supervisor,
 )
 from maa_planner.inventory import (
+    InventoryParseError,
     InventorySnapshot,
     InventoryValidationError,
     extract_depot_snapshot,
@@ -42,7 +44,6 @@ from maa_planner.materials import load_blue_material_chains
 from maa_planner.models import (
     Activity,
     ActivityStage,
-    OfficialWindow,
     StageEfficiency,
     StockTarget,
 )
@@ -53,7 +54,6 @@ from maa_planner.sources import (
     HttpCache,
     SourceError,
     build_yituliu_efficiencies,
-    fetch_official_bulletin_windows,
     parse_maa_activities,
 )
 from maa_planner.supervisor import (
@@ -102,23 +102,6 @@ def make_activity(
     )
 
 
-def official_window(
-    activity: Activity,
-    *,
-    start: datetime | None = None,
-    end: datetime | None = None,
-) -> OfficialWindow:
-    return OfficialWindow(
-        activity_name=activity.name,
-        label="stage:活动关卡开放时间",
-        start=start or activity.start,
-        end=end or activity.end,
-        article_id="activity-42",
-        article_title="SideStory「墟」复刻活动公告",
-        article_url="https://official.invalid/activity-42",
-    )
-
-
 def efficiency(stage: str, item: str, expected_ap: float, overall: float) -> StageEfficiency:
     return StageEfficiency(
         stage_code=stage,
@@ -139,7 +122,6 @@ def select_plan(**overrides: object):
     defaults: dict[str, object] = {
         "now": START + timedelta(hours=1),
         "activities": [activity],
-        "official_windows": [official_window(activity)],
         "efficiencies": {
             "AT-6": efficiency("AT-6", "30013", 20.0, 1.1),
             "AT-7": efficiency("AT-7", "30053", 27.0, 1.2),
@@ -160,9 +142,7 @@ def select_plan(**overrides: object):
         "verified_stages": set(),
         "quarantined_stages": set(),
         "navigation_stages": {stage.code for stage in activity.stages},
-        "require_official": True,
         "end_safety_margin": timedelta(minutes=15),
-        "window_tolerance": timedelta(seconds=60),
         "when_satisfied": "best_event",
         "configured_series": 0,
         "large_deficit_runs": 6,
@@ -277,45 +257,6 @@ class _Fetched:
         self.network_validated = True
 
 
-class _BulletinCache:
-    def fetch_json(self, key: str, _url: str, **_: object) -> tuple[object, _Fetched]:
-        if key == "official-bulletin-list":
-            return (
-                {
-                    "status": 0,
-                    "code": 0,
-                    "data": {
-                        "list": [
-                            {
-                                "category": 1,
-                                "cid": "activity-42",
-                                "displayTime": "2026-08-20",
-                            }
-                        ]
-                    },
-                },
-                _Fetched("list-sha"),
-            )
-        if key == "official-bulletin-activity-42":
-            return (
-                {
-                    "status": 0,
-                    "code": 0,
-                    "data": {
-                        "header": "SideStory「墟」复刻活动公告",
-                        "content": (
-                            "<h2>活动关卡开放时间</h2>"
-                            "<p>8月22日 04:00 - 9月1日 03:59</p>"
-                            "<h2>活动商店开放时间</h2>"
-                            "<p>8月22日 04:00 - 9月8日 03:59</p>"
-                        ),
-                    },
-                },
-                _Fetched("detail-sha"),
-            )
-        raise AssertionError(f"unexpected bulletin key: {key}")
-
-
 class HighLevelRequirementTests(unittest.TestCase):
     def test_service_files_encode_the_unattended_safety_contract(self) -> None:
         validate_runtime_contracts(ROOT)
@@ -362,6 +303,10 @@ class HighLevelRequirementTests(unittest.TestCase):
         final_award = 'run_award_only "final service phase" "award-final"'
         self.assertEqual(launcher.count(final_award), 1)
         self.assertGreater(launcher.index(final_award), launcher.index("run_regular_fallback"))
+        scheduled_workflow = launcher[
+            launcher.index('info "daily-first mode: protecting the game day'):
+        ]
+        self.assertNotIn("pre_reset_slot", scheduled_workflow)
         self.assertIn('"${planner}" validate-service-readiness --value-only', launcher)
         self.assertNotIn('--profile "${MAA_HOST_PROFILE}" --dry-run', launcher)
         self.assertIn('[[ "${MAA_HOST_PROFILE}" == waydroid ]]', launcher)
@@ -376,6 +321,13 @@ class HighLevelRequirementTests(unittest.TestCase):
             farming_config["supervisor"]["recovery_timeout_seconds"], 21600
         )
         self.assertIn("MAA_RECOVERY_ACTIVE", launcher)
+        pre_reset_guard = launcher[
+            launcher.index('if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]'):
+            launcher.index('\nmkdir -p -- "${project_root}/var/run"')
+        ]
+        self.assertIn('[[ "${MAA_RECOVERY_ACTIVE}" != true ]]', pre_reset_guard)
+        self.assertIn("server_minute >= 145", pre_reset_guard)
+        self.assertIn("02:25 cutoff", pre_reset_guard)
         self.assertIn(" supervisor-recover-run --run-id ", launcher)
         self.assertIn("--defer-to-recovery", launcher)
         recovery_scope = (ROOT / "docs/llm-recovery-scope.md").read_text()
@@ -391,20 +343,22 @@ class HighLevelRequirementTests(unittest.TestCase):
             recovery_scope,
         )
         self.assertIn("adb install --no-streaming -r", recovery_scope)
+        self.assertIn("complete workflow through is the highest priority", recovery_scope)
+        self.assertIn("./bin/maa-host runtime-rollback", recovery_scope)
+        self.assertIn("Operational repair and Git/PR protocol", recovery_scope)
+        self.assertIn("choose a local repair branch", recovery_scope)
         self.assertNotIn("client-package-update", recovery_scope)
 
         proxy = tomllib.loads(
             (ROOT / "config/tasks/proxy-preflight.toml").read_text()
         )
         self.assertEqual(
-            [task["type"] for task in proxy["tasks"]], ["Fight", "Custom"]
+            [task["type"] for task in proxy["tasks"]], ["Custom"] * 3
         )
-        self.assertEqual(proxy["tasks"][0]["params"]["times"], 0)
-        self.assertEqual(proxy["tasks"][0]["params"]["series"], -1)
-        self.assertEqual(proxy["tasks"][0]["params"]["stage"], "1-7")
+        self.assertEqual(proxy["tasks"][1]["params"]["task_names"], ["1-7"])
         self.assertEqual(
-            proxy["tasks"][1]["params"]["task_names"],
-            ["UsePrtsSuccessCheck"],
+            proxy["tasks"][2]["params"]["task_names"],
+            ["StageQueue@CheckPrts"],
         )
         proxy_start = launcher.index("game_client_has_saved_proxy() {")
         proxy_end = launcher.index("\nrun_sanity_fight() {", proxy_start)
@@ -412,6 +366,8 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertEqual(proxy_function.count('run proxy-preflight'), 1)
         self.assertEqual(proxy_function.count('"${maa}"'), 1)
         self.assertIn('render_runtime_task proxy-preflight "${stage_code}"', proxy_function)
+        self.assertIn('"${planner}" check-proxy', proxy_function)
+        self.assertIn('--user-resource', proxy_function)
         self.assertNotIn("printf '%s\\n'", proxy_function)
 
         activity_start = launcher.index("run_planned_activity_candidates() {")
@@ -419,10 +375,35 @@ class HighLevelRequirementTests(unittest.TestCase):
             "\nrefresh_planner_sources_if_needed() {", activity_start
         )
         activity_function = launcher[activity_start:activity_end]
-        self.assertEqual(activity_function.count("reconcile-fight"), 1)
+        self.assertIn("run_stage_with_proxy_retries", activity_function)
         self.assertNotIn("check-fight", activity_function)
-        self.assertNotIn("record-fight", activity_function)
         self.assertNotIn("quarantine-fight", activity_function)
+        self.assertNotIn("pre_reset_slot", activity_function)
+
+        fallback_start = launcher.index("run_regular_fallback() {")
+        fallback_end = launcher.index("\nactivity_decision_is_safe() {", fallback_start)
+        self.assertNotIn("pre_reset_slot", launcher[fallback_start:fallback_end])
+        self.assertIn("farming_sanity_cleared", launcher[fallback_start:fallback_end])
+        self.assertNotIn("any_fight_proof", launcher[fallback_start:fallback_end])
+
+        final_fallback_start = launcher.rindex(
+            'if [[ -z "${stage}" && "${farm_mode}" == auto &&\n'
+            '      "${farming_contracts_ready}" == true &&'
+        )
+        final_fallback_end = launcher.index(
+            '\nif [[ -n "${farming_evidence_log}"', final_fallback_start
+        )
+        final_fallback = launcher[final_fallback_start:final_fallback_end]
+        self.assertIn('"${planner_helpers_ready}" == true', final_fallback)
+        self.assertIn("farming_phase_result=degraded", final_fallback)
+        self.assertNotIn("farming_phase_result=policy-resolved", final_fallback)
+
+        source_code = (ROOT / "maa_planner/sources.py").read_text()
+        source_config = (ROOT / "maa_planner/config.py").read_text()
+        self.assertNotIn("fetch_official_bulletin_windows", source_code)
+        self.assertNotIn("HTMLParser", source_code)
+        self.assertNotIn("ak-webview.hypergryph.com", source_config)
+        self.assertNotIn("sources.official", (ROOT / "config/farming.toml").read_text())
 
         self.assertNotIn("start_game_for_depot_with_retry", launcher)
         self.assertNotIn("startup Official", launcher)
@@ -436,6 +417,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         self.assertIn('if [[ "${depot_scan_attempted}" == true ]]', depot_function)
         self.assertIn("depot_scan_attempted=true", depot_function)
+        self.assertIn('if [[ "${command_succeeded}" != true ]]', depot_function)
         self.assertIn("inventory_snapshot_ready=true", depot_function)
         self.assertEqual(depot_function.count('"${maa}"'), 1)
 
@@ -467,6 +449,17 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn('if [[ "${depot_scan_attempted}" == true ]]', reuse_function)
         self.assertIn("no second scan", reuse_function)
 
+        drone_start = launcher.index("prepare_daily_drone_policy() {")
+        drone_end = launcher.index(
+            "\nensure_farming_inventory_snapshot() {", drone_start
+        )
+        drone_function = launcher[drone_start:drone_end]
+        self.assertNotIn("pre_reset_slot", drone_function)
+        self.assertEqual(drone_function.count("scan_depot_inventory_once"), 1)
+        self.assertIn("depot_scan_outcome=drone-target-unavailable", drone_function)
+        self.assertNotIn("pre-reset-auxiliary-scan-skipped", launcher)
+        self.assertNotIn("pre-reset-cutoff-after-fight-attempt", launcher)
+
         refresh_start = launcher.index("refresh_planner_sources_if_needed() {")
         refresh_end = launcher.index(
             "\nselect_daily_drone_policy_from_snapshot() {", refresh_start
@@ -477,6 +470,7 @@ class HighLevelRequirementTests(unittest.TestCase):
             refresh_function.count('"${planner}" sync --skip-maa-hot-update'),
             1,
         )
+        self.assertNotIn("pre_reset_slot", refresh_function)
         self.assertIn("planner_source_args=(--offline)", refresh_function)
         self.assertEqual(
             launcher.count('"${planner_source_args[@]}" --skip-maa-hot-update'),
@@ -493,6 +487,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         self.assertIn("mv --exchange --no-copy --no-target-directory", updater)
         self.assertIn("MaaRuntime.previous", updater)
+        self.assertIn("rollback_runtime", updater)
         self.assertIn('write_state promoting', updater)
         self.assertIn('"${planner}" runtime-fingerprint', updater)
         self.assertNotIn("printf '%s\\n' '1-7'", updater)
@@ -500,11 +495,15 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn("Direct maa hot-update is disabled", wrapper)
         self.assertNotIn("--dry-run", host)
         self.assertIn('"${planner}" validate-service-readiness', host)
+        self.assertIn("runtime-rollback", host)
 
         sdk = (ROOT / "maa_planner/codex_sdk.py").read_text()
+        recovery_adapter = (ROOT / "maa_planner/codex_recovery.py").read_text()
         self.assertIn("AsyncCodex", sdk)
         self.assertIn("output_schema=dict(request.output_schema)", sdk)
+        self.assertIn("thread_resume", sdk)
         self.assertNotIn("subprocess", sdk)
+        self.assertIn("ephemeral=False", recovery_adapter)
         self.assertFalse((ROOT / "maa_planner/codex_exec.py").exists())
         self.assertEqual(
             (ROOT / "requirements.txt").read_text().strip(),
@@ -526,7 +525,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         surface = (ROOT / "scripts/show-waydroid-scaled.sh").read_text()
         self.assertIn("OnCalendar=*-*-* 06:30:00 Asia/Shanghai", runtime_timer)
         self.assertIn("Persistent=false", runtime_timer)
-        self.assertIn("OnCalendar=*-*-* 03:00:00 Asia/Shanghai", pre_timer)
+        self.assertIn("OnCalendar=*-*-* 02:00:00 Asia/Shanghai", pre_timer)
         self.assertIn("OnCalendar=*-*-* 07:30:00 Asia/Shanghai", post_timer)
         self.assertIn("Persistent=true", post_timer)
         self.assertIn("--backend headless", surface)
@@ -544,7 +543,7 @@ class HighLevelRequirementTests(unittest.TestCase):
     def test_runtime_task_values_are_rendered_without_prompts(self) -> None:
         cases = (
             ("daily", "Money", "drones"),
-            ("proxy-preflight", "AT-6", "stage"),
+            ("proxy-preflight", "AT-6", "task_names"),
             ("sanity-fight", "AP-5", "stage"),
             ("verify-fight", "1-7", "stage"),
         )
@@ -558,7 +557,9 @@ class HighLevelRequirementTests(unittest.TestCase):
                 destination = output_root / f"{task_name}.toml"
                 render_runtime_task(ROOT, task_name, value, destination)
                 rendered = tomllib.loads(destination.read_text())
-                self.assertEqual(rendered["tasks"][0]["params"][parameter], value)
+                index = 1 if task_name == "proxy-preflight" else 0
+                expected = [value] if task_name == "proxy-preflight" else value
+                self.assertEqual(rendered["tasks"][index]["params"][parameter], expected)
                 self.assertNotIn("alternatives =", destination.read_text())
                 self.assertNotIn("default_index =", destination.read_text())
 
@@ -582,7 +583,36 @@ class HighLevelRequirementTests(unittest.TestCase):
                 (ROOT / f"config/tasks/{task_name}.toml").read_bytes(), expected
             )
 
-    def test_cross_checked_sources_and_inventory_authorize_one_safe_fight(self) -> None:
+
+    def test_recovery_invocation_rejects_partial_or_wrong_slot_replays(self) -> None:
+        launcher = ROOT / "scripts/run-daily.sh"
+        base_env = {
+            **os.environ,
+            "MAA_RECOVERY_ACTIVE": "true",
+            "MAA_RECOVERY_PARENT_RUN_ID": "20260905T000000.000000Z-12345678",
+            "MAA_RECOVERY_ATTEMPT_ID": "a" * 32,
+        }
+        cases = (
+            ("manual", ["--no-farm"], "complete automatic farming workflow"),
+            ("manual", ["--dry-run"], "complete automatic farming workflow"),
+            ("pre-reset", [], "does not match --pre-reset-slot"),
+            ("post-reset", ["--pre-reset-slot"], "does not match --post-reset-slot"),
+        )
+        for slot, arguments, expected_error in cases:
+            with self.subTest(slot=slot, arguments=arguments):
+                completed = subprocess.run(
+                    [str(launcher), *arguments],
+                    cwd=ROOT,
+                    env={**base_env, "MAA_RECOVERY_SLOT": slot},
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=10,
+                )
+                self.assertNotEqual(completed.returncode, 0)
+                self.assertIn(expected_error, completed.stderr)
+
+    def test_maa_activity_and_inventory_authorize_one_safe_fight(self) -> None:
         maa_payload = {
             "Official": {
                 "sideStoryStage": {
@@ -602,15 +632,6 @@ class HighLevelRequirementTests(unittest.TestCase):
         }
         activities = parse_maa_activities(maa_payload, "Official", "maa-sha")
         now = datetime(2026, 8, 22, 8, 0, tzinfo=UTC)
-        with patch("maa_planner.sources.utc_now", return_value=now):
-            windows, _evidence = fetch_official_bulletin_windows(
-                _BulletinCache(),  # type: ignore[arg-type]
-                list_url="https://official.invalid/list",
-                detail_url_template="https://official.invalid/{cid}",
-                max_articles=10,
-                cache_max_stale=timedelta(minutes=30),
-                article_lookback=timedelta(days=120),
-            )
         efficiencies = build_yituliu_efficiencies(
             {
                 "data": [
@@ -645,7 +666,6 @@ class HighLevelRequirementTests(unittest.TestCase):
         decision = select_farming_plan(
             now=now,
             activities=activities,
-            official_windows=windows,
             efficiencies=efficiencies,
             inventory=InventorySnapshot(
                 # 150 blue + floor((245 green + floor(15 / 3)) / 5)
@@ -660,9 +680,7 @@ class HighLevelRequirementTests(unittest.TestCase):
             verified_stages=set(),
             quarantined_stages=set(),
             navigation_stages={"AT-6"},
-            require_official=True,
             end_safety_margin=timedelta(minutes=15),
-            window_tolerance=timedelta(seconds=60),
             when_satisfied="best_event",
             configured_series=0,
             large_deficit_runs=6,
@@ -680,15 +698,17 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertEqual(decision.candidates[0].inventory, 200)
         self.assertEqual(decision.candidates[0].deficit, 0)
         self.assertTrue(jq_accepts(ROOT / "config/fight-decision.jq", decision.as_dict()))
+        self.assertEqual(decision.series, 1)
+        batched = decision.as_dict()
+        batched["evidence"]["execution_candidates"][0]["times_per_transaction"] = 3
+        self.assertFalse(jq_accepts(ROOT / "config/fight-decision.jq", batched))
 
     def test_planner_fails_closed_or_uses_next_candidate_for_unsafe_inputs(self) -> None:
         activity = make_activity()
-        conflict = official_window(
-            activity,
-            start=activity.start + timedelta(minutes=2),
-            end=activity.end + timedelta(minutes=2),
+        self.assertEqual(
+            select_plan(now=activity.end - timedelta(minutes=10)).decision,
+            "NOOP",
         )
-        self.assertEqual(select_plan(official_windows=[conflict]).decision, "NOOP")
         self.assertEqual(select_plan(navigation_stages=set()).decision, "NOOP")
         self.assertEqual(
             select_plan(
@@ -725,7 +745,6 @@ class HighLevelRequirementTests(unittest.TestCase):
         base = {
             "now": now,
             "activities": [],
-            "official_windows": [],
             "client": "Official",
             "account": "main",
         }
@@ -748,6 +767,12 @@ class HighLevelRequirementTests(unittest.TestCase):
         unstable = plan_annihilation(
             **base, state=weekly_state(365, 1800, "unstable", stars=2)
         )
+        pre_reset_catch_up = plan_annihilation(
+            now=datetime(2026, 8, 30, 18, 0, tzinfo=UTC),
+            activities=[],
+            client="Official",
+            account="main",
+        )
         self.assertEqual(first["decision"], "RUN")
         self.assertEqual(partial["decision"], "RUN")
         self.assertEqual(complete["decision"], "COMPLETE")
@@ -756,6 +781,13 @@ class HighLevelRequirementTests(unittest.TestCase):
             operator_complete["reason"], "OPERATOR_WEEKLY_CAP_CONFIRMED"
         )
         self.assertEqual(unstable["decision"], "BLOCKED")
+        self.assertEqual(pre_reset_catch_up["decision"], "RUN")
+        self.assertEqual(
+            pre_reset_catch_up["reason"], "WEEK_DEADLINE_CATCH_UP"
+        )
+        self.assertEqual(
+            pre_reset_catch_up["execute_before"], "2026-08-30T20:00:00Z"
+        )
         self.assertTrue(jq_accepts(ROOT / "config/annihilation-decision.jq", first))
         self.assertTrue(
             jq_accepts(
@@ -789,7 +821,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         launcher = (ROOT / "scripts/run-daily.sh").read_text()
         start = launcher.index("run_weekly_annihilation_if_due() {")
-        end = launcher.index("\nrun_regular_fallback() {", start)
+        end = launcher.index("\nrun_stage_with_proxy_retries() {", start)
         function = launcher[start:end]
         self.assertNotIn("return 1", function)
         self.assertTrue(function.rstrip().endswith("return 0\n}"))
@@ -800,7 +832,11 @@ class HighLevelRequirementTests(unittest.TestCase):
             path = Path(directory) / "asst.log"
             path.write_text(old_proof, encoding="utf-8")
             metadata = path.stat()
-            self.assertIsNone(extract_successful_fight(_read_log_suffix(path, metadata.st_size), "AT-6"))
+            self.assertIsNone(
+                extract_successful_fight(
+                    _read_log_suffix(path, metadata.st_size), "AT-6"
+                )
+            )
 
             with path.open("a", encoding="utf-8") as handle:
                 handle.write(
@@ -866,6 +902,17 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         snapshot = extract_depot_snapshot(depot)
         self.assertEqual(select_drone_mode(snapshot), ("PureGold", 149))
+        empty_depot = callback(
+            "SubTaskExtraInfo",
+            {
+                "what": "DepotInfo",
+                "details": {"done": True, "data": "{}"},
+                "taskchain": "Depot",
+                "taskid": 1,
+            },
+        )
+        with self.assertRaises(InventoryParseError):
+            extract_depot_snapshot(empty_depot)
         self.assertEqual(
             select_drone_mode(
                 InventorySnapshot(

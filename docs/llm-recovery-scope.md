@@ -1,6 +1,6 @@
 # MAA unattended recovery scope
 
-Version: 4
+Version: 8
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -19,6 +19,12 @@ be replayed as part of a new full run. A recovery is not complete merely
 because Waydroid starts, the game reaches its home screen, one
 MAA task succeeds, or a command returns zero.
 
+Getting that complete workflow through is the highest priority. Spend the
+remaining game/scheduler window on evidence-backed operational repair and a
+full retry before doing repository housekeeping. A branch, commit, or pull
+request is durable follow-up work and never substitutes for clearing the
+operational failure.
+
 There are only three valid terminal states:
 
 1. `recovered`: a new run has every expected phase in an accepted terminal
@@ -29,9 +35,18 @@ There are only three valid terminal states:
    repair attempt are not terminal failures; continue investigating and retry.
 
 The agent must run the retry command supplied in the incident evidence. It must
-preserve `MAA_RECOVERY_ACTIVE=true` and must not start, stop, or restart the
-outer systemd unit that is currently hosting it. The controller, not the model,
-makes the final success decision.
+preserve `MAA_RECOVERY_ACTIVE=true` together with the supplied
+`MAA_RECOVERY_PARENT_RUN_ID`, `MAA_RECOVERY_ATTEMPT_ID`, and
+`MAA_RECOVERY_SLOT`, and must not start, stop, or restart the outer systemd unit
+that is currently hosting it. The controller, not the model, makes the final
+success decision.
+
+For a `pre-reset` incident, `MAA_RECOVERY_ACTIVE=true` allows the supplied
+`--pre-reset-slot` retry to start from 02:05 through 02:24 Asia/Shanghai. This
+exception is only for a nested recovery replay; an ordinary or suspend catch-up
+start is still limited to 02:00 through 02:04. At 02:25 the launcher refuses a
+new replay, so return `scope-blocked` if no already-started retry can satisfy the
+success proof within the outer service deadline.
 
 ## In scope
 
@@ -61,6 +76,14 @@ The agent may use unrestricted user-level shell commands and network access to:
 - retry downloads and endpoints with bounded backoff, consult public technical
   documentation through shell network tools, and run the supplied full
   launcher repeatedly;
+- run `./bin/maa-host runtime-rollback` to validate and atomically restore the
+  retained previous complete runtime when fresh evidence points to an upgrade
+  regression; use only the transactional updater/rollback entrypoints to
+  change a runtime receipt;
+- when a durable tracked fix is justified, choose a local repair branch, edit
+  source/configuration, test it, commit it, push it to the configured `origin`,
+  and open a pull request with existing non-interactive GitHub credentials;
+  never merge the pull request during unattended recovery;
 - create recovery notes only below ignored runtime state (`var/`) when useful.
 
 An unrestricted shell is a capability, not permission to broaden the mission.
@@ -82,8 +105,14 @@ Return `scope-blocked` instead of crossing any of these boundaries:
   launcher policy;
 - clearing app data/cache, reinstalling the game, deleting user data, changing
   credentials, or bypassing authentication/security controls;
-- editing tracked source, Git history, task policy, the recovery scope, runtime
-  receipts, or append-only audit events during unattended recovery;
+- committing directly on the recorded base branch, rewriting existing Git
+  history, force-pushing, merging a pull request, changing Git credentials, or
+  pushing to a remote other than the incident's configured `origin`;
+- weakening safety/spending policy, changing this recovery scope or the
+  currently running recovery verifier, manually editing runtime receipts, or
+  editing/deleting append-only audit events; a future controller/scope fix may
+  be proposed only on an isolated repair branch and must not be applied to the
+  current incident;
 - persistent host DNS/firewall/routing/package changes, disabling security
   controls, or a privileged action that requires an interactive password;
 - exceeding the protected game-day or scheduler time window.
@@ -92,7 +121,87 @@ Do not inspect or disclose credentials or unrelated personal files. Do not use
 the shell to weaken the controller's verification or to manufacture success
 evidence.
 
+## Operational repair and Git/PR protocol
+
+The incident provides the clean base branch/HEAD, configured remote, suggested
+ignored worktree location, current and retained runtime identity, the most
+recent successful full run, and phase/runtime comparisons. Validate these
+against fresh local evidence rather than assuming that the newest upgrade is
+good merely because its dry-run receipt is valid.
+
+1. First try the smallest evidence-backed runtime action that can restore the
+   full workflow. For an upgrade regression, the supported atomic runtime
+   rollback is preferred to hand-editing or swapping runtime directories.
+2. If tracked source/configuration must change, create an agent-selected repair
+   branch descended from the supplied base. The controller may apply a repair
+   to the current incident only when every changed path is an existing regular
+   declarative task file in its explicit `config/tasks/*.toml` allowlist. Source,
+   shell, executable-entrypoint, policy, scope, and audit-producer changes must
+   stay in the suggested ignored Git worktree as a proposal and cannot be used
+   as current-incident success evidence. Never commit on the base branch.
+3. Commit before starting a managed retry: managed runs deliberately reject a
+   dirty tree. Run focused tests and the applicable static/runtime contracts.
+   A real full launcher audit is still the only operational success proof.
+4. Push the repair branch to `origin` and use `gh pr create` (or an equivalent
+   non-interactive GitHub command) to open a pull request against the supplied
+   default branch. Do not log in, alter credentials, force-push, or merge. A
+   GitHub/auth outage must be reported in `code_repair.pull_request_error`; it
+   does not erase a separately proven operational recovery.
+5. If the successful full run used an allowlisted declarative-task repair
+   commit, leave that clean repair branch active and report
+   `applied_to_runtime=true`. Otherwise leave the primary checkout clean at the
+   base and report any isolated PR with `applied_to_runtime=false`. If recovery
+   did not succeed, also restore the primary checkout to the exact clean base,
+   while preserving any repair branch/commit/PR.
+
+Use `code_repair.status=not-needed` with no branch metadata when no tracked
+files changed. Use `pr-opened` with the branch, commit, HTTPS PR URL, and test
+commands after a successful publication. Use `pr-failed` with the same local
+branch/commit evidence and the concrete publication error when existing
+credentials or the remote cannot publish it. The controller independently asks
+GitHub for PR metadata and checks that it is open, belongs to the expected
+repository, and has the declared head branch/commit and base branch. An invalid
+or unverifiable PR is prominently audited but does not erase a separately
+proved operational recovery.
+
 ## Policy-resolved game conditions
+
+### Saved proxy failures and deterministic fallback
+
+Preflight must spend no sanity: consult the account/activity/stage-scoped local
+negative ledger, then navigate and inspect the game's saved-proxy checkbox using
+the three Custom tasks and the preflight-only no-spend resource overlay. Never
+reintroduce a one-battle preflight, and never treat a skipped `Fight times=0` as
+navigation proof. Positive historical ledger entries are not required.
+
+Actual farming runs one battle per transaction. Count explicit target-stage
+two-star results, or a zero-star result tied to that execution's recognized
+mission-failed screen. A three-star settlement resets the consecutive failure
+count even if later navigation fails. Only three consecutive actual failures
+automatically quarantine the saved proxy locally. Unknown OCR, login/network
+failures, insufficient sanity, navigation errors, and a missing checkbox never
+poison the proxy ledger. Replaying the same log must not count twice. An operator
+can run `maa-host proxy-reset --stage STAGE --activity-instance ID` after
+re-recording the saved proxy; do not silently erase local quarantine yourself.
+
+Retry the same candidate before switching: first/second failure retries it,
+third quarantines it and moves on. Operational/screen failures have a separate
+three-attempt bound without a persistent instability mark. Follow the planner's
+ordered eligible activity candidates, then AP-5, then 1-7. An exhausted activity
+stage also hands its remaining sanity to AP-5/1-7. Do not invent an unrelated
+activity stage or report full success from just one completed battle. Clearing
+the tail requires a fresh clean result showing sanity below 6. Per-transaction
+timeouts, the candidate deadline, and scheduler cutoff remain in force.
+
+### Login expired / possible operator login elsewhere
+
+`登录认证已失效，请重新登录` or `GameOffline` may mean the operator logged in on
+another device and displaced this session (顶号). Record that as a possible
+cause, not a proven one; it is not automatically an APK upgrade or an unstable
+saved proxy. Inspect the actual screen and timestamps, relaunch the existing
+client session when possible, and only update the APK with evidence of an update
+requirement. If manual credentials or verification are required, report the
+scope blocker; never request or invent credentials. Preserve the failed audit.
 
 No saved proxy for a candidate stage and a stage that is not currently open are
 normal game-state limits, not infrastructure failures. For an automatic run,
@@ -170,10 +279,15 @@ For `recovered`, report the exact retry command, its zero exit status, the new
 run ID, and its audit path. The controller then independently requires:
 
 - the new run ID differs from the failed parent run;
-- the new run is `full`, uses the clean Git HEAD recorded when recovery started,
-  and has one accepted terminal result for every expected phase;
+- the new run started after this recovery attempt and its start event contains
+  the exact parent run ID, 128-bit attempt ID, and scheduler slot supplied by
+  the controller;
+- the new run is `full`, uses either the recorded clean base HEAD or the exact
+  clean allowlisted task-repair commit declared as applied, and has one accepted
+  terminal result for every expected phase;
 - its final hash-chained event reports process status 0 and overall success;
-- the repository is still clean.
+- the repository is still clean and its branch/HEAD, repair ancestry, changed
+  paths, and independently fetched PR metadata agree with the structured report.
 
 If any check fails, continue recovery or report the applicable scope blocker;
 do not claim success.

@@ -120,4 +120,17 @@ if [[ ! -x "${maa_binary}" ]]; then
     exit 127
 fi
 
+# The preflight's entry task exists only in the no-spend overlay. Load it for
+# raw/manual calls too; ordinary farming must never load these Stop guards.
+if [[ "${maa_command}" == run ]]; then
+    has_user_resource=false
+    for argument in "$@"; do
+        [[ "${argument}" != --user-resource ]] || has_user_resource=true
+    done
+    for argument in "$@"; do
+        if [[ "${argument}" == proxy-preflight && "${has_user_resource}" == false ]]; then
+            exec "${maa_binary}" "$@" --user-resource
+        fi
+    done
+fi
 exec "${maa_binary}" "$@"

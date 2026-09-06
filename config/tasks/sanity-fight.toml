@@ -13,6 +13,9 @@ type = "Fight"
 medicine = 0
 medicine_expire_days = 2
 stone = 0
-series = 0
+# Every transaction is real farming, not a paid proxy probe. The host repeats
+# successes and inspects each failure before permitting another transaction.
+series = 1
+times = 1
 # Replaced with the validated planner stage only in an isolated per-run copy.
 stage = "1-7"

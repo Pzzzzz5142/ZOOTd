@@ -55,28 +55,6 @@ class Activity:
 
 
 @dataclass(frozen=True)
-class OfficialWindow:
-    activity_name: str
-    label: str
-    start: datetime
-    end: datetime
-    article_id: str
-    article_title: str
-    article_url: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "activity_name": self.activity_name,
-            "label": self.label,
-            "start": isoformat(self.start),
-            "end": isoformat(self.end),
-            "article_id": self.article_id,
-            "article_title": self.article_title,
-            "article_url": self.article_url,
-        }
-
-
-@dataclass(frozen=True)
 class StageEfficiency:
     stage_code: str
     stage_id: str
