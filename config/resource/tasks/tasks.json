@@ -1,0 +1,9 @@
+{
+  "MaaHostProxyTerminal": {"baseTask": "StageBegin"},
+  "GoLastBattle": {"action": "Stop", "next": [], "exceededNext": [], "onErrorNext": [], "sub": []},
+  "StartButton1": {"action": "Stop", "next": [], "exceededNext": [], "onErrorNext": [], "sub": []},
+  "StartButton2": {"action": "Stop", "next": [], "exceededNext": [], "onErrorNext": [], "sub": []},
+  "MedicineConfirm": {"action": "Stop", "next": [], "exceededNext": [], "onErrorNext": [], "sub": []},
+  "ExpiringMedicineConfirm": {"action": "Stop", "next": [], "exceededNext": [], "onErrorNext": [], "sub": []},
+  "StoneConfirm": {"action": "Stop", "next": [], "exceededNext": [], "onErrorNext": [], "sub": []}
+}

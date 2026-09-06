@@ -238,15 +238,18 @@ validate_runtime_at() {
     local candidate_cache="$2"
     local candidate_config="$3"
     local item_index task_name
+    local -a task_options
 
     for task_name in \
         daily award-only annihilation depot \
         proxy-preflight sanity-fight verify-fight; do
+        task_options=()
+        [[ "${task_name}" != proxy-preflight ]] || task_options=(--user-resource)
         if ! MAA_DATA_DIR="${candidate_data}" \
             MAA_CACHE_DIR="${candidate_cache}" \
             MAA_CONFIG_DIR="${candidate_config}" \
             "${maa}" --log-file=/dev/null run "${task_name}" \
-            --profile waydroid --dry-run </dev/null >/dev/null; then
+            --profile waydroid --dry-run "${task_options[@]}" </dev/null >/dev/null; then
             info "runtime validation failed for task=${task_name}"
             return 1
         fi
@@ -274,6 +277,7 @@ make_config_view() {
         die "failed to create the candidate hot-update policy"
     ln -s -- "${project_root}/config/profiles" "${root}/profiles"
     ln -s -- "${project_root}/config/tasks" "${root}/tasks"
+    ln -s -- "${project_root}/config/resource" "${root}/resource"
     # maa-cli resolves an Infrast filename relative to CONFIG_DIR/infrast.
     # Keep the protected Dorm schedule in the isolated candidate view so a
     # compatible runtime is not rejected merely because that local policy file

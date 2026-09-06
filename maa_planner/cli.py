@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import stat
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
 
@@ -24,6 +26,8 @@ from .capability import (
     CapabilityKey,
     CapabilityLedger,
     CapabilityLedgerError,
+    REGULAR_FALLBACK_ACTIVITY_INSTANCE,
+    extract_fight_observations,
     extract_annihilation_progress,
     extract_successful_fight,
     extract_unstable_fight,
@@ -755,43 +759,20 @@ def command_render_runtime_task(args: argparse.Namespace) -> int:
 
 
 def command_record_fight(args: argparse.Namespace) -> int:
-    root = Path(args.project_root).resolve()
-    now = parse_iso_datetime(args.now).astimezone(UTC) if args.now else utc_now()
-    try:
-        config = _config(root, args.config)
-        stage = _validated_stage(args.stage)
-        if args.activity_instance:
-            activity_instance = _validated_activity_instance(args.activity_instance)
-        else:
-            activity_instance = _activity_instance_from_snapshot(
-                root, client=config.client_type, stage=stage, now=now
-            )
-        log_path = _project_path(root, args.log)
-        text = _read_log_cursor(args, log_path)
-        ledger = _load_ledger(root)
-        key = CapabilityKey(config.client_type, config.account, activity_instance, stage)
-        recorded = ledger.mark_verified_from_log(
-            key,
-            text,
-            evidence={
-                "log_path": str(log_path),
-                "since_byte": args.since_byte,
-                "log_device": getattr(args, "log_device", None),
-                "log_inode": getattr(args, "log_inode", None),
-                "log_was_missing": getattr(args, "log_was_missing", False),
-                "log_suffix_sha256": sha256_bytes(text.encode("utf-8", errors="replace")),
-            },
-            observed_at=now,
-        )
-        if not recorded:
-            print("fight log has no complete three-star proof; capability unchanged", file=sys.stderr)
+    # Compatibility entry point: all automatic writes use the same ordered,
+    # idempotent reducer, so an old caller cannot bypass the failure threshold.
+    if not args.activity_instance:
+        root = Path(args.project_root).resolve()
+        try:
+            config = _config(root, args.config)
+            args.activity_instance = (
+                REGULAR_FALLBACK_ACTIVITY_INSTANCE if args.stage in {"AP-5", "1-7"}
+                else _activity_instance_from_snapshot(
+                    root, client=config.client_type, stage=args.stage, now=utc_now()))
+        except (OSError, ValueError, ConfigError) as exc:
+            print(f"cannot resolve fight scope: {exc}", file=sys.stderr)
             return 1
-        ledger.save(_ledger_path(root))
-    except (OSError, ValueError, ConfigError, SourceError, CapabilityLedgerError) as exc:
-        print(f"cannot record fight capability: {exc}", file=sys.stderr)
-        return 1
-    print(f"proxy verified: {stage} in activity {activity_instance}")
-    return 0
+    return command_reconcile_fight(args)
 
 
 def command_quarantine(args: argparse.Namespace) -> int:
@@ -806,10 +787,10 @@ def command_quarantine(args: argparse.Namespace) -> int:
             activity_instance = _activity_instance_from_snapshot(
                 root, client=config.client_type, stage=stage, now=now
             )
-        ledger = _load_ledger(root)
         key = CapabilityKey(config.client_type, config.account, activity_instance, stage)
-        ledger.mark_quarantined(key, args.reason, observed_at=now)
-        ledger.save(_ledger_path(root))
+        with _locked_ledger(root) as ledger:
+            ledger.mark_quarantined(key, args.reason, observed_at=now)
+            ledger.save(_ledger_path(root))
     except (OSError, ValueError, ConfigError, SourceError, CapabilityLedgerError) as exc:
         print(f"cannot quarantine stage: {exc}", file=sys.stderr)
         return 1
@@ -818,35 +799,7 @@ def command_quarantine(args: argparse.Namespace) -> int:
 
 
 def command_quarantine_fight(args: argparse.Namespace) -> int:
-    root = Path(args.project_root).resolve()
-    now = parse_iso_datetime(args.now).astimezone(UTC) if args.now else utc_now()
-    try:
-        config = _config(root, args.config)
-        stage = _validated_stage(args.stage)
-        activity_instance = _validated_activity_instance(args.activity_instance)
-        log_path = _project_path(root, args.log)
-        text = _read_log_cursor(args, log_path)
-        proof = extract_unstable_fight(text, stage)
-        if proof is None:
-            print(
-                f"no fresh non-three-star result for {stage}; quarantine unchanged",
-                file=sys.stderr,
-            )
-            return 1
-        ledger = _load_ledger(root)
-        key = CapabilityKey(config.client_type, config.account, activity_instance, stage)
-        ledger.mark_quarantined(
-            key,
-            "proxy-non-three-star",
-            evidence=proof.as_dict(),
-            observed_at=now,
-        )
-        ledger.save(_ledger_path(root))
-    except (OSError, ValueError, ConfigError, CapabilityError) as exc:
-        print(f"cannot quarantine unstable proxy: {exc}", file=sys.stderr)
-        return 1
-    print(f"unstable proxy quarantined: {stage} in activity {activity_instance}")
-    return 0
+    return command_reconcile_fight(args)
 
 
 def command_check_fight(args: argparse.Namespace) -> int:
@@ -867,8 +820,7 @@ def command_check_fight(args: argparse.Namespace) -> int:
 
 
 def command_reconcile_fight(args: argparse.Namespace) -> int:
-    """Classify fresh Fight evidence and update its activity ledger once."""
-
+    """Process fresh actual battle results once, in order, under a ledger lock."""
     root = Path(args.project_root).resolve()
     now = parse_iso_datetime(args.now).astimezone(UTC) if args.now else utc_now()
     try:
@@ -876,62 +828,79 @@ def command_reconcile_fight(args: argparse.Namespace) -> int:
         stage = _validated_stage(args.stage)
         activity_instance = _validated_activity_instance(args.activity_instance)
         log_path = _project_path(root, args.log)
+        metadata = log_path.stat()
         text = _read_log_cursor(args, log_path)
-        successful = extract_successful_fight(text, stage)
-        unstable = None if successful is not None else extract_unstable_fight(text, stage)
-    except (OSError, ValueError, ConfigError) as exc:
+        after = log_path.stat()
+        if (metadata.st_dev, metadata.st_ino) != (after.st_dev, after.st_ino):
+            raise ValueError("log changed during evidence read")
+        observations = extract_fight_observations(text, stage)
+        with _locked_ledger(root) as ledger:
+            result = ledger.reconcile(
+                CapabilityKey(config.client_type, config.account, activity_instance, stage),
+                observations, log_device=metadata.st_dev, log_inode=metadata.st_ino,
+                suffix_start_byte=args.since_byte, observed_at=now,
+            )
+            if result.recorded:
+                ledger.save(_ledger_path(root))
+    except (OSError, ValueError, ConfigError, CapabilityError) as exc:
         print(f"cannot reconcile fight evidence: {exc}", file=sys.stderr)
         return 1
-
-    outcome = "unknown"
-    recorded = False
-    bookkeeping_error: str | None = None
-    if successful is not None or unstable is not None:
-        outcome = "verified" if successful is not None else "quarantined"
-        try:
-            ledger = _load_ledger(root)
-            key = CapabilityKey(
-                config.client_type,
-                config.account,
-                activity_instance,
-                stage,
-            )
-            if successful is not None:
-                evidence = successful.as_dict()
-                evidence["context"] = {
-                    "log_path": str(log_path),
-                    "since_byte": args.since_byte,
-                    "log_device": getattr(args, "log_device", None),
-                    "log_inode": getattr(args, "log_inode", None),
-                    "log_was_missing": getattr(args, "log_was_missing", False),
-                    "log_suffix_sha256": sha256_bytes(
-                        text.encode("utf-8", errors="replace")
-                    ),
-                }
-                ledger.mark_verified(key, evidence=evidence, observed_at=now)
-            else:
-                assert unstable is not None
-                ledger.mark_quarantined(
-                    key,
-                    "proxy-non-three-star",
-                    evidence=unstable.as_dict(),
-                    observed_at=now,
-                )
-            ledger.save(_ledger_path(root))
-            recorded = True
-        except (OSError, CapabilityError, CapabilityLedgerError) as exc:
-            bookkeeping_error = str(exc)
-
-    payload: dict[str, object] = {
-        "schema_version": 1,
-        "outcome": outcome,
-        "recorded": recorded,
-        "stage": stage,
+    print(json.dumps({
+        "schema_version": 2, "outcome": result.outcome, "recorded": result.recorded,
+        "consecutive_failures": result.consecutive_failures,
+        "observations": result.observations, "stage": stage,
         "activity_instance": activity_instance,
-    }
-    if bookkeeping_error is not None:
-        payload["bookkeeping_error"] = bookkeeping_error
+    }, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+@contextmanager
+def _locked_ledger(root: Path):
+    path = _ledger_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix(".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield _load_ledger(root)
+
+
+def command_proxy_state(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    try:
+        config = _config(root, args.config)
+        stage = _validated_stage(args.stage)
+        instance = (_validated_activity_instance(args.activity_instance)
+                    if args.activity_instance else REGULAR_FALLBACK_ACTIVITY_INSTANCE
+                    if stage in {"AP-5", "1-7"} else _activity_instance_from_snapshot(
+                        root, client=config.client_type, stage=stage, now=utc_now()))
+        key = CapabilityKey(config.client_type, config.account, instance, stage)
+        with _locked_ledger(root) as ledger:
+            if args.command == "proxy-reset":
+                ledger.reset(key)
+                ledger.save(_ledger_path(root))
+            record = ledger.query(key)
+            payload = {"stage": stage, "activity_instance": instance,
+                       "status": ledger.status(key),
+                       "consecutive_failures": record.consecutive_failures if record else 0}
+    except (OSError, ValueError, ConfigError, CapabilityError) as exc:
+        print(f"cannot read/reset proxy state: {exc}", file=sys.stderr)
+        return 1
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+def command_check_proxy(args: argparse.Namespace) -> int:
+    from .proxy import extract_saved_proxy
+    root = Path(args.project_root).resolve()
+    try:
+        stage = _validated_stage(args.stage)
+        proof = extract_saved_proxy(_read_log_cursor(args, _project_path(root, args.log)), stage)
+    except (OSError, ValueError) as exc:
+        print(f"cannot check proxy screen: {exc}", file=sys.stderr)
+        return 1
+    if proof is None:
+        print(f"no fresh saved-proxy screen proof for {stage}", file=sys.stderr)
+        return 1
+    print(json.dumps(proof, ensure_ascii=False, sort_keys=True))
     return 0
 
 
@@ -1401,6 +1370,19 @@ def build_parser() -> argparse.ArgumentParser:
     check_fight.add_argument("--since-byte", type=int, default=0)
     _add_log_cursor_arguments(check_fight)
     check_fight.set_defaults(func=command_check_fight)
+
+    check_proxy = subparsers.add_parser("check-proxy", help="check fresh no-battle proxy screen evidence")
+    check_proxy.add_argument("--log", required=True)
+    check_proxy.add_argument("--stage", required=True)
+    check_proxy.add_argument("--since-byte", type=int, default=0)
+    _add_log_cursor_arguments(check_proxy)
+    check_proxy.set_defaults(func=command_check_proxy)
+
+    for name in ("proxy-status", "proxy-reset"):
+        proxy_state = subparsers.add_parser(name)
+        proxy_state.add_argument("--stage", required=True)
+        proxy_state.add_argument("--activity-instance")
+        proxy_state.set_defaults(func=command_proxy_state)
 
     reconcile_fight = subparsers.add_parser(
         "reconcile-fight",

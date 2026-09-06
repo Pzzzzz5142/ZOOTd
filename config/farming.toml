@@ -34,7 +34,8 @@ when_satisfied = "best_event"
 # A more specific [[targets]] entry below overrides it for that item.
 default_target = 200
 minimum_drop_samples = 300
-series = 0
+# One actual battle per transaction; the host owns retries and continuation.
+series = 1
 medicine = 0
 # Consume every Sanity Potion in MaaCore's two-day expiry bucket. Normal
 # medicine remains forbidden, and drop targets never stop a run early.

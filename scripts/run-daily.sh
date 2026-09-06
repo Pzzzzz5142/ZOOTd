@@ -79,12 +79,12 @@ depot_scan_attempted=false
 inventory_snapshot_ready=false
 depot_scan_outcome=not-attempted
 core_log_cursor_args=()
-proxy_preflight_core_cursor_args=()
-proxy_preflight_core_offset=0
-proxy_preflight_stage=""
 proxy_preflight_evidence_log=""
-activity_fight_evidence_log=""
-manual_fight_evidence_log=""
+stage_fight_completed=false
+stage_fight_evidence_log=""
+stage_run_outcome=not-attempted
+farming_sanity_cleared=false
+regular_proxy_scope="29c76524662bd6e6e945f273"
 regular_fallback_outcome=not-attempted
 planner_source_args=()
 source_refresh_outcome=not-applicable
@@ -156,6 +156,8 @@ ensure_runtime_task_config_view() {
         "${runtime_task_config_dir}/profiles"
     ln -s -- "${project_root}/config/infrast" \
         "${runtime_task_config_dir}/infrast"
+    ln -s -- "${project_root}/config/resource" \
+        "${runtime_task_config_dir}/resource"
 }
 
 render_runtime_task() {
@@ -212,9 +214,8 @@ Options:
                  available and otherwise runs unattended with Gamescope headless.
   --e2e-award    Run only the contract-locked ordinary Award claim as a light
                  end-to-end probe; no base, recruitment, shop, mail, or fight.
-  --verify-proxy Compatibility audit mode: run each solver-selected candidate
-                 at most once. Normal automatic mode already trusts the game
-                 client as the ground truth for saved proxy play.
+  --verify-proxy Compatibility flag; all automatic runs now use zero-sanity
+                 proxy screens and the same three-consecutive-failure policy.
   --daily-first  Compatibility flag; daily-first is now the default order.
   --pre-reset-slot
   --post-reset-slot
@@ -718,55 +719,42 @@ proxy_preflight_log_is_complete() {
     local log_file="$1"
 
     [[ -s "${log_file}" ]] || return 1
-    [[ "$(grep -Fc -- "Fight Start" "${log_file}")" -eq 1 ]] || return 1
-    [[ "$(grep -Fc -- "Fight Completed" "${log_file}")" -eq 1 ]] || return 1
-    [[ "$(grep -Fc -- "Custom Start" "${log_file}")" -eq 1 ]] || return 1
-    [[ "$(grep -Fc -- "Custom Completed" "${log_file}")" -eq 1 ]] || return 1
+    [[ "$(grep -Fc -- "Custom Start" "${log_file}")" -eq 3 ]] || return 1
+    [[ "$(grep -Fc -- "Custom Completed" "${log_file}")" -eq 3 ]] || return 1
     grep -Fq -- "AllTasksCompleted" "${log_file}" || return 1
-    ! grep -Eq -- "(Fight|Custom) Error" "${log_file}"
+    ! grep -Eq -- "Fight (Start|Completed|Error)|Custom Error|Mission started|Use [0-9]+ .*medicine|GameOffline" "${log_file}"
 }
 
 game_client_has_saved_proxy() {
     local stage_code="$1"
     local log_prefix="$2"
     local preflight_log="${log_prefix}-proxy-preflight-${stage_code}.log"
+    local fight_core_offset
 
-    proxy_preflight_core_cursor_args=()
-    proxy_preflight_core_offset=0
-    proxy_preflight_stage=""
     proxy_preflight_evidence_log=""
     farming_evidence_log="${preflight_log}"
     supervisor_active_evidence="${preflight_log}"
-    if ! capture_core_log_cursor; then
-        info "${stage_code} proxy preflight skipped because a fresh MaaCore log cursor could not be captured"
-        return 1
-    fi
-    info "checking ${stage_code} navigation and saved proxy with one bounded battle"
+    capture_core_log_cursor || return 1
+    info "checking ${stage_code} navigation and saved proxy without spending sanity"
     render_runtime_task proxy-preflight "${stage_code}"
-    if ! run_farming_soft_with_timeout 1080 env \
+    if ! run_farming_soft_with_timeout 180 env \
        MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" \
            --log-file="${preflight_log}" run proxy-preflight \
-           --profile "${MAA_HOST_PROFILE}"; then
-        info "${stage_code} proxy preflight was unavailable"
+           --profile "${MAA_HOST_PROFILE}" --user-resource; then
         return 1
     fi
-    if ! proxy_preflight_log_is_complete "${preflight_log}"; then
-        info "${stage_code} proxy preflight returned without complete Fight and PRTS evidence"
-        return 1
-    fi
-    if ! timeout --signal=TERM --kill-after=2s 1m "${planner}" check-fight \
+    proxy_preflight_log_is_complete "${preflight_log}" || return 1
+    # Custom completion alone does not prove navigation or proxy state.
+    # Require fresh target navigation and the following read-only PRTS match.
+    if ! timeout --signal=TERM --kill-after=2s 1m "${planner}" check-proxy \
         --log "${core_log}" --since-byte "${fight_core_offset}" \
         "${core_log_cursor_args[@]}" --stage "${stage_code}" \
         8>&- 9>&- >/dev/null 2>&1; then
-        info "${stage_code} proxy preflight produced no fresh three-star Fight proof"
+        info "${stage_code} has no fresh saved-proxy screen proof"
         return 1
     fi
-
-    proxy_preflight_core_offset="${fight_core_offset}"
-    proxy_preflight_core_cursor_args=("${core_log_cursor_args[@]}")
-    proxy_preflight_stage="${stage_code}"
     proxy_preflight_evidence_log="${preflight_log}"
-    info "the game client confirmed one saved-proxy battle on ${stage_code}"
+    info "the game client enables saved proxy on ${stage_code}; no battle was run"
 }
 
 fight_log_observes_sanity_below() {
@@ -791,7 +779,7 @@ fight_log_proves_sanity_below() {
 
     grep -Fq -- "Fight Completed" "${log_file}" || return 1
     grep -Fq -- "AllTasksCompleted" "${log_file}" || return 1
-    ! grep -Fq -- "Fight Error" "${log_file}" || return 1
+    ! grep -Eq -- "Fight Error|GameOffline" "${log_file}" || return 1
     fight_log_observes_sanity_below "${log_file}" "${minimum}"
 }
 
@@ -1163,69 +1151,114 @@ run_weekly_annihilation_if_due() {
     return 0
 }
 
-run_regular_fallback() {
-    local stage_code fallback_stamp fallback_log fight_core_offset
-    local command_succeeded=false
-    local any_fight_proof=false
-    local last_fight_proof_log=""
+run_stage_with_proxy_retries() {
+    local stage_code="$1" activity_instance="$2" log_prefix="$3"
+    local failures=0 attempt=0 fight_core_offset fight_log status reconciliation
+    local outcome recorded streak command_succeeded
+    local deadline=$((SECONDS + 14400))
 
-    regular_fallback_outcome=not-attempted
-    if [[ "${farming_contracts_ready}" != true ]]; then
-        info "regular-stage fallback skipped because the sanity-spending contract is invalid"
+    stage_fight_completed=false
+    stage_fight_evidence_log=""
+    stage_run_outcome=failed
+    if ! status="$(timeout 1m "${planner}" proxy-status \
+        --stage "${stage_code}" --activity-instance "${activity_instance}" \
+        8>&- 9>&- 2>/dev/null)" ||
+       ! status="$(jq -er '.status | select(. == "unknown" or . == "verified" or . == "retry" or . == "quarantined")' <<<"${status}")"; then
+        info "${stage_code} local proxy state is unreadable"
         return 1
     fi
-    if [[ "${planner_helpers_ready}" != true ]]; then
-        info "regular-stage fallback skipped because fresh fight proof cannot be checked"
+    if [[ "${status}" == quarantined ]]; then
+        stage_run_outcome=quarantined
+        info "${stage_code} is locally quarantined; use maa-host proxy-reset after repairing its saved proxy"
         return 1
     fi
-    for stage_code in "${regular_fallback_stages[@]}"; do
-        fallback_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
-        fallback_log="${project_root}/var/state/host/${fallback_stamp}-fallback-${stage_code}.log"
-        if ! game_client_has_saved_proxy "${stage_code}" \
-            "${project_root}/var/state/host/${fallback_stamp}-fallback"; then
-            if fight_log_observes_sanity_below "${farming_evidence_log}" 6; then
-                regular_fallback_outcome=sanity-below-global-minimum
-                info "regular fallback observed sanity below the global 1-7 minimum"
-                return 0
-            fi
-            info "${stage_code} has no confirmed client proxy; trying the next fallback"
+
+    while (( failures < 3 && SECONDS < deadline )); do
+        attempt=$((attempt + 1))
+        info "${stage_code} attempt ${attempt}: ${failures}/3 consecutive unsuccessful attempts"
+        if ! game_client_has_saved_proxy "${stage_code}" "${log_prefix}-attempt-${attempt}"; then
+            failures=$((failures + 1))
+            info "${stage_code} screen check unavailable (${failures}/3); no proxy-failure mark is written"
             continue
         fi
-        any_fight_proof=true
-        last_fight_proof_log="${proxy_preflight_evidence_log}"
         if ! capture_core_log_cursor; then
-            info "${stage_code} skipped because a fresh MaaCore log cursor could not be captured"
+            failures=$((failures + 1))
             continue
         fi
-        info "regular fallback trying ${stage_code}"
+        fight_log="${log_prefix}-attempt-${attempt}-fight-${stage_code}.log"
         command_succeeded=false
-        if run_sanity_fight "${stage_code}" "${fallback_log}"; then
+        if run_sanity_fight "${stage_code}" "${fight_log}" 900; then
             command_succeeded=true
         fi
-        if timeout --signal=TERM --kill-after=2s 1m "${planner}" check-fight \
-            --log "${core_log}" --since-byte "${fight_core_offset}" \
-            "${core_log_cursor_args[@]}" \
-            --stage "${stage_code}" 8>&- 9>&- >/dev/null 2>&1; then
-            any_fight_proof=true
-            last_fight_proof_log="${fallback_log}"
-            info "regular fallback ${stage_code} continuation has fresh three-star proof"
+        reconciliation=""
+        outcome=unknown
+        recorded=false
+        streak=0
+        if reconciliation="$(timeout --signal=TERM --kill-after=2s 1m \
+            "${planner}" reconcile-fight --log "${core_log}" \
+            --since-byte "${fight_core_offset}" "${core_log_cursor_args[@]}" \
+            --stage "${stage_code}" --activity-instance "${activity_instance}" \
+            8>&- 9>&- 2>/dev/null)"; then
+            IFS=$'\t' read -r outcome recorded streak < <(
+                jq -er '[.outcome, .recorded, .consecutive_failures] | @tsv' <<<"${reconciliation}"
+            ) || outcome=unknown
+        fi
+        if [[ "${outcome}" == verified ]]; then
+            stage_fight_completed=true
+            stage_fight_evidence_log="${fight_log}"
+            failures=0
+        fi
+        if [[ "${outcome}" == quarantined ]]; then
+            stage_run_outcome=quarantined
+            info "${stage_code} reached three consecutive observed proxy failures; moving to the next candidate"
+            return 1
+        fi
+        if [[ "${outcome}" == retry ]]; then
+            failures=$((failures + 1))
+            info "${stage_code} proxy failure streak=${streak}/3; retrying this same candidate"
+            continue
         fi
         if [[ "${command_succeeded}" == true ]] &&
-           fight_log_proves_sanity_below "${fallback_log}" 6; then
-            regular_fallback_outcome=sanity-below-global-minimum
-            farming_evidence_log="${fallback_log}"
-            info "regular fallback proved remaining sanity is below the global 1-7 minimum"
+           fight_log_proves_sanity_below "${fight_log}" 6; then
+            farming_sanity_cleared=true
+            stage_run_outcome=sanity-below-global-minimum
             return 0
         fi
-        info "${stage_code} left no proof of a globally cleared sanity tail; trying the next fallback"
+        if [[ "${outcome}" == verified && "${command_succeeded}" == true ]]; then
+            info "${stage_code} battle succeeded; failure streak reset, continuing actual farming"
+            continue
+        fi
+        # A clean no-battle transaction with fresh sanity means no further
+        # battle was affordable. A completed one-battle transaction is progress,
+        # NOT stage exhaustion; success above loops until there is a real tail.
+        if [[ "${command_succeeded}" == true ]] &&
+           fight_log_proves_sanity_below "${fight_log}" 1000000 &&
+           [[ "${outcome}" == unknown ]] &&
+           ! grep -Fq -- "Mission started" "${fight_log}"; then
+            stage_run_outcome=stage-exhausted
+            return 0
+        fi
+        failures=$((failures + 1))
+        info "${stage_code} has no clean terminal Fight result (${failures}/3); retrying without a local instability mark"
     done
-    if [[ "${any_fight_proof}" == true ]]; then
-        regular_fallback_outcome=bounded-fight-three-star-verified
-        farming_evidence_log="${last_fight_proof_log}"
-        info "fallback completed at least one verified battle; no later result invalidated it"
-        return 0
-    fi
+    info "${stage_code} exhausted three attempts; moving to the next candidate"
+    return 1
+}
+
+run_regular_fallback() {
+    local stage_code fallback_stamp
     regular_fallback_outcome=no-client-authorized-fight
+    [[ "${farming_contracts_ready}" == true && "${planner_helpers_ready}" == true ]] || return 1
+    for stage_code in "${regular_fallback_stages[@]}"; do
+        fallback_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
+        run_stage_with_proxy_retries "${stage_code}" "${regular_proxy_scope}" \
+            "${project_root}/var/state/host/${fallback_stamp}-fallback" || true
+        if [[ "${farming_sanity_cleared}" == true ]]; then
+            regular_fallback_outcome=sanity-below-global-minimum
+            return 0
+        fi
+    done
+    # A prior single battle is progress, not proof that the sanity tail cleared.
     return 1
 }
 
@@ -1237,105 +1270,20 @@ activity_decision_is_safe() {
 }
 
 run_planned_activity_candidates() {
-    local decision_file="$1"
-    local farm_stamp="$2"
+    local decision_file="$1" farm_stamp="$2"
     local stage_code item_id activity_instance
-    local candidate_log fight_core_offset
-    local reconciliation outcome recorded
 
     while IFS=$'\t' read -r stage_code item_id activity_instance; do
-        if ! game_client_has_saved_proxy "${stage_code}" \
-            "${project_root}/var/state/host/${farm_stamp}"; then
-            info "local state is unchanged; trying the next activity candidate"
-            continue
-        fi
-        activity_fight_completed=true
-        activity_fight_evidence_log="${proxy_preflight_evidence_log}"
-        farming_evidence_log="${activity_fight_evidence_log}"
-        if ! run_soft_with_timeout 1m "${planner}" record-fight \
-            --log "${core_log}" --since-byte "${proxy_preflight_core_offset}" \
-            "${proxy_preflight_core_cursor_args[@]}" \
-            --stage "${stage_code}" --activity-instance "${activity_instance}"; then
-            info "${stage_code} preflight succeeded, but capability bookkeeping failed"
-        fi
-        candidate_log="${project_root}/var/state/host/${farm_stamp}-farm-${stage_code}.log"
-        info "automatic farming trying ${stage_code} after the client proxy preflight"
-        if ! capture_core_log_cursor; then
-            farming_evidence_log="${activity_fight_evidence_log}"
-            info "${stage_code} continuation skipped because a fresh Core cursor was unavailable; its preflight three-star proof remains valid"
+        if run_stage_with_proxy_retries "${stage_code}" "${activity_instance}" \
+            "${project_root}/var/state/host/${farm_stamp}-activity-${stage_code}"; then
+            activity_fight_completed="${stage_fight_completed}"
             return 0
         fi
-        if [[ "${verify_proxy}" == true ]]; then
-            run_verify_fight "${stage_code}" "${candidate_log}"
-        else
-            run_sanity_fight "${stage_code}" "${candidate_log}"
-        fi || {
-            info "${stage_code} was unavailable or the fight command failed; inspecting fresh client evidence"
-        }
-
-        reconciliation=""
-        if reconciliation="$(timeout --signal=TERM --kill-after=2s 1m \
-            "${planner}" reconcile-fight \
-                --log "${core_log}" --since-byte "${fight_core_offset}" \
-                "${core_log_cursor_args[@]}" \
-                --stage "${stage_code}" --activity-instance "${activity_instance}" \
-                8>&- 9>&- 2>/dev/null)" &&
-           IFS=$'\t' read -r outcome recorded < <(
-               jq -er '[.outcome, .recorded] | @tsv' <<<"${reconciliation}" 2>/dev/null
-           ); then
-            case "${outcome}" in
-                verified)
-                    activity_fight_evidence_log="${candidate_log}"
-                    info "${stage_code} has fresh three-star completion proof"
-                    if [[ "${recorded}" != true ]]; then
-                        info "fresh fight proof was accepted, but audit bookkeeping failed"
-                    fi
-                    if [[ "${verify_proxy}" == true ]]; then
-                        info "proxy verification succeeded; continuing the selected stage without a medicine-count stop"
-                        if ! run_sanity_fight "${stage_code}" \
-                            "${project_root}/var/state/host/${farm_stamp}-farm-${stage_code}-consume.log"; then
-                            info "verified stage completed once, but its unlimited 48-hour medicine continuation stopped early"
-                        fi
-                    fi
-                    farming_evidence_log="${activity_fight_evidence_log}"
-                    return 0
-                    ;;
-                quarantined)
-                    if [[ "${recorded}" == true ]]; then
-                        info "${stage_code} produced an explicit non-three-star result and is quarantined for this activity"
-                    else
-                        info "${stage_code} produced an explicit non-three-star result, but quarantine bookkeeping failed"
-                    fi
-                    continue
-                    ;;
-                unknown)
-                    farming_evidence_log="${activity_fight_evidence_log}"
-                    info "${stage_code} continuation produced no second result; its preflight three-star proof remains valid"
-                    return 0
-                    ;;
-                *)
-                    farming_evidence_log="${activity_fight_evidence_log}"
-                    info "${stage_code} produced an invalid continuation result; its preflight three-star proof remains valid"
-                    return 0
-                    ;;
-            esac
-        else
-            farming_evidence_log="${activity_fight_evidence_log}"
-            info "${stage_code} continuation evidence could not be reconciled; its preflight three-star proof remains valid"
-            return 0
-        fi
+        info "${stage_code} unavailable after its retry policy; trying the next planned activity candidate"
     done < <(
-        jq -r '
-            .evidence.execution_candidates[]
-            | [
-                .stage_code,
-                .item_id,
-                .activity_instance
-            ]
-            | @tsv
-        ' "${decision_file}"
+        jq -r '.evidence.execution_candidates[]
+            | [.stage_code, .item_id, .activity_instance] | @tsv' "${decision_file}"
     )
-
     return 1
 }
 
@@ -1769,52 +1717,15 @@ fi
 
 supervisor_begin_phase farming
 if [[ -n "${stage}" && "${farming_contracts_ready}" == true ]]; then
-    fight_stamp="$(date '+%Y%m%d-%H%M%S')"
-    manual_fight_log="${project_root}/var/state/host/${fight_stamp}-fight.log"
+    fight_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
+    manual_activity_instance="$(active_activity_instance_for_stage "${stage}" 2>/dev/null || true)"
+    [[ "${manual_activity_instance}" =~ ^[0-9a-f]{24}$ ]] || manual_activity_instance="${regular_proxy_scope}"
     farming_phase_result=degraded
     farming_phase_outcome=explicit-stage-unverified
-    info "spending sanity on ${stage}; all medicine expiring within two days is enabled"
-    if ! game_client_has_saved_proxy "${stage}" \
+    if run_stage_with_proxy_retries "${stage}" "${manual_activity_instance}" \
         "${project_root}/var/state/host/${fight_stamp}-manual"; then
-        farming_phase_outcome=proxy-preflight-failed
-        info "explicit stage farming skipped because the game client did not confirm saved proxy play"
-    else
         farming_phase_result=succeeded
-        farming_phase_outcome=explicit-stage-preflight-three-star-verified
-        manual_fight_evidence_log="${proxy_preflight_evidence_log}"
-        farming_evidence_log="${manual_fight_evidence_log}"
-        manual_activity_instance="$(active_activity_instance_for_stage "${stage}" 2>/dev/null || true)"
-        if [[ "${manual_activity_instance}" =~ ^[0-9a-f]{24}$ ]]; then
-            if ! run_soft_with_timeout 1m "${planner}" record-fight \
-                --log "${core_log}" --since-byte "${proxy_preflight_core_offset}" \
-                "${proxy_preflight_core_cursor_args[@]}" \
-                --stage "${stage}" --activity-instance "${manual_activity_instance}"; then
-                info "manual preflight completed, but its proxy capability could not be recorded"
-            fi
-        else
-            info "manual preflight completed; no unique active activity instance was found to record"
-        fi
-        if capture_core_log_cursor; then
-            if ! run_sanity_fight "${stage}" "${manual_fight_log}"; then
-                info "explicit stage continuation stopped; the preflight battle remains verified"
-            fi
-            if [[ "${planner_helpers_ready}" == true ]] &&
-               timeout --signal=TERM --kill-after=2s 1m "${planner}" check-fight \
-                   --log "${core_log}" --since-byte "${fight_core_offset}" \
-                   "${core_log_cursor_args[@]}" --stage "${stage}" \
-                   8>&- 9>&- >/dev/null 2>&1; then
-                farming_phase_outcome=explicit-stage-three-star-verified
-                farming_evidence_log="${manual_fight_log}"
-            elif fight_log_proves_sanity_below "${manual_fight_log}" 6; then
-                farming_phase_outcome=explicit-stage-sanity-below-global-minimum
-                farming_evidence_log="${manual_fight_log}"
-            else
-                farming_evidence_log="${manual_fight_evidence_log}"
-            fi
-        else
-            farming_evidence_log="${manual_fight_evidence_log}"
-            info "manual continuation skipped because a fresh Core cursor was unavailable; the preflight battle remains verified"
-        fi
+        farming_phase_outcome="explicit-${stage_run_outcome}"
     fi
 elif [[ -z "${stage}" && "${farm_mode}" == auto && "${auto_farm_ready}" == true ]]; then
     farming_phase_result=degraded
@@ -1870,27 +1781,27 @@ fi
 if [[ -z "${stage}" && "${farm_mode}" == auto &&
       "${farming_contracts_ready}" == true &&
       "${planner_helpers_ready}" == true ]]; then
-    if [[ "${activity_fight_completed}" == true ]]; then
-        info "an activity fight completed; entering AP-5 -> 1-7 fallback to clear the remaining sanity tail"
-    else
-        info "no activity-stage fight was completed; entering AP-5 -> 1-7 fallback"
-    fi
-    if run_regular_fallback; then
+    if [[ "${farming_sanity_cleared}" == true ]]; then
         farming_phase_result=succeeded
+        farming_phase_outcome=activity-sanity-below-global-minimum
+    else
         if [[ "${activity_fight_completed}" == true ]]; then
-            farming_phase_outcome="activity-fight-plus-${regular_fallback_outcome}"
+            info "an activity fight completed; entering AP-5 -> 1-7 fallback to clear the remaining sanity tail"
         else
-            farming_phase_outcome="regular-fallback-${regular_fallback_outcome}"
+            info "no activity-stage fight was completed; entering AP-5 -> 1-7 fallback"
         fi
-    elif [[ "${activity_fight_completed}" == true ]]; then
-        farming_phase_result=succeeded
-        farming_phase_outcome=activity-fight-three-star-verified
-        farming_evidence_log="${activity_fight_evidence_log}"
-        info "the activity battle remains verified; no additional fallback battle was available"
-    else
-        farming_phase_result=degraded
-        farming_phase_outcome=no-client-authorized-fight
-        info "no policy-authorized stage produced a battle or low-sanity proof; recovery must inspect the operational failure"
+        if run_regular_fallback; then
+            farming_phase_result=succeeded
+            if [[ "${activity_fight_completed}" == true ]]; then
+                farming_phase_outcome="activity-fight-plus-${regular_fallback_outcome}"
+            else
+                farming_phase_outcome="regular-fallback-${regular_fallback_outcome}"
+            fi
+        else
+            farming_phase_result=degraded
+            farming_phase_outcome=no-client-authorized-fight
+            info "no fresh proof that remaining sanity is below 6; recovery must inspect the unfinished tail"
+        fi
     fi
 fi
 if [[ -n "${farming_evidence_log}" && -f "${farming_evidence_log}" ]]; then

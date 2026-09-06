@@ -59,11 +59,11 @@ flowchart LR
 - `config/material-recipes.toml`：严格校验的经典 T1→T2→T3 合成链，只用于蓝材料等价库存计算，不执行合成。
 - `config/fight-decision.jq`：启动器对规划器 `FIGHT` JSON 的独立执行契约。
 - `config/annihilation-decision.jq`：周剿灭排程的独立执行契约。
-- `config/tasks/sanity-fight.toml`：两天临期药无限额、普通药和源石禁用的实际 Fight；规划关卡由启动器写入隔离的本轮任务副本。
-- `config/tasks/verify-fight.toml`：兼容审计模式的一次三星验证；规划关卡同样通过本轮任务副本注入，随后仍转入无限额 Fight。
+- `config/tasks/sanity-fight.toml`：每笔一场的真实 Fight，由启动器循环清理体力与两天临期药；普通药和源石禁用，关卡非交互注入。
+- `config/tasks/verify-fight.toml`：保留的显式单场任务；自动 preflight 不调用它，不额外打一场来检测代理。
 - `config/tasks/annihilation.toml`：每次只执行一笔、随后核对客户端周进度的剿灭事务。
 - `config/tasks/depot.toml`：把原生 StartUp 与当次仓库扫描合在同一个 MaaCore 任务链中。
-- `config/tasks/proxy-preflight.toml`：在同一个 MaaCore 任务链中先完成一次有界的三星 Fight，再识别当前关卡的代理作战状态；关卡由启动器非交互注入。
+- `config/tasks/proxy-preflight.toml`：同一 Core 中用三个 Custom 完成零体力导航与代理开关检查；关卡非交互注入，开始战斗/用药入口由检查专用 overlay 禁止。
 - `config/tasks/daily.toml`：可重入的基建、公招和信用商店维护；无人机目标由启动器非交互注入；基建拆成普通设施换班和受保护宿舍恢复两个原生 Infrast 阶段；公招先以 09:00 自动确认普通 3–5 星并保护 `支援机械`，随后用独立的原生 Recruit 阶段以 03:50 自动确认小车；若同槽有保证 4/5 星则仍优先高星，只有 6 星留给人工确认；不会在中途关闭启动器持有的 Waydroid 会话。
 - `config/infrast/protected-dorm.json`：四间宿舍的官方自定义排班；没有任何具名干员，只允许从游戏“未进驻”筛选结果自动补位。
 - `config/tasks/award-only.toml`：固定放在整轮最后的普通任务奖励领取；同时供轻量 E2E 复用，不进入基建、公招、商店、邮件或战斗。
@@ -154,9 +154,9 @@ priority = 1.5
 
 选择顺序为：低于硬下限、尚有目标缺口、活动最佳效率。目标桶内按优先级、归一化缺口和期望理智评分，再用综合效率、样本量和关卡码稳定打破平局。自动模式强制 `medicine = 0`、`medicine_expire_days = 2`、`stone = 0`：不会吃普通药或碎石，但会把 MaaCore 两天到期桶内的药全部用于刷图。
 
-临期药启用时不向 MaaCore 下发 `drops` 或 `times` 停止条件，避免库存刚达到 200 就提前停止、留下即将过期的药。库存目标仍决定本轮优先刷哪一种材料；下次运行重新扫描 Depot 后再求解。MaaCore 内部对临期药确认使用 9999 次安全上限，因此这里的“无限”是相对于实际可持有数量；两天是游戏 UI 的整日到期桶，不是逐秒倒计时的精确 48 小时。
+临期药启用时不下发 `drops` 库存早停条件。每笔 `times=1, series=1` 用于逐场检查代理结果，启动器持续循环成功的关卡，不能因一笔成功或库存刚达到 200 就停止。库存目标决定本轮优先刷哪一种材料，下次运行重扫 Depot 后再求解。MaaCore 内部对临期药确认使用 9999 次安全上限，因此这里的“无限”是相对于实际可持有数量；两天是游戏 UI 的整日到期桶，不是逐秒倒计时的精确 48 小时。
 
-统一启动器会把 `MAA_CONFIG_DIR` 固定到项目的 `config/`，并在运行前严格解析实际的 `sanity-fight`、`verify-fight` 与 `annihilation` TOML。整数类型、参数集合或数值只要发生漂移（例如普通药、源石、早停次数被打开），本轮所有理智消费都会 fail closed。正常材料 Fight 没有数量上限，但有四小时防卡死 watchdog；若真实持药量极端到四小时仍未消耗完，下个定时槽会继续，而不是无限挂住设备。
+统一启动器固定受管配置，并严格解析 `sanity-fight`、`verify-fight`、`annihilation` 和零体力 preflight 的配置。整数类型、参数集合或数值发生漂移时，本轮理智消费 fail closed。每笔材料 Fight 有 15 分钟 watchdog，每个候选总窗口最多四小时；若极端持药量或异常导致仍未清完，本轮保留未完成状态供后续恢复，不能假报成功。
 
 Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活动可刷的任一目标物品时，本轮所有候选都会以 `INVENTORY_REQUIRED_ITEM_MISSING` 关闭，避免绕过一个未知但可能紧缺的目标去刷另一关。
 
@@ -195,25 +195,31 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 
 新活动的 `activity_instance` 由客户端、活动键、名称和起止窗口共同生成。即使复刻沿用了相同关卡码，旧活动的能力证明也不会继承。
 
-正常自动运行不需要指定关卡，关卡始终由同一个确定性求解器决定。求解器按库存缺口和一图流效率给出有序候选，启动器对每个候选执行一个确定性 `proxy-preflight`：先记录 MaaCore 日志游标，再在同一个 Core 进程中执行 `Fight(times = 1, series = 1)` 与紧随其后的 `UsePrtsSuccessCheck`。只有任务链完成、无对应 Error，且新增 Core 日志独立证明目标关三星战斗完成，才继续后续无次数上限的真实 Fight。这一次有界战斗本身就是有效的理智清理证据；即使后续 Fight 因理智已空而无法再打一场，也不会丢掉这份成功证据。
+正常自动运行不需要指定关卡。求解器按库存缺口和一图流效率给出有序活动候选；启动器先查本地负面账本，未隔离的关卡再做 **零体力 preflight**：在一个 Core 进程中依次用 Custom 进入终端、打开目标关卡、运行 `StageQueue@CheckPrts` 确认（必要时勾选）游戏已保存的代理。检查本身没有 Fight、不吃药、不碎石，也不把画面检查当成三星战斗证明。
 
-`--verify-proxy` 仅保留为兼容审计模式：候选选择规则完全相同，每个候选先最多运行一次验证；验证成功后仍把该关交给无 `times/drops` 上限的正常 Fight，以免审计模式留下两天内到期药。两个阶段都不吃普通药、不碎石，并使用原生 `medicine_expire_days = 2` 参数。它不再是正常自动运行的前置条件：
+preflight 单独加载 `config/resource/tasks/tasks.json` 的保护 overlay，将开始行动、用药和碎石入口设成 Stop；实际 Fight 进程不加载它。不能用 `Fight times=0` 替代：当前 Core 会连关卡导航一起跳过。只有本次日志中三个 Custom 按顺序完成，并有目标关卡选择与其后的 `UsePrtsSuccessCheck` 画面匹配，才允许真正刷图。
+
+实际刷图每笔为 `times=1, series=1`，是正常材料产出，不是额外花体力的探针。每笔后按真实结果决定是否继续；成功就留在当前关继续清理，直到体力不足。仅允许原生 `medicine_expire_days=2`，普通药和源石保持禁用。`--verify-proxy` 保留为兼容标志，采用相同规则，不再单独收取一场验证战斗。
+
+失败和回退规则：
+
+1. 同一账号、同一活动实例、同一关卡的实际代理失败连续累计三次，才写入本地自动隔离；前两次先重试当前关。
+2. 目标关 `StageDrops stars=3` 会清零连续失败。后续导航失败不抹掉已经结算的成功，但一次战斗成功也不等于整轮成功。
+3. 明确 `stars=2` 算失败；`stars=0` 通常未知，只有同一执行还识别到了 `FightMissionFailed` 失败画面，才算一次失败。单纯返还理智、网络/登录失效、导航超时、未找到代理按钮或缺失日志不写坏代理记录。
+4. 屏幕检查或其他运行错误也最多连续尝试三次，然后本轮换候选，但不会永久隔离。重复读取同一日志不会重复计数；有效失败计数跨进程、跨定时任务保留，成功归零。
+5. 先按 planner 的当前活动候选顺序尝试，所有候选不可用后才依次 `AP-5 → 1-7`；活动关已无足够体力时也走常驻关清尾数。例如本次计划为 `SR-8 → SR-6 → SR-7 → AP-5 → 1-7`，不是临时随意换关，也不是硬编码所有活动都用 SR。
+6. 新鲜、正常结束的 Fight 日志证明剩余理智低于 6 才表示尾数清理完成；之前的一场成功不能把后续断线或尾数失败覆盖成成功。每笔最多 15 分钟、每个候选总窗口最多 4 小时，且仍受 pre-reset 截止时间约束。
+
+schema 1 中旧的“一次非三星就自动隔离”迁移为失败计数 1；显式人工隔离保持原样。重新录制代理后，显式清除对应本地标记，再由下一次零体力画面检查重新授权：
 
 ```bash
-./scripts/run-daily.sh --verify-proxy
+./bin/maa-host proxy-status --stage SR-8 --activity-instance <活动实例ID>
+./bin/maa-host proxy-reset --stage SR-8 --activity-instance <活动实例ID>
+./bin/maa-host proxy-status --stage AP-5
 ./bin/maa-planner capabilities
 ```
 
-只有一次 Fight 开始以后新增的 MaaCore 日志中同时出现：
-
-1. 目标关卡的 `StageDrops`；
-2. `stars = 3`；
-3. 同一 `uuid + taskid` 的 Fight 完成事件；
-4. 同一执行中没有后续二星、错关、错误或停止；
-
-才会为当前活动实例登记 `verified` 作为审计信息，但这个正面记录不参与执行授权。反过来，只有日志明确给出目标关 `stars = 2`，启动器才登记 `proxy-non-three-star` 并在该活动实例内隔离该关；`stars = 0` 是星级模板 OCR 未识别，`1` 不是当前 Core 会产生的结果，两者和普通命令失败、未找到代理按钮、导航失败、日志缺失一样都保持未知，不会隔离。
-
-若是完全陌生的新活动，MAA 活动数据、导航和库存检查仍须全部通过。通过后会先用一次有界战斗验证候选；若客户端没有可用代理，Fight 不能产生目标关三星完成证据，不会进入后续无限额战斗。启动器随后以同样的 preflight 依次检查 `AP-5`、`1-7` 并继续清理理智，也不会把未知状态永久拉黑。
+活动关不传实例 ID 时只从近期来源快照解析，不额外联网；常驻 AP-5/1-7 使用固定的账号隔离命名空间。MAA 活动窗口、可导航性与本轮库存仍是活动候选的必需条件；没有正面历史记录不会阻止新活动。
 
 `config/farming.toml` 的 `account` 是本地隔离状态命名空间，目前无法从游戏自动证明实际登录 UID。Waydroid 内切换账号时必须修改 `account`，避免把某账号、某活动实例的非三星隔离错误套用到另一个账号。
 
@@ -235,9 +241,9 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 4. 每轮只联网刷新一次完整规划来源；02:00 与 07:30 使用同一路径。live MAA 资源仍只由独立的受控更新器写入。
 5. 用本轮缓存离线计算本周剿灭窗口；到期时按单次代理事务执行，逐次读取客户端周进度，满额才登记完成。来源刷新失败不会在这个阶段再次轰炸同一端点。
 6. 材料规划复用 daily 前取得的 Depot 快照。已尝试但失败的 Depot 不会在同一轮重复；决策同样只离线校验并复用第 4 步缓存，不做第二轮网络刷新。
-7. 仅当 JSON 为合法 `FIGHT` 且启动器二次校验所有有序候选的关卡码、活动实例、材料及两天临期药参数后，逐关执行一场有界真实战斗与客户端代理检查。
-8. preflight 的三星战斗本身立即记为有效理智清理；随后尝试同关无次数上限的 Fight。没有可用代理或执行失败时尝试下一候选，只有本次日志明确出现目标关非三星结果才隔离该活动实例的关卡。
-9. 无论活动关是否已打，都依次尝试 `AP-5`、`1-7` 清理剩余理智，直到日志证明理智低于全局最小消耗 6，或至少保留一场新鲜三星战斗证据。既没有战斗证据也没有低理智观测时保持 `degraded`并触发恢复，不再把运行时、导航或代理故障笼统冒充成正常结束。
+7. 仅当 JSON 为合法 `FIGHT` 且启动器二次校验有序候选的关卡码、活动实例、材料及临期药参数后，逐关执行零体力代理画面检查。
+8. 零体力 preflight 只授权游戏已保存的代理，随后逐笔真实刷图；同关连续三次实际失败才本地隔离，前两次重试，成功重置。活动候选依序耗尽后才走 AP-5、1-7，完成状态须有新鲜尾数证据。
+9. 若尚无新鲜、正常完成的低于 6 理智证明，依次尝试 `AP-5`、`1-7` 清理尾数。只有一场三星战斗但未清完时仍保留 `degraded` 并触发恢复，不能把运行时、导航或代理故障冒充成正常结束。
 10. 无论前面的可选刷图是否成功，最后只运行独立的 `award-only`，领取普通任务奖励；它不能进入基建、公招、商店、邮件或战斗。
 11. runtime、设备、Depot、daily、来源、剿灭、刷图、Award 和 cleanup 各写一个终态事件。`degraded`、`failed`、缺阶段或非零退出都会在清理设备后触发无 sandbox LLM 恢复；只有 controller 验证另一轮完整 run 全部 accepted 后，外层 service 才能转绿。
 
@@ -437,7 +443,7 @@ jq . var/state/supervisor/latest-probe.json
 
 2026-08-26 的 03:00 与 07:30 日志证明 MAA 都没有进入训练室，但四间宿舍运行时 `m_notstationed_filter_enabled` 均为 `0`；宿舍因此能选中仍进驻训练室的干员。根因是旧配置把 `dorm_notstationed_enabled` 设为 `false`，以及文档错误地把“Training 不在 facility 白名单”当成了人员不会被跨设施改派。现在默认宿舍流程已被移出普通设施任务，改由上述未进驻-only 自定义宿舍阶段处理；静态契约与完成日志计数共同防止该假设再次回归。
 
-同日的进程审计还发现，03:00/07:30 正式 service 在接触设备前分别启动 7 个 MaaCore dry-run，而代理 preflight 又为导航和画面确认各启动一次。现在完整 Core 兼容验证只属于 06:30 更新事务，正式 service 和 `doctor` 使用持久化 generation receipt；代理两步合并为一个 Core 任务链；在 operator 明确所有阶段可重入后，daily 允许一次直接重试，恢复代理也允许反复重跑完整链路。后续同一轮审计又移除了 Depot 前独立的 StartUp Core，并把最多三轮相同来源联网刷新收敛为一次。两个定时槽在正常单活动关路径下都约为 5 次 MaaCore（Depot、daily、proxy-preflight、Fight、Award）；每笔到期的剿灭再增加一次 Annihilation。额外进程只来自 daily 重试、逐笔剿灭、候选/常驻关回退或异常恢复。
+同日的进程审计还发现，03:00/07:30 正式 service 在接触设备前分别启动 7 个 MaaCore dry-run，而代理 preflight 又为导航和画面确认各启动一次。现在完整 Core 兼容验证只属于 06:30 更新事务，正式 service 和 `doctor` 使用持久化 generation receipt；代理两步合并为一个 Core 任务链；在 operator 明确所有阶段可重入后，daily 允许一次直接重试，恢复代理也允许反复重跑完整链路。后续同一轮审计又移除了 Depot 前独立的 StartUp Core，并把最多三轮相同来源联网刷新收敛为一次。当时单活动关通常约为五个 Core；2026-09-06 改为零体力 preflight 加逐场真实事务后，不再承诺固定进程数，每笔会重新检查并记录代理结果。
 
 2026-08-27 的真实 headless 验收先运行 Award-only，日志只有 StartUp 与 Award。随后 runtime 更新拒绝了仍与 stable Core 不兼容的最新 MaaResource，并把兼容 live overlay、fresh API cache 和当前受管配置密封为 schema 3。完整流程恰好产生 Depot、daily、单笔 Annihilation、单进程 proxy-preflight、Fight、最终 Award 六份 MAA 日志：Depot 在一个 Core 内完成 StartUp 并读取 79 项库存；daily 有两次 Infrast、四间 Dorm、两次 Recruit、一次 Mall 和零次 Training；Core 对四间受保护 Dorm 实际记录了四个 `m_notstationed_filter_enabled: 1`、零个 `0`。来源只联网刷新一轮；剿灭缺少周进度强证据时保留 unknown 并继续普通刷关；AT-6 的客户端 PRTS preflight 和八连三星 Fight 成功；最终 Award 日志没有任何基建、公招、商店、Depot 或 Fight 标记。流程结束后 schema 3 receipt 仍通过校验。
 

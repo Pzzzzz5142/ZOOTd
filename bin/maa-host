@@ -292,6 +292,10 @@ Commands:
   runtime-rollback      Validate and atomically restore the retained previous runtime
   resource-update       Compatibility alias for runtime-update
   probe                 Check live ADB authorization and the game package
+  proxy-status --stage STAGE [--activity-instance ID]
+                        Show the local proxy failure streak without playing
+  proxy-reset --stage STAGE [--activity-instance ID]
+                        Clear a local proxy mark after re-recording it in game
   install-core          Install the first validated stable runtime
   update                Alias for the transactional stable runtime update
   status                Show Waydroid and systemd timer status
@@ -309,6 +313,10 @@ case "${command_name}" in
     raw-run)
         shift
         run_raw_task "$@"
+        ;;
+    proxy-status|proxy-reset)
+        shift
+        exec "${planner}" "${command_name}" "$@"
         ;;
     doctor)
         doctor

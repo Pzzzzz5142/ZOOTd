@@ -353,15 +353,12 @@ class HighLevelRequirementTests(unittest.TestCase):
             (ROOT / "config/tasks/proxy-preflight.toml").read_text()
         )
         self.assertEqual(
-            [task["type"] for task in proxy["tasks"]], ["Fight", "Custom"]
+            [task["type"] for task in proxy["tasks"]], ["Custom"] * 3
         )
-        self.assertEqual(proxy["tasks"][0]["params"]["times"], 1)
-        self.assertEqual(proxy["tasks"][0]["params"]["series"], 1)
-        self.assertEqual(proxy["tasks"][0]["params"]["medicine_expire_days"], 2)
-        self.assertEqual(proxy["tasks"][0]["params"]["stage"], "1-7")
+        self.assertEqual(proxy["tasks"][1]["params"]["task_names"], ["1-7"])
         self.assertEqual(
-            proxy["tasks"][1]["params"]["task_names"],
-            ["UsePrtsSuccessCheck"],
+            proxy["tasks"][2]["params"]["task_names"],
+            ["StageQueue@CheckPrts"],
         )
         proxy_start = launcher.index("game_client_has_saved_proxy() {")
         proxy_end = launcher.index("\nrun_sanity_fight() {", proxy_start)
@@ -369,7 +366,8 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertEqual(proxy_function.count('run proxy-preflight'), 1)
         self.assertEqual(proxy_function.count('"${maa}"'), 1)
         self.assertIn('render_runtime_task proxy-preflight "${stage_code}"', proxy_function)
-        self.assertIn('"${planner}" check-fight', proxy_function)
+        self.assertIn('"${planner}" check-proxy', proxy_function)
+        self.assertIn('--user-resource', proxy_function)
         self.assertNotIn("printf '%s\\n'", proxy_function)
 
         activity_start = launcher.index("run_planned_activity_candidates() {")
@@ -377,21 +375,16 @@ class HighLevelRequirementTests(unittest.TestCase):
             "\nrefresh_planner_sources_if_needed() {", activity_start
         )
         activity_function = launcher[activity_start:activity_end]
-        self.assertEqual(activity_function.count("reconcile-fight"), 1)
+        self.assertIn("run_stage_with_proxy_retries", activity_function)
         self.assertNotIn("check-fight", activity_function)
-        self.assertEqual(activity_function.count("record-fight"), 1)
-        self.assertIn("proxy_preflight_core_offset", activity_function)
-        self.assertIn("activity_fight_completed=true", activity_function)
-        self.assertIn("activity_fight_evidence_log", activity_function)
         self.assertNotIn("quarantine-fight", activity_function)
         self.assertNotIn("pre_reset_slot", activity_function)
 
         fallback_start = launcher.index("run_regular_fallback() {")
         fallback_end = launcher.index("\nactivity_decision_is_safe() {", fallback_start)
         self.assertNotIn("pre_reset_slot", launcher[fallback_start:fallback_end])
-        self.assertIn("fight_log_proves_sanity_below", launcher[fallback_start:fallback_end])
-        self.assertIn("any_fight_proof", launcher[fallback_start:fallback_end])
-        self.assertIn("last_fight_proof_log", launcher[fallback_start:fallback_end])
+        self.assertIn("farming_sanity_cleared", launcher[fallback_start:fallback_end])
+        self.assertNotIn("any_fight_proof", launcher[fallback_start:fallback_end])
 
         final_fallback_start = launcher.rindex(
             'if [[ -z "${stage}" && "${farm_mode}" == auto &&\n'
@@ -550,7 +543,7 @@ class HighLevelRequirementTests(unittest.TestCase):
     def test_runtime_task_values_are_rendered_without_prompts(self) -> None:
         cases = (
             ("daily", "Money", "drones"),
-            ("proxy-preflight", "AT-6", "stage"),
+            ("proxy-preflight", "AT-6", "task_names"),
             ("sanity-fight", "AP-5", "stage"),
             ("verify-fight", "1-7", "stage"),
         )
@@ -564,7 +557,9 @@ class HighLevelRequirementTests(unittest.TestCase):
                 destination = output_root / f"{task_name}.toml"
                 render_runtime_task(ROOT, task_name, value, destination)
                 rendered = tomllib.loads(destination.read_text())
-                self.assertEqual(rendered["tasks"][0]["params"][parameter], value)
+                index = 1 if task_name == "proxy-preflight" else 0
+                expected = [value] if task_name == "proxy-preflight" else value
+                self.assertEqual(rendered["tasks"][index]["params"][parameter], expected)
                 self.assertNotIn("alternatives =", destination.read_text())
                 self.assertNotIn("default_index =", destination.read_text())
 
@@ -588,175 +583,6 @@ class HighLevelRequirementTests(unittest.TestCase):
                 (ROOT / f"config/tasks/{task_name}.toml").read_bytes(), expected
             )
 
-    def test_regular_fallback_uses_one_battle_preflight_then_clears_tail(self) -> None:
-        launcher = (ROOT / "scripts/run-daily.sh").read_text()
-        helper_start = launcher.index("fight_log_observes_sanity_below() {")
-        helper_end = launcher.index("\nrun_sanity_fight() {", helper_start)
-        fallback_start = launcher.index("run_regular_fallback() {")
-        fallback_end = launcher.index(
-            "\nactivity_decision_is_safe() {", fallback_start
-        )
-        functions = (
-            launcher[helper_start:helper_end]
-            + "\n"
-            + launcher[fallback_start:fallback_end]
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            state_dir = Path(directory) / "var/state/host"
-            state_dir.mkdir(parents=True)
-            script = f"""
-set -u
-{functions}
-project_root="$TEST_ROOT"
-planner=fake-planner
-core_log="$TEST_ROOT/core.log"
-regular_fallback_stages=(AP-5 1-7)
-regular_fallback_outcome=not-attempted
-farming_contracts_ready=true
-planner_helpers_ready=true
-fight_core_offset=0
-core_log_cursor_args=(--log-was-missing)
-proxy_preflight_evidence_log=""
-farming_evidence_log=""
-info() {{ :; }}
-game_client_has_saved_proxy() {{ printf '%s\n' "$1" >> "$TEST_ROOT/calls"; return 0; }}
-capture_core_log_cursor() {{ fight_core_offset=0; core_log_cursor_args=(--log-was-missing); return 0; }}
-run_sanity_fight() {{
-    local sanity=10
-    [[ "$1" == 1-7 ]] && sanity=4
-    printf '%s\n' 'Fight Start' "Current sanity: ${{sanity}}/210" 'Fight Completed' 'AllTasksCompleted' > "$2"
-    return 0
-}}
-timeout() {{ return 1; }}
-run_regular_fallback
-printf '%s\n' "$regular_fallback_outcome"
-"""
-            completed_process = subprocess.run(
-                ["bash", "-c", script],
-                env={**os.environ, "TEST_ROOT": directory},
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(completed_process.returncode, 0, completed_process.stderr)
-            self.assertEqual(
-                (Path(directory) / "calls").read_text().splitlines(),
-                ["AP-5", "1-7"],
-            )
-            self.assertEqual(
-                completed_process.stdout.strip(), "sanity-below-global-minimum"
-            )
-
-    def test_fallback_requires_fresh_evidence_and_preserves_earlier_proof(self) -> None:
-        launcher = (ROOT / "scripts/run-daily.sh").read_text()
-        helper_start = launcher.index("fight_log_observes_sanity_below() {")
-        helper_end = launcher.index("\nrun_sanity_fight() {", helper_start)
-        fallback_start = launcher.index("run_regular_fallback() {")
-        fallback_end = launcher.index(
-            "\nactivity_decision_is_safe() {", fallback_start
-        )
-        functions = (
-            launcher[helper_start:helper_end]
-            + "\n"
-            + launcher[fallback_start:fallback_end]
-        )
-        common = f"""
-set -u
-{functions}
-project_root="$TEST_ROOT"
-planner=fake-planner
-core_log="$TEST_ROOT/core.log"
-regular_fallback_stages=(AP-5 1-7)
-regular_fallback_outcome=not-attempted
-farming_contracts_ready=true
-planner_helpers_ready=true
-fight_core_offset=0
-core_log_cursor_args=(--log-was-missing)
-proxy_preflight_evidence_log=""
-farming_evidence_log=""
-info() {{ :; }}
-timeout() {{ return 1; }}
-run_sanity_fight() {{ return 1; }}
-"""
-        with tempfile.TemporaryDirectory() as directory:
-            preserve_script = common + r'''
-game_client_has_saved_proxy() {
-    if [[ "$1" == AP-5 ]]; then
-        proxy_preflight_evidence_log="$TEST_ROOT/ap5-proof.log"
-        farming_evidence_log="$proxy_preflight_evidence_log"
-        printf '%s\n' 'Fight Completed' 'AllTasksCompleted' > "$farming_evidence_log"
-        return 0
-    fi
-    proxy_preflight_evidence_log=""
-    farming_evidence_log="$TEST_ROOT/1-7-failure.log"
-    printf '%s\n' 'Fight Error' > "$farming_evidence_log"
-    return 1
-}
-capture_core_log_cursor() { return 1; }
-run_regular_fallback
-printf '%s\n%s\n' "$regular_fallback_outcome" "$farming_evidence_log"
-'''
-            preserved = subprocess.run(
-                ["bash", "-c", preserve_script],
-                env={**os.environ, "TEST_ROOT": directory},
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(preserved.returncode, 0, preserved.stderr)
-            self.assertEqual(
-                preserved.stdout.splitlines(),
-                [
-                    "bounded-fight-three-star-verified",
-                    f"{directory}/ap5-proof.log",
-                ],
-            )
-
-            low_sanity_script = common + r'''
-game_client_has_saved_proxy() {
-    proxy_preflight_evidence_log=""
-    farming_evidence_log="$TEST_ROOT/low-sanity.log"
-    printf '%s\n' 'Current sanity: 4/210' 'Fight Error' > "$farming_evidence_log"
-    return 1
-}
-capture_core_log_cursor() { return 1; }
-run_regular_fallback
-printf '%s\n' "$regular_fallback_outcome"
-'''
-            low_sanity = subprocess.run(
-                ["bash", "-c", low_sanity_script],
-                env={**os.environ, "TEST_ROOT": directory},
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(low_sanity.returncode, 0, low_sanity.stderr)
-            self.assertEqual(
-                low_sanity.stdout.strip(), "sanity-below-global-minimum"
-            )
-
-            no_evidence_script = common + r'''
-game_client_has_saved_proxy() {
-    proxy_preflight_evidence_log=""
-    farming_evidence_log="$TEST_ROOT/operational-failure.log"
-    printf '%s\n' 'Fight Error' > "$farming_evidence_log"
-    return 1
-}
-capture_core_log_cursor() { return 1; }
-if run_regular_fallback; then exit 99; fi
-printf '%s\n' "$regular_fallback_outcome"
-'''
-            no_evidence = subprocess.run(
-                ["bash", "-c", no_evidence_script],
-                env={**os.environ, "TEST_ROOT": directory},
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            self.assertEqual(no_evidence.returncode, 0, no_evidence.stderr)
-            self.assertEqual(
-                no_evidence.stdout.strip(), "no-client-authorized-fight"
-            )
 
     def test_recovery_invocation_rejects_partial_or_wrong_slot_replays(self) -> None:
         launcher = ROOT / "scripts/run-daily.sh"
@@ -872,6 +698,10 @@ printf '%s\n' "$regular_fallback_outcome"
         self.assertEqual(decision.candidates[0].inventory, 200)
         self.assertEqual(decision.candidates[0].deficit, 0)
         self.assertTrue(jq_accepts(ROOT / "config/fight-decision.jq", decision.as_dict()))
+        self.assertEqual(decision.series, 1)
+        batched = decision.as_dict()
+        batched["evidence"]["execution_candidates"][0]["times_per_transaction"] = 3
+        self.assertFalse(jq_accepts(ROOT / "config/fight-decision.jq", batched))
 
     def test_planner_fails_closed_or_uses_next_candidate_for_unsafe_inputs(self) -> None:
         activity = make_activity()
@@ -991,7 +821,7 @@ printf '%s\n' "$regular_fallback_outcome"
         )
         launcher = (ROOT / "scripts/run-daily.sh").read_text()
         start = launcher.index("run_weekly_annihilation_if_due() {")
-        end = launcher.index("\nrun_regular_fallback() {", start)
+        end = launcher.index("\nrun_stage_with_proxy_retries() {", start)
         function = launcher[start:end]
         self.assertNotIn("return 1", function)
         self.assertTrue(function.rstrip().endswith("return 0\n}"))

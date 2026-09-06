@@ -45,7 +45,9 @@ def _execution_candidate(
         if candidate.deficit > 0 and medicine_expire_days == 0
         else None
     )
-    series = configured_series
+    # Host-controlled single-battle transactions observe every result before
+    # authorizing another one. Batching must not hide a failing saved proxy.
+    series = 1
     efficiency = efficiencies[candidate.stage_code]
     if drop_goal and candidate.expected_ap_per_item:
         expected_runs = math.ceil(
@@ -59,6 +61,7 @@ def _execution_candidate(
         "activity_instance": candidate.activity_instance,
         "drop_goal": drop_goal,
         "series": series,
+        "times_per_transaction": 1,
         "medicine": medicine,
         "medicine_expire_days": medicine_expire_days,
         "stone": stone,
@@ -236,8 +239,9 @@ def select_farming_plan(
                     "unknown_allowed": True,
                     "positive_ledger_required": False,
                     "local_quarantine_overrides": True,
-                    "preflight": "one-fight-plus-use-prts-success-check",
-                    "preflight_consumes_sanity": True,
+                    "preflight": "custom-navigation-plus-use-prts-success-check",
+                    "preflight_consumes_sanity": False,
+                    "consecutive_failure_limit": 3,
                 },
                 "activity_window_policy": {
                     "source": "maa-stage-activity-v2",
@@ -284,8 +288,9 @@ def select_farming_plan(
                 "unknown_allowed": True,
                 "positive_ledger_required": False,
                 "local_quarantine_overrides": True,
-                "preflight": "one-fight-plus-use-prts-success-check",
-                "preflight_consumes_sanity": True,
+                "preflight": "custom-navigation-plus-use-prts-success-check",
+                "preflight_consumes_sanity": False,
+                "consecutive_failure_limit": 3,
             },
             "execution_candidates": execution_candidates,
             "activity_window_policy": {

@@ -350,41 +350,29 @@ def validate_farming_contracts(root: Path) -> None:
     proxy_tasks = proxy.get("tasks")
     if (
         not isinstance(proxy_tasks, list)
-        or len(proxy_tasks) != 2
+        or len(proxy_tasks) != 3
         or not all(isinstance(task, dict) for task in proxy_tasks)
-        or [task.get("type") for task in proxy_tasks] != ["Fight", "Custom"]
+        or [task.get("type") for task in proxy_tasks] != ["Custom"] * 3
     ):
-        raise RuntimeContractError(
-            f"{proxy_path} must contain Fight navigation then the PRTS Custom check"
-        )
-    proxy_fight = proxy_tasks[0].get("params")
-    proxy_custom = proxy_tasks[1].get("params")
-    if not isinstance(proxy_fight, dict) or not isinstance(proxy_custom, dict):
-        raise RuntimeContractError(f"{proxy_path} task has no params table")
+        raise RuntimeContractError(f"{proxy_path} must contain three no-battle Custom tasks")
     stage_placeholder = "1-7"
-    if proxy_fight.get("stage") != stage_placeholder:
-        raise RuntimeContractError(
-            f"{proxy_path} stage must use the non-interactive runtime placeholder"
-        )
-    _require_exact_params(
-        proxy_path,
-        proxy_fight,
-        {
-            "medicine": 0,
-            "medicine_expire_days": 2,
-            "stone": 0,
-            "times": 1,
-            "series": 1,
-            "stage": stage_placeholder,
-        },
-        task_type="single-battle proxy-verification Fight",
-    )
-    _require_exact_params(
-        proxy_path,
-        proxy_custom,
-        {"task_names": ["UsePrtsSuccessCheck"]},
-        task_type="saved-proxy Custom check",
-    )
+    for task, names in zip(proxy_tasks, (
+        ["MaaHostProxyTerminal"], [stage_placeholder], ["StageQueue@CheckPrts"],
+    ), strict=True):
+        if not isinstance(task.get("params"), dict):
+            raise RuntimeContractError(f"{proxy_path} task has no params table")
+        _require_exact_params(proxy_path, task["params"], {"task_names": names},
+                              task_type="zero-sanity proxy Custom check")
+    from .proxy import PROXY_RESOURCE
+    resource_path = root / "config/resource/tasks/tasks.json"
+    try:
+        resource = json.loads(resource_path.read_text(encoding="utf-8"))
+        resource_files = {p.relative_to(root / "config/resource").as_posix()
+                          for p in (root / "config/resource").rglob("*") if p.is_file()}
+    except (OSError, ValueError) as exc:
+        raise RuntimeContractError(f"cannot validate proxy safety guards: {exc}") from exc
+    if resource != PROXY_RESOURCE or resource_files != {"tasks/tasks.json"}:
+        raise RuntimeContractError("proxy overlay must contain only the exact no-spend guards")
 
     sanity_path = tasks / "sanity-fight.toml"
     _, sanity = _load_fight_task(sanity_path)
@@ -399,7 +387,8 @@ def validate_farming_contracts(root: Path) -> None:
             "medicine": 0,
             "medicine_expire_days": 2,
             "stone": 0,
-            "series": 0,
+            "series": 1,
+            "times": 1,
             "stage": stage_placeholder,
         },
     )

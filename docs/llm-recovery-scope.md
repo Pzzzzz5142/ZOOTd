@@ -1,6 +1,6 @@
 # MAA unattended recovery scope
 
-Version: 7
+Version: 8
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -165,6 +165,43 @@ or unverifiable PR is prominently audited but does not erase a separately
 proved operational recovery.
 
 ## Policy-resolved game conditions
+
+### Saved proxy failures and deterministic fallback
+
+Preflight must spend no sanity: consult the account/activity/stage-scoped local
+negative ledger, then navigate and inspect the game's saved-proxy checkbox using
+the three Custom tasks and the preflight-only no-spend resource overlay. Never
+reintroduce a one-battle preflight, and never treat a skipped `Fight times=0` as
+navigation proof. Positive historical ledger entries are not required.
+
+Actual farming runs one battle per transaction. Count explicit target-stage
+two-star results, or a zero-star result tied to that execution's recognized
+mission-failed screen. A three-star settlement resets the consecutive failure
+count even if later navigation fails. Only three consecutive actual failures
+automatically quarantine the saved proxy locally. Unknown OCR, login/network
+failures, insufficient sanity, navigation errors, and a missing checkbox never
+poison the proxy ledger. Replaying the same log must not count twice. An operator
+can run `maa-host proxy-reset --stage STAGE --activity-instance ID` after
+re-recording the saved proxy; do not silently erase local quarantine yourself.
+
+Retry the same candidate before switching: first/second failure retries it,
+third quarantines it and moves on. Operational/screen failures have a separate
+three-attempt bound without a persistent instability mark. Follow the planner's
+ordered eligible activity candidates, then AP-5, then 1-7. An exhausted activity
+stage also hands its remaining sanity to AP-5/1-7. Do not invent an unrelated
+activity stage or report full success from just one completed battle. Clearing
+the tail requires a fresh clean result showing sanity below 6. Per-transaction
+timeouts, the candidate deadline, and scheduler cutoff remain in force.
+
+### Login expired / possible operator login elsewhere
+
+`登录认证已失效，请重新登录` or `GameOffline` may mean the operator logged in on
+another device and displaced this session (顶号). Record that as a possible
+cause, not a proven one; it is not automatically an APK upgrade or an unstable
+saved proxy. Inspect the actual screen and timestamps, relaunch the existing
+client session when possible, and only update the APK with evidence of an update
+requirement. If manual credentials or verification are required, report the
+scope blocker; never request or invent credentials. Preserve the failed audit.
 
 No saved proxy for a candidate stage and a stage that is not currently open are
 normal game-state limits, not infrastructure failures. For an automatic run,

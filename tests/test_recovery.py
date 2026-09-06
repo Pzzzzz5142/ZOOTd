@@ -216,7 +216,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 7,
+                    "version": 8,
                 },
             }
             seen: dict[str, object] = {}

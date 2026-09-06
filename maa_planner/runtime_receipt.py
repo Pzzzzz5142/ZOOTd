@@ -38,7 +38,7 @@ _MANAGED_CONFIG_FILES = (
     "config/tasks/sanity-fight.toml",
     "config/tasks/verify-fight.toml",
 )
-_MANAGED_CONFIG_DIRECTORIES: tuple[str, ...] = ()
+_MANAGED_CONFIG_DIRECTORIES: tuple[str, ...] = ("config/resource",)
 _RUNTIME_DIRECTORIES = ("lib", "resource", "cache")
 _OPTIONAL_RUNTIME_DIRECTORIES = ("MaaResource",)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")

@@ -1,27 +1,28 @@
-# One bounded client preflight in one MaaCore process. The single Fight is both
-# useful sanity spending and runtime proof that Core still navigates and uses
-# saved proxy play; the following Custom task re-checks PRTS on that screen.
+# Navigate and check the client's saved proxy in one MaaCore process.
+# Zero battles and zero medicine: only actual farming may spend sanity.
 client_type = "Official"
 startup = false
 closedown = false
 
 [[tasks]]
-name = "Verify one saved-proxy battle"
-type = "Fight"
+name = "Open terminal without starting a battle"
+type = "Custom"
 
 [tasks.params]
-medicine = 0
-medicine_expire_days = 2
-stone = 0
-times = 1
-series = 1
+task_names = ["MaaHostProxyTerminal"]
+
+[[tasks]]
+name = "Navigate to the requested stage"
+type = "Custom"
+
+[tasks.params]
 # Replaced with the validated planner stage only in an isolated per-run copy.
 # The committed task keeps the launcher's final, universally available fallback.
-stage = "1-7"
+task_names = ["1-7"]
 
 [[tasks]]
 name = "Read-only saved-proxy check"
 type = "Custom"
 
 [tasks.params]
-task_names = ["UsePrtsSuccessCheck"]
+task_names = ["StageQueue@CheckPrts"]
