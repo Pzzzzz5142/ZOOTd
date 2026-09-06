@@ -413,6 +413,15 @@ jq . var/state/supervisor/latest-probe.json
 
 ## 修改与运行历史
 
+### 分支与提交约定
+
+本仓库主分支为 `main`。以后在从 `main` 执行 `checkout` / `switch` 创建或切换开发分支之前，必须先处理主分支上的未提交改动和未推送提交，二选一：
+
+- 撤回本地 `main` 上的改动和未推送提交，使其与 `origin/main` 对齐；需要保留的工作先用备份分支、stash 或补丁保存，再带到开发分支继续。
+- 将应当直接进入主分支的改动提交并 `git push origin main`，确认本地与远端一致后，再创建或切换开发分支。
+
+操作前先执行 `git fetch origin`、`git status` 和 `git log --oneline origin/main..main`，确认工作区干净且主分支没有未推送提交；若本地落后远端，先用 `git pull --ff-only` 更新。不要把仅存在于本地 `main` 的提交直接作为新 PR 分支的基线，同时把这些提交留在本地 `main`：PR 经 squash 合并后，远端会生成新的提交，本地主分支就会出现 ahead/behind 分叉，无法快进更新。新开发工作应从已同步的主分支创建分支后再修改、提交。
+
 仓库在引入异常监督器前先建立了 `4baa479`（`chore: preserve validated automation baseline`）基线提交；监督器实现另存为 `3249301`（`feat: add exception-driven LLM phase supervision`），没有覆盖此前已经通过真实 E2E 的实现。后续功能和修复继续使用新的普通 commit，不 amend、不 squash、不 rebase；用 `git log --oneline --decorate` 可以恢复代码演进。managed run 启动前要求 Git 工作树为 clean；未提交的代码修改会直接阻止无人值守任务，避免执行一个无法从历史恢复的版本。恢复 agent 的 tracked 修改也必须位于 base 后代的独立分支并先提交；controller 会校验分支 ref、commit ancestry、changed paths、active checkout 和 GitHub PR URL，未声明或 dirty 的变化仍不能被记为恢复成功。
 
 代码历史与运行历史分开保存：Git 记录可执行代码和文档；`var/state/supervisor/runs/` 记录本地游戏运行证据，不提交可能含账号状态的日志。每个 run 起始事件固定当时的 Git HEAD、dirty 标志、status 哈希和 tracked diff 哈希；每个后续事件包含前一事件 SHA-256 且以 exclusive-create 写入，既不能覆盖旧阶段，也不能给同一阶段补写第二个“更好看”的终态。`latest-run.json` 只是可变索引，不是历史真相。
