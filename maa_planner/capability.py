@@ -6,7 +6,7 @@ import json
 import math
 import re
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -129,19 +129,20 @@ class CapabilityKey:
 @dataclass(frozen=True)
 class CapabilityRecord:
     key: CapabilityKey
-    status: Literal["verified", "retry", "quarantined"]
+    status: CapabilityStatus
     updated_at: datetime
     verified_at: datetime | None = None
     quarantined_at: datetime | None = None
     quarantine_reason: str | None = None
     quarantine_kind: QuarantineKind | None = None
     consecutive_failures: int = 0
+    failure_run_id: str | None = None
     success_count: int = 0
     processed_observations: tuple[str, ...] = ()
     evidence: Mapping[str, Any] = MappingProxyType({})
 
     def __post_init__(self) -> None:
-        if self.status not in ("verified", "retry", "quarantined"):
+        if self.status not in ("unknown", "verified", "retry", "quarantined"):
             raise CapabilityError(f"invalid capability status: {self.status!r}")
         if not isinstance(self.success_count, int) or isinstance(self.success_count, bool):
             raise CapabilityError("success_count must be an integer")
@@ -178,6 +179,13 @@ class CapabilityRecord:
         reason = self.quarantine_reason
         quarantine_kind = self.quarantine_kind
 
+        if self.failure_run_id is not None and (
+            not isinstance(self.failure_run_id, str)
+            or re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", self.failure_run_id) is None
+        ):
+            raise CapabilityError("invalid failure run ID")
+        if self.status == "unknown" and self.consecutive_failures != 0:
+            raise CapabilityError("unknown capability cannot have a failure streak")
         if self.status == "verified":
             if verified_at is None or self.success_count < 1:
                 raise CapabilityError("verified capability requires success evidence")
@@ -223,6 +231,7 @@ class CapabilityRecord:
             "quarantine_reason": self.quarantine_reason,
             "quarantine_kind": self.quarantine_kind,
             "consecutive_failures": self.consecutive_failures,
+            "failure_run_id": self.failure_run_id,
             "success_count": self.success_count,
             "processed_observations": list(self.processed_observations),
             "evidence": copy.deepcopy(dict(self.evidence)),
@@ -258,6 +267,7 @@ class CapabilityRecord:
                 quarantine_reason=value.get("quarantine_reason"),
                 quarantine_kind=value.get("quarantine_kind"),
                 consecutive_failures=value["consecutive_failures"],
+                failure_run_id=value.get("failure_run_id"),
                 success_count=value["success_count"],
                 processed_observations=tuple(value["processed_observations"]),
                 evidence=value.get("evidence", {}),
@@ -859,11 +869,27 @@ class CapabilityLedger:
     """Account- and activity-instance-scoped proxy-play capability ledger."""
 
     def __init__(self, records: Iterator[CapabilityRecord] | None = None) -> None:
+        self._run_id: str | None = None
         self._records: dict[CapabilityKey, CapabilityRecord] = {}
         for record in records or ():
             if record.key in self._records:
                 raise CapabilityLedgerError(f"duplicate capability key: {record.key}")
             self._records[record.key] = record
+
+    def for_run(self, run_id: str) -> "CapabilityLedger":
+        """Expire automatic failures from other runs without discarding evidence."""
+        if re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", run_id) is None:
+            raise CapabilityError("invalid failure run ID")
+        self._run_id = run_id
+        for key, record in self._records.items():
+            if (record.failure_run_id != run_id
+                    and (record.status == "retry" or record.quarantine_kind == "automatic")):
+                self._records[key] = replace(
+                    record, status="unknown", consecutive_failures=0,
+                    failure_run_id=run_id, quarantined_at=None,
+                    quarantine_reason=None, quarantine_kind=None,
+                )
+        return self
 
     def query(self, key: CapabilityKey) -> CapabilityRecord | None:
         return self._records.get(key)
@@ -968,8 +994,8 @@ class CapabilityLedger:
             )
             if identity in seen:
                 continue
-            # Once the threshold was reached, only an explicit operator reset
-            # can restore eligibility. A replay or old success must not undo it.
+            # Once the threshold is reached, stop for this run. A new run
+            # expires automatic blocks; replayed evidence cannot undo a block.
             if was_quarantined:
                 outcome = "quarantined"
                 break
@@ -982,7 +1008,7 @@ class CapabilityLedger:
                 key=key, status=status, updated_at=now,
                 verified_at=now if failures == 0 else previous.verified_at if previous else None,
                 success_count=(previous.success_count if previous else 0) + (failures == 0),
-                consecutive_failures=failures,
+                consecutive_failures=failures, failure_run_id=self._run_id,
                 quarantined_at=now if failures >= 3 else None,
                 quarantine_reason="three-consecutive-proxy-failures" if failures >= 3 else None,
                 quarantine_kind="automatic" if failures >= 3 else None,

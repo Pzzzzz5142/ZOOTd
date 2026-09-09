@@ -76,7 +76,56 @@ class ProxyLedgerTests(unittest.TestCase):
                 self.assertFalse(replay["recorded"])
                 self.assertEqual(replay["consecutive_failures"], failure)
             self.assertEqual(call("proxy-status", *key)["status"], "quarantined")
+            from unittest.mock import patch
+            with patch.dict(os.environ, {"MAA_PROXY_RUN_ID": "next-run"}):
+                self.assertEqual(call("proxy-status", *key)["status"], "unknown")
+                log.write_text(text + drop(taskid=10))
+                self.assertEqual(call("reconcile-fight", "--log", str(log), *key)["consecutive_failures"], 1)
+                self.assertEqual(call("proxy-status", *key)["status"], "retry")
             self.assertEqual(call("proxy-reset", *key)["status"], "unknown")
+
+    def test_launcher_assigns_new_supervisor_run_to_all_planner_commands(self):
+        launcher = (ROOT / "scripts/run-daily.sh").read_text()
+        assignment = 'export MAA_PROXY_RUN_ID="${supervisor_run_id}"'
+        self.assertEqual(launcher.count(assignment), 1)
+        self.assertLess(launcher.index(' supervisor-start --mode '), launcher.index(assignment))
+        self.assertLess(launcher.index(assignment), launcher.index('if [[ "${check_device}" != true ]]; then', launcher.index(assignment)))
+
+    def test_new_run_expires_automatic_failures_and_preserves_deduplication(self):
+        for failure_count in (1, 2, 3):
+            with self.subTest(failure_count=failure_count):
+                ledger = CapabilityLedger().for_run("run-a")
+                text = "".join(drop(taskid=i) for i in range(1, failure_count + 1))
+                self.reconcile(ledger, text)
+                before = ledger.query(KEY)
+                ledger.for_run("run-a")
+                self.assertEqual(ledger.query(KEY), before)
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "ledger.json"
+                    ledger.save(path)
+                    ledger = CapabilityLedger.load(path).for_run("run-b")
+                self.assertEqual(ledger.status(KEY), "unknown")
+                self.assertEqual(ledger.query(KEY).consecutive_failures, 0)
+                self.assertEqual(ledger.query(KEY).evidence, before.evidence)
+                self.assertFalse(self.reconcile(ledger, text).recorded)
+                result = self.reconcile(ledger, text + drop(taskid=10))
+                self.assertEqual(result.consecutive_failures, 1)
+                self.assertEqual(result.outcome, "retry")
+                self.assertEqual(ledger.query(KEY).failure_run_id, "run-b")
+
+    def test_new_run_expires_legacy_automatic_block_but_keeps_manual_and_success(self):
+        ledger = CapabilityLedger()
+        self.reconcile(ledger, "".join(drop(taskid=i) for i in range(3)))
+        ledger.for_run("new-run")
+        self.assertEqual(ledger.status(KEY), "unknown")
+        ledger.mark_verified(KEY, observed_at=NOW)
+        before = ledger.query(KEY)
+        ledger.for_run("next-run")
+        self.assertEqual(ledger.query(KEY), before)
+        ledger.mark_quarantined(KEY, "operator-blocked", observed_at=NOW)
+        before = ledger.query(KEY)
+        ledger.for_run("another-run")
+        self.assertEqual(ledger.query(KEY), before)
 
     def reconcile(self, ledger, text, offset=0, key=KEY):
         return ledger.reconcile(key, extract_fight_observations(text, key.stage),

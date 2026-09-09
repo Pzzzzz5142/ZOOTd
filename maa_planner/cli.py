@@ -244,9 +244,9 @@ def _annihilation_state_path(root: Path) -> Path:
 
 def _load_ledger(root: Path) -> CapabilityLedger:
     path = _ledger_path(root)
-    if not path.exists():
-        return CapabilityLedger()
-    return CapabilityLedger.load(path)
+    ledger = CapabilityLedger.load(path) if path.exists() else CapabilityLedger()
+    run_id = os.environ.get("MAA_PROXY_RUN_ID")
+    return ledger.for_run(run_id) if run_id else ledger
 
 
 def _write_decision(root: Path, decision: Decision, output: str | None) -> Path:

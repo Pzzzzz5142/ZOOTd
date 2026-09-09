@@ -1169,7 +1169,7 @@ run_stage_with_proxy_retries() {
     fi
     if [[ "${status}" == quarantined ]]; then
         stage_run_outcome=quarantined
-        info "${stage_code} is locally quarantined; use maa-host proxy-reset after repairing its saved proxy"
+        info "${stage_code} is blocked for this run (or manually quarantined); moving to the next candidate"
         return 1
     fi
 
@@ -1494,6 +1494,8 @@ fi
 supervisor_run_id="$("${planner}" supervisor-start --mode "${supervisor_mode}" 8>&- 9>&-)" ||
     die "could not start the append-only phase supervisor"
 info "phase audit: var/state/supervisor/runs/${supervisor_run_id}"
+# All planner subprocesses share this run's failure budget.
+export MAA_PROXY_RUN_ID="${supervisor_run_id}"
 
 if [[ "${check_device}" != true ]]; then
     supervisor_begin_phase runtime-readiness
