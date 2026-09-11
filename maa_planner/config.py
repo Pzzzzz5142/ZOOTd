@@ -220,9 +220,9 @@ def load_config(path: Path) -> PlannerConfig:
     when_satisfied = _string(policy_raw, "when_satisfied", "best_event")
     if when_satisfied not in {"best_event", "skip"}:
         raise ConfigError("policy.when_satisfied must be best_event or skip")
-    series = _integer(policy_raw, "series", 1)
-    if series != 1:
-        raise ConfigError("policy.series must be 1 (host-controlled single battles)")
+    series = _integer(policy_raw, "series", 0)
+    if series != 0:
+        raise ConfigError("policy.series must be 0 (MaaCore automatic consecutive battles)")
     medicine = _integer(policy_raw, "medicine", 0)
     medicine_expire_days = _integer(policy_raw, "medicine_expire_days", 2)
     stone = _integer(policy_raw, "stone", 0)

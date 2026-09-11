@@ -1187,7 +1187,7 @@ run_stage_with_proxy_retries() {
         fi
         fight_log="${log_prefix}-attempt-${attempt}-fight-${stage_code}.log"
         command_succeeded=false
-        if run_sanity_fight "${stage_code}" "${fight_log}" 900; then
+        if run_sanity_fight "${stage_code}" "${fight_log}" "$((deadline - SECONDS))"; then
             command_succeeded=true
         fi
         reconciliation=""
@@ -1195,7 +1195,7 @@ run_stage_with_proxy_retries() {
         recorded=false
         streak=0
         if reconciliation="$(timeout --signal=TERM --kill-after=2s 1m \
-            "${planner}" reconcile-fight --log "${core_log}" \
+            "${planner}" reconcile-fight --failure-unit entry --log "${core_log}" \
             --since-byte "${fight_core_offset}" "${core_log_cursor_args[@]}" \
             --stage "${stage_code}" --activity-instance "${activity_instance}" \
             8>&- 9>&- 2>/dev/null)"; then
@@ -1206,11 +1206,13 @@ run_stage_with_proxy_retries() {
         if [[ "${outcome}" == verified ]]; then
             stage_fight_completed=true
             stage_fight_evidence_log="${fight_log}"
-            failures=0
+            if [[ "${command_succeeded}" == true ]]; then
+                failures=0
+            fi
         fi
         if [[ "${outcome}" == quarantined ]]; then
             stage_run_outcome=quarantined
-            info "${stage_code} reached three consecutive observed proxy failures; moving to the next candidate"
+            info "${stage_code} reached three consecutive failed Fight tasks in this run; moving to the next candidate"
             return 1
         fi
         if [[ "${outcome}" == retry ]]; then
@@ -1225,11 +1227,11 @@ run_stage_with_proxy_retries() {
             return 0
         fi
         if [[ "${outcome}" == verified && "${command_succeeded}" == true ]]; then
-            info "${stage_code} battle succeeded; failure streak reset, continuing actual farming"
+            info "${stage_code} Fight task succeeded; failure streak reset, checking remaining sanity"
             continue
         fi
         # A clean no-battle transaction with fresh sanity means no further
-        # battle was affordable. A completed one-battle transaction is progress,
+        # battle was affordable. A completed Fight with battle results is progress,
         # NOT stage exhaustion; success above loops until there is a real tail.
         if [[ "${command_succeeded}" == true ]] &&
            fight_log_proves_sanity_below "${fight_log}" 1000000 &&

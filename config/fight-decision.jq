@@ -8,6 +8,7 @@ and .evidence.client_proxy_policy.local_quarantine_overrides == true
 and .evidence.client_proxy_policy.preflight == "custom-navigation-plus-use-prts-success-check"
 and .evidence.client_proxy_policy.preflight_consumes_sanity == false
 and .evidence.client_proxy_policy.consecutive_failure_limit == 3
+and .evidence.client_proxy_policy.failure_unit == "maa-fight-task"
 and .evidence.activity_window_policy.source == "maa-stage-activity-v2"
 and .evidence.activity_window_policy.half_open_interval == true
 and (.evidence.execution_candidates | type == "array" and length > 0)
@@ -16,8 +17,8 @@ and all(.evidence.execution_candidates[];
         and test("^[A-Za-z0-9][A-Za-z0-9@._-]{0,63}$"))
     and (.item_id | type == "string" and test("^[0-9]{1,20}$"))
     and (.activity_instance | type == "string" and test("^[0-9a-f]{24}$"))
-    and .series == 1
-    and .times_per_transaction == 1
+    and .series == 0
+    and .times_per_transaction == 2147483647
     and .medicine == 0
     and .medicine_expire_days == 2
     and .stone == 0

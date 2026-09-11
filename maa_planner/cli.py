@@ -835,7 +835,9 @@ def command_reconcile_fight(args: argparse.Namespace) -> int:
             raise ValueError("log changed during evidence read")
         observations = extract_fight_observations(text, stage)
         with _locked_ledger(root) as ledger:
-            result = ledger.reconcile(
+            reconcile = (ledger.reconcile_entry if getattr(args, "failure_unit", "battle") == "entry"
+                         else ledger.reconcile)
+            result = reconcile(
                 CapabilityKey(config.client_type, config.account, activity_instance, stage),
                 observations, log_device=metadata.st_dev, log_inode=metadata.st_ino,
                 suffix_start_byte=args.since_byte, observed_at=now,
@@ -1394,6 +1396,7 @@ def build_parser() -> argparse.ArgumentParser:
     reconcile_fight.add_argument("--since-byte", type=int, default=0)
     _add_log_cursor_arguments(reconcile_fight)
     reconcile_fight.add_argument("--now")
+    reconcile_fight.add_argument("--failure-unit", choices=("battle", "entry"), default="battle")
     reconcile_fight.set_defaults(func=command_reconcile_fight)
 
     annihilation_plan = subparsers.add_parser(

@@ -88,6 +88,8 @@ class ProxyLedgerTests(unittest.TestCase):
         launcher = (ROOT / "scripts/run-daily.sh").read_text()
         assignment = 'export MAA_PROXY_RUN_ID="${supervisor_run_id}"'
         self.assertEqual(launcher.count(assignment), 1)
+        self.assertIn('reconcile-fight --failure-unit entry', launcher)
+        self.assertIn('"$((deadline - SECONDS))"', launcher)
         self.assertLess(launcher.index(' supervisor-start --mode '), launcher.index(assignment))
         self.assertLess(launcher.index(assignment), launcher.index('if [[ "${check_device}" != true ]]; then', launcher.index(assignment)))
 
@@ -126,6 +128,30 @@ class ProxyLedgerTests(unittest.TestCase):
         before = ledger.query(KEY)
         ledger.for_run("another-run")
         self.assertEqual(ledger.query(KEY), before)
+
+    def test_native_entry_counts_once_and_keeps_all_battle_evidence(self):
+        ledger = CapabilityLedger().for_run("native-run")
+        def entry(text, offset=0):
+            return ledger.reconcile_entry(
+                KEY, extract_fight_observations(text, KEY.stage),
+                log_device=1, log_inode=2, suffix_start_byte=offset, observed_at=NOW,
+            )
+        failures = "".join(drop(taskid=i) for i in range(3))
+        self.assertEqual(entry(failures).consecutive_failures, 1)
+        self.assertEqual(len(ledger.query(KEY).processed_observations), 3)
+        self.assertFalse(entry(failures).recorded)
+        self.assertEqual(entry(failures, 10000).consecutive_failures, 2)
+        recovered = drop(taskid=10) + drop(3, taskid=11) + drop(3, taskid=12)
+        self.assertEqual(entry(recovered, 20000).outcome, "verified")
+        self.assertEqual(ledger.query(KEY).success_count, 2)
+        self.assertEqual(ledger.query(KEY).consecutive_failures, 0)
+        for number in range(1, 4):
+            result = entry(failures, 30000 + number * 10000)
+            self.assertEqual(result.consecutive_failures, number)
+        self.assertEqual(result.outcome, "quarantined")
+        ledger.for_run("next-native-run")
+        self.assertEqual(ledger.status(KEY), "unknown")
+        self.assertFalse(entry(failures, 60000).recorded)
 
     def reconcile(self, ledger, text, offset=0, key=KEY):
         return ledger.reconcile(key, extract_fight_observations(text, key.stage),
@@ -299,6 +325,7 @@ run_sanity_fight() {
     [[ "$MODE" != retry_then_success || ${counts[$code]} -lt 3 ]] || sanity=4
     [[ "$MODE" != reset || ${counts[$code]} -lt 6 ]] || sanity=4
     printf '%s\n' 'Fight Start' "Current sanity: $sanity/210" 'Fight Completed' 'AllTasksCompleted' > "$2"
+    [[ "$MODE" != partial_success_error ]] || { printf '%s\n' 'Fight Error' >> "$2"; return 1; }
     [[ "$MODE" != error_low ]] || { printf '%s\n' 'Current sanity: 4/210' 'Fight Error' >> "$2"; return 1; }
     return 0
 }
@@ -315,6 +342,7 @@ timeout() {
     code="$2"
     count=${counts[$code]:-0}
     case "$MODE" in
+        partial_success_error) outcome=verified ;;
         retry_then_success|all_failed)
             outcome=retry; streak=$count
             if (( count >= 3 )); then
@@ -343,6 +371,13 @@ timeout() {
     def test_success_resets_local_failure_streak(self):
         _, _, battles = self.run_shell('run_stage_with_proxy_retries SR-8 scope "$TEST_ROOT/test"\n', "reset")
         self.assertEqual(battles, ["SR-8"] * 6)
+
+    def test_three_failed_tasks_stop_even_with_partial_battle_success(self):
+        _, _, battles = self.run_shell(
+            'if run_stage_with_proxy_retries SR-8 scope "$TEST_ROOT/test"; then exit 99; fi\n',
+            "partial_success_error",
+        )
+        self.assertEqual(battles, ["SR-8"] * 3)
 
     def test_all_activity_candidates_then_regular_fallback(self):
         body = r'''

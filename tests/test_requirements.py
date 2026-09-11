@@ -698,7 +698,8 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertEqual(decision.candidates[0].inventory, 200)
         self.assertEqual(decision.candidates[0].deficit, 0)
         self.assertTrue(jq_accepts(ROOT / "config/fight-decision.jq", decision.as_dict()))
-        self.assertEqual(decision.series, 1)
+        self.assertEqual(decision.series, 0)
+        self.assertEqual(decision.evidence["execution_candidates"][0]["times_per_transaction"], 2147483647)
         batched = decision.as_dict()
         batched["evidence"]["execution_candidates"][0]["times_per_transaction"] = 3
         self.assertFalse(jq_accepts(ROOT / "config/fight-decision.jq", batched))

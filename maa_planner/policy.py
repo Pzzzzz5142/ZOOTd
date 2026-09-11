@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Iterable, Mapping
@@ -45,23 +44,15 @@ def _execution_candidate(
         if candidate.deficit > 0 and medicine_expire_days == 0
         else None
     )
-    # Host-controlled single-battle transactions observe every result before
-    # authorizing another one. Batching must not hide a failing saved proxy.
-    series = 1
-    efficiency = efficiencies[candidate.stage_code]
-    if drop_goal and candidate.expected_ap_per_item:
-        expected_runs = math.ceil(
-            drop_goal * candidate.expected_ap_per_item / efficiency.ap_cost
-        )
-        if expected_runs < large_deficit_runs:
-            series = 1
+    # The managed task delegates batching and continuation to MaaCore.
+    series = 0
     return {
         "stage_code": candidate.stage_code,
         "item_id": candidate.item_id,
         "activity_instance": candidate.activity_instance,
         "drop_goal": drop_goal,
         "series": series,
-        "times_per_transaction": 1,
+        "times_per_transaction": 2147483647,
         "medicine": medicine,
         "medicine_expire_days": medicine_expire_days,
         "stone": stone,
@@ -243,6 +234,7 @@ def select_farming_plan(
                     "preflight": "custom-navigation-plus-use-prts-success-check",
                     "preflight_consumes_sanity": False,
                     "consecutive_failure_limit": 3,
+                    "failure_unit": "maa-fight-task",
                 },
                 "activity_window_policy": {
                     "source": "maa-stage-activity-v2",
@@ -293,6 +285,7 @@ def select_farming_plan(
                 "preflight": "custom-navigation-plus-use-prts-success-check",
                 "preflight_consumes_sanity": False,
                 "consecutive_failure_limit": 3,
+                "failure_unit": "maa-fight-task",
             },
             "execution_candidates": execution_candidates,
             "activity_window_policy": {

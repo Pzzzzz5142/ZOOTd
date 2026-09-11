@@ -976,6 +976,46 @@ class CapabilityLedger:
     def reset(self, key: CapabilityKey) -> bool:
         return self._records.pop(key, None) is not None
 
+    def reconcile_entry(
+        self, key: CapabilityKey, observations: tuple[FightObservation, ...], *,
+        log_device: int, log_inode: int, suffix_start_byte: int,
+        observed_at: datetime | None = None,
+    ) -> FightReconciliation:
+        """Reconcile a finished MAA Fight invocation as one retry-budget entry.
+
+        Keep every battle's deduplication identity and success audit. Only the
+        last fresh battle result determines the entry's proxy-failure outcome;
+        failures recovered inside MaaCore do not consume host retry entries.
+        """
+        previous = self.query(key)
+        seen = set(previous.processed_observations if previous else ())
+        fresh = []
+        for observation in observations:
+            identity = observation.observation_id(
+                log_device=log_device, log_inode=log_inode,
+                suffix_start_byte=suffix_start_byte,
+            )
+            if identity not in seen:
+                fresh.append(observation)
+                seen.add(identity)
+        if not fresh or (previous and previous.status == "quarantined"):
+            return FightReconciliation(
+                "quarantined" if previous and previous.status == "quarantined" else "unknown",
+                False, previous.consecutive_failures if previous else 0, 0,
+            )
+        result = self.reconcile(
+            key, (fresh[-1],), log_device=log_device, log_inode=log_inode,
+            suffix_start_byte=suffix_start_byte, observed_at=observed_at,
+        )
+        record = self.query(key)
+        successes = sum(item.stars == 3 for item in fresh)
+        self._records[key] = replace(
+            record, processed_observations=tuple(sorted(seen)),
+            success_count=(previous.success_count if previous else 0) + successes,
+            verified_at=record.updated_at if successes else record.verified_at,
+        )
+        return replace(result, observations=len(fresh))
+
     def reconcile(
         self, key: CapabilityKey, observations: tuple[FightObservation, ...], *,
         log_device: int, log_inode: int, suffix_start_byte: int,

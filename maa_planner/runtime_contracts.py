@@ -387,8 +387,8 @@ def validate_farming_contracts(root: Path) -> None:
             "medicine": 0,
             "medicine_expire_days": 2,
             "stone": 0,
-            "series": 1,
-            "times": 1,
+            "series": 0,
+            "times": 2147483647,
             "stage": stage_placeholder,
         },
     )
