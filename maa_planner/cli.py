@@ -67,7 +67,8 @@ from .runtime_receipt import (
     validate_runtime_receipt,
 )
 from .runtime_task import RUNTIME_PARAMETERS, RuntimeTaskError, render_runtime_task
-from .sources import SourceError
+from .sources import HttpCache, SourceError
+from .supplies import regular_stage_availability
 from .supervisor import (
     PHASE_RESULTS,
     PHASES,
@@ -746,6 +747,23 @@ def command_select_drones(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_regular_stage_availability(args: argparse.Namespace) -> int:
+    root = Path(args.project_root).resolve()
+    config = _config(root, args.config)
+    payload = None
+    try:
+        cache = HttpCache(root / "var/cache/planner/http",
+                          allowed_hosts={"api.maa.plus"}, network_enabled=False)
+        payload, _ = cache.fetch_json(
+            "maa-activity", config.sources.maa_activity_url,
+            max_stale=timedelta(seconds=config.freshness.maa_activity_seconds),
+        )
+    except (SourceError, OSError, ValueError):
+        pass
+    print(regular_stage_availability(args.stage, utc_now(), payload, config.client_type))
+    return 0
+
+
 def command_render_runtime_task(args: argparse.Namespace) -> int:
     root = Path(args.project_root).resolve()
     destination = _project_path(root, args.output)
@@ -1372,6 +1390,10 @@ def build_parser() -> argparse.ArgumentParser:
     check_fight.add_argument("--since-byte", type=int, default=0)
     _add_log_cursor_arguments(check_fight)
     check_fight.set_defaults(func=command_check_fight)
+
+    availability = subparsers.add_parser("regular-stage-availability", help="check regular-stage calendar without device or network access")
+    availability.add_argument("--stage", required=True)
+    availability.set_defaults(func=command_regular_stage_availability)
 
     check_proxy = subparsers.add_parser("check-proxy", help="check fresh no-battle proxy screen evidence")
     check_proxy.add_argument("--log", required=True)

@@ -1155,6 +1155,7 @@ run_stage_with_proxy_retries() {
     local stage_code="$1" activity_instance="$2" log_prefix="$3"
     local failures=0 attempt=0 fight_core_offset fight_log status reconciliation
     local outcome recorded streak command_succeeded
+    local proxy_reusable=false screen_failures=0
     local deadline=$((SECONDS + 14400))
 
     stage_fight_completed=false
@@ -1176,11 +1177,24 @@ run_stage_with_proxy_retries() {
     while (( failures < 3 && SECONDS < deadline )); do
         attempt=$((attempt + 1))
         info "${stage_code} attempt ${attempt}: ${failures}/3 consecutive unsuccessful attempts"
-        if ! game_client_has_saved_proxy "${stage_code}" "${log_prefix}-attempt-${attempt}"; then
-            failures=$((failures + 1))
-            info "${stage_code} screen check unavailable (${failures}/3); no proxy-failure mark is written"
-            continue
+        if [[ "${proxy_reusable}" != true ]]; then
+            if ! game_client_has_saved_proxy "${stage_code}" "${log_prefix}-attempt-${attempt}"; then
+                failures=$((failures + 1))
+                screen_failures=$((screen_failures + 1))
+                info "${stage_code} screen check unavailable (${screen_failures}/2); no proxy-failure mark is written"
+                if (( screen_failures >= 2 )); then
+                    stage_run_outcome=screen-unavailable
+                    return 1
+                fi
+                continue
+            fi
+            screen_failures=0
+        else
+            info "${stage_code} reuses proxy proof from the preceding successful Fight"
         fi
+        # Only uninterrupted, successful farming of this candidate can reuse
+        # proof. Failed or inconclusive transactions require a fresh preflight.
+        proxy_reusable=false
         if ! capture_core_log_cursor; then
             failures=$((failures + 1))
             continue
@@ -1227,6 +1241,7 @@ run_stage_with_proxy_retries() {
             return 0
         fi
         if [[ "${outcome}" == verified && "${command_succeeded}" == true ]]; then
+            proxy_reusable=true
             info "${stage_code} Fight task succeeded; failure streak reset, checking remaining sanity"
             continue
         fi
@@ -1248,10 +1263,15 @@ run_stage_with_proxy_retries() {
 }
 
 run_regular_fallback() {
-    local stage_code fallback_stamp
+    local stage_code fallback_stamp availability
     regular_fallback_outcome=no-client-authorized-fight
     [[ "${farming_contracts_ready}" == true && "${planner_helpers_ready}" == true ]] || return 1
     for stage_code in "${regular_fallback_stages[@]}"; do
+        availability="$(timeout 1m "${planner}" regular-stage-availability --stage "${stage_code}" 8>&- 9>&- 2>/dev/null)" || availability=unknown
+        if [[ "${availability}" == closed ]]; then
+            info "${stage_code} is closed for the current game day; skipping navigation and proxy checks"
+            continue
+        fi
         fallback_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
         run_stage_with_proxy_retries "${stage_code}" "${regular_proxy_scope}" \
             "${project_root}/var/state/host/${fallback_stamp}-fallback" || true

@@ -324,6 +324,8 @@ run_sanity_fight() {
     [[ "$MODE" != tail ]] || { [[ "$code" != AP-5 ]] || sanity=10; [[ "$code" != 1-7 ]] || sanity=4; }
     [[ "$MODE" != retry_then_success || ${counts[$code]} -lt 3 ]] || sanity=4
     [[ "$MODE" != reset || ${counts[$code]} -lt 6 ]] || sanity=4
+    [[ "$MODE" != continuous || ${counts[$code]} -lt 3 ]] || sanity=4
+    [[ "$MODE" != reuse_then_failure || ${counts[$code]} -lt 4 ]] || sanity=4
     printf '%s\n' 'Fight Start' "Current sanity: $sanity/210" 'Fight Completed' 'AllTasksCompleted' > "$2"
     [[ "$MODE" != partial_success_error ]] || { printf '%s\n' 'Fight Error' >> "$2"; return 1; }
     [[ "$MODE" != error_low ]] || { printf '%s\n' 'Current sanity: 4/210' 'Fight Error' >> "$2"; return 1; }
@@ -332,6 +334,11 @@ run_sanity_fight() {
 timeout() {
     while [[ "$1" != fake-planner ]]; do shift; done
     shift
+    if [[ "$1" == regular-stage-availability ]]; then
+        if [[ "$MODE" == closed_ap && "$3" == AP-5 ]]; then printf '%s\n' closed;
+        else printf '%s\n' unknown; fi
+        return 0
+    fi
     if [[ "$1" == proxy-status ]]; then
         if [[ "$MODE" == quarantined ]]; then printf '%s\n' '{"status":"quarantined"}';
         else printf '%s\n' '{"status":"unknown"}'; fi
@@ -342,6 +349,10 @@ timeout() {
     code="$2"
     count=${counts[$code]:-0}
     case "$MODE" in
+        continuous) outcome=verified ;;
+        reuse_then_failure)
+            outcome=verified
+            if (( count == 2 )); then outcome=retry; streak=1; fi ;;
         partial_success_error) outcome=verified ;;
         retry_then_success|all_failed)
             outcome=retry; streak=$count
@@ -372,12 +383,31 @@ timeout() {
         _, _, battles = self.run_shell('run_stage_with_proxy_retries SR-8 scope "$TEST_ROOT/test"\n', "reset")
         self.assertEqual(battles, ["SR-8"] * 6)
 
+    def test_successful_continuation_reuses_screen_only_within_candidate(self):
+        _, screens, battles = self.run_shell(
+            'run_stage_with_proxy_retries SR-8 scope "$TEST_ROOT/test"\n'
+            'run_stage_with_proxy_retries SR-6 scope "$TEST_ROOT/test2"\n', "continuous")
+        self.assertEqual(screens, ["SR-8", "SR-6"])
+        self.assertEqual(battles, ["SR-8"] * 3 + ["SR-6"] * 3)
+
+    def test_failure_invalidates_reused_screen_proof(self):
+        _, screens, battles = self.run_shell(
+            'run_stage_with_proxy_retries SR-8 scope "$TEST_ROOT/test"\n', "reuse_then_failure")
+        self.assertEqual(screens, ["SR-8"] * 2)
+        self.assertEqual(battles, ["SR-8"] * 4)
+
+    def test_closed_ap_skips_screen_and_fight(self):
+        _, screens, battles = self.run_shell('if run_regular_fallback; then exit 99; fi\n', "closed_ap")
+        self.assertEqual(screens, ["1-7"])
+        self.assertEqual(battles, ["1-7"])
+
     def test_three_failed_tasks_stop_even_with_partial_battle_success(self):
-        _, _, battles = self.run_shell(
+        _, screens, battles = self.run_shell(
             'if run_stage_with_proxy_retries SR-8 scope "$TEST_ROOT/test"; then exit 99; fi\n',
             "partial_success_error",
         )
         self.assertEqual(battles, ["SR-8"] * 3)
+        self.assertEqual(screens, battles)
 
     def test_all_activity_candidates_then_regular_fallback(self):
         body = r'''
@@ -389,7 +419,7 @@ if run_regular_fallback; then exit 98; fi
         self.assertEqual(battles, [s for s in ("SR-8", "SR-6", "SR-7", "AP-5", "1-7") for _ in range(3)])
 
     def test_screen_failure_spends_nothing_and_quarantine_skips_screen(self):
-        for mode, expected in (("screen_failure", 3), ("quarantined", 0)):
+        for mode, expected in (("screen_failure", 2), ("quarantined", 0)):
             _, screens, battles = self.run_shell('if run_stage_with_proxy_retries SR-8 scope "$TEST_ROOT/test"; then exit 99; fi\n', mode)
             self.assertEqual(len(screens), expected)
             self.assertEqual(battles, [])
