@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+mkdir -p -- "${project_root}/var/run"
+exec 7>"${project_root}/var/run/codex-sdk.lock"
+flock -s 7
 sdk_python="${MAA_CODEX_SDK_PYTHON:-${project_root}/.venv/bin/python}"
 [[ -x "${sdk_python}" ]] || {
     printf 'Codex SDK environment is missing. Run %s/scripts/bootstrap.sh first.\n' \

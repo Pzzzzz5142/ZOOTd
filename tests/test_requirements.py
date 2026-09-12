@@ -507,7 +507,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertFalse((ROOT / "maa_planner/codex_exec.py").exists())
         self.assertEqual(
             (ROOT / "requirements.txt").read_text().strip(),
-            "openai-codex==0.147.0",
+            "openai-codex",
         )
         for adapter_name in (
             "maa-codex-advisor",

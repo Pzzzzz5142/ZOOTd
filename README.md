@@ -52,7 +52,7 @@ flowchart LR
 - `bin/maa-host`：统一宿主入口；`run` 转入完整启动器。
 - `bin/maa-codex-advisor` / `bin/maa-codex-supervisor`：分别承载规划 NOOP 诊断和非完整模式异常分类；两者均为只读结构化 adapter。
 - `bin/maa-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
-- `requirements.txt` / `.venv/`：固定官方 Python Codex SDK 版本及其项目本地运行环境；SDK 自带匹配版本的 Codex runtime。
+- `requirements.txt` / `.venv/`：官方 Python Codex SDK 的项目本地运行环境；不固定 SDK 版本，随最新稳定版升级，SDK 自动安装配套 Codex runtime。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
 - `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存、阶段账本及 LLM 权限边界。
 - `config/farming.toml`：活动、freshness、选关和库存目标策略。
@@ -413,6 +413,14 @@ jq . var/state/supervisor/latest-probe.json
 
 三个 adapter 都通过官方 Python SDK 直接提交显式文本输入和 JSON Schema 结构化输出。顾问/分类器继续使用 ephemeral thread、空临时工作区、`Sandbox.read_only`，并关闭执行、联网、MCP、plugin 和 subagent 能力；恢复代理则使用可 resume 的持久 thread，在项目根目录附加本地图片，使用 `Sandbox.full_access` 与 `ApprovalMode.deny_all`，但关闭无关 connector/plugin/subagent。SDK 调用使用隔离后的最小环境，并由异步超时负责取消和关闭 runtime。默认恢复预算为六小时，仍受 service 的十小时总预算约束。返回后 Python 二次验证所有字段；超时、非法输出、虚构成功或未声明的 Git 工作树变化均按失败关闭。这里的 full access 是 operator 明确选择，实际停止条件来自本仓库 scope，而不是 Codex sandbox。[Codex SDK 官方说明](https://learn.chatgpt.com/docs/codex-sdk)
 
+### Codex SDK 定期更新
+
+`requirements.txt` 只声明 `openai-codex`，不设置版本上限或固定版本。`scripts/bootstrap.sh` 与 `scripts/update-codex-sdk.sh` 都通过项目 `.venv` 中的 pip 检查并升级到最新稳定版；SDK 自带的匹配 runtime 一起升级，不依赖全局 `codex` 命令。
+
+`maa-waydroid-codex-update.timer` 每天 06:00（Asia/Shanghai，与香港同为 UTC+8）执行更新；关机错过不补跑。更新器取得 MAA 全局锁与 SDK 独占锁，任务或恢复代理忙时本次跳过，下次定时再试。三个 Codex adapter 执行期间持有 SDK 共享锁。更新后执行 `pip check`、SDK 导入和配套 runtime 版本检查，实际版本及错误写入 systemd journal；版本检查不等同于真实模型调用成功。
+
+手动更新：`./scripts/update-codex-sdk.sh`。安装并启用定时器：`./scripts/install-systemd.sh --enable`。查看记录：`journalctl --user -u maa-waydroid-codex-update.service`。
+
 ## 修改与运行历史
 
 ### 分支与提交约定
@@ -430,7 +438,7 @@ jq . var/state/supervisor/latest-probe.json
 
 ## systemd 定时托管
 
-三个 timer 固定按国服时区 `Asia/Shanghai` 运行。`06:30` 只做隔离的 Core/资源候选验证，不启动 Waydroid；游戏任务在每天 `02:00` 与 `07:30` 运行。两个游戏槽位的业务步骤完全相同：先做 Depot 和无人机决策，再运行同一份完整 `daily.toml`，刷新同一组完整规划来源，规划剿灭和材料刷图，最后只执行 Award-only。明日方舟在 `04:00` 切换游戏日，因此 02:00 清即将结束的游戏日，07:30 清重置后的新游戏日。为了不让 02:00 的旧游戏日任务跨过重置，它的刷图阶段共用 02:25 硬截止；这只缩短可用执行窗口，不改变任务顺序、无人机策略、候选回退或来源范围。剿灭只有在截止前仍容得下完整 30 分钟事务时才启动，不会为了旧周补救而中途打断一场。两个槽位都不依赖宿主当前设置的时区。安装并启用：
+四个 timer 固定按国服时区 `Asia/Shanghai` 运行。`06:00` 更新项目 Codex SDK 与配套 runtime，`06:30` 只做隔离的 Core/资源候选验证，不启动 Waydroid；游戏任务在每天 `02:00` 与 `07:30` 运行。两个游戏槽位的业务步骤完全相同：先做 Depot 和无人机决策，再运行同一份完整 `daily.toml`，刷新同一组完整规划来源，规划剿灭和材料刷图，最后只执行 Award-only。明日方舟在 `04:00` 切换游戏日，因此 02:00 清即将结束的游戏日，07:30 清重置后的新游戏日。为了不让 02:00 的旧游戏日任务跨过重置，它的刷图阶段共用 02:25 硬截止；这只缩短可用执行窗口，不改变任务顺序、无人机策略、候选回退或来源范围。剿灭只有在截止前仍容得下完整 30 分钟事务时才启动，不会为了旧周补救而中途打断一场。两个槽位都不依赖宿主当前设置的时区。安装并启用：
 
 ```bash
 ./scripts/install-systemd.sh --enable

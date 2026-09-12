@@ -362,11 +362,12 @@ case "${command_name}" in
     status)
         waydroid status
         systemctl --user status \
-            maa-waydroid-runtime-update.timer \
+            maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer \
             maa-waydroid-prereset.timer maa-waydroid.timer --no-pager || true
         ;;
     logs)
         exec journalctl \
+            --user-unit=maa-waydroid-codex-update.service \
             --user-unit=maa-waydroid-runtime-update.service \
             --user-unit=maa-waydroid-prereset.service \
             --user-unit=maa-waydroid.service --follow

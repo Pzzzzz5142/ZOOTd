@@ -12,6 +12,8 @@ install -m 0644 -- "${project_root}/systemd/maa-waydroid-prereset.service" "${un
 install -m 0644 -- "${project_root}/systemd/maa-waydroid-prereset.timer" "${unit_dir}/maa-waydroid-prereset.timer"
 install -m 0644 -- "${project_root}/systemd/maa-waydroid-runtime-update.service" "${unit_dir}/maa-waydroid-runtime-update.service"
 install -m 0644 -- "${project_root}/systemd/maa-waydroid-runtime-update.timer" "${unit_dir}/maa-waydroid-runtime-update.timer"
+install -m 0644 -- "${project_root}/systemd/maa-waydroid-codex-update.service" "${unit_dir}/maa-waydroid-codex-update.service"
+install -m 0644 -- "${project_root}/systemd/maa-waydroid-codex-update.timer" "${unit_dir}/maa-waydroid-codex-update.timer"
 if [[ -e "${unit_dir}/maa-waydroid-resource-update.timer" ||
       -e "${unit_dir}/maa-waydroid-resource-update.service" ]]; then
     systemctl --user disable --now maa-waydroid-resource-update.timer >/dev/null 2>&1 || true
@@ -36,12 +38,12 @@ if [[ "${1:-}" == --enable ]]; then
         exit 1
     }
     systemctl --user enable --now \
-        maa-waydroid-runtime-update.timer \
+        maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer \
         maa-waydroid-prereset.timer maa-waydroid.timer
     systemctl --user list-timers \
-        maa-waydroid-runtime-update.timer \
+        maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer \
         maa-waydroid-prereset.timer maa-waydroid.timer --no-pager
 else
     printf 'Timers remain disabled. Enable them after a successful manual run with:\n'
-    printf '  systemctl --user enable --now maa-waydroid-runtime-update.timer maa-waydroid-prereset.timer maa-waydroid.timer\n'
+    printf '  systemctl --user enable --now maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer maa-waydroid-prereset.timer maa-waydroid.timer\n'
 fi

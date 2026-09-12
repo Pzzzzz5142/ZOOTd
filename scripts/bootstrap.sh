@@ -4,8 +4,6 @@ set -Eeuo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 install_dir="${project_root}/.local/bin"
 version=0.7.5
-sdk_version=0.147.0
-venv_dir="${project_root}/.venv"
 
 case "$(uname -m)" in
     x86_64)
@@ -80,28 +78,4 @@ else
     printf 'Installed %s\n' "${install_dir}/maa"
 fi
 
-if [[ ! -x "${venv_dir}/bin/python" ]]; then
-    printf 'Creating the project-local Python environment.\n'
-    python3 -m venv "${venv_dir}"
-fi
-
-if "${venv_dir}/bin/python" - "${sdk_version}" <<'PY'
-import importlib.metadata
-import sys
-
-try:
-    import openai_codex  # noqa: F401
-    installed = importlib.metadata.version("openai-codex")
-except (ImportError, importlib.metadata.PackageNotFoundError):
-    raise SystemExit(1)
-raise SystemExit(installed != sys.argv[1])
-PY
-then
-    printf 'openai-codex SDK %s is already installed.\n' "${sdk_version}"
-else
-    "${venv_dir}/bin/python" -m pip install \
-        --disable-pip-version-check \
-        --requirement "${project_root}/requirements.txt"
-    printf 'Installed openai-codex SDK %s in %s\n' \
-        "${sdk_version}" "${venv_dir}"
-fi
+"${project_root}/scripts/update-codex-sdk.sh"
