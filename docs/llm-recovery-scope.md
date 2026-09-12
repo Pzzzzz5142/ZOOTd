@@ -1,6 +1,6 @@
 # MAA unattended recovery scope
 
-Version: 8
+Version: 9
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -174,24 +174,35 @@ the three Custom tasks and the preflight-only no-spend resource overlay. Never
 reintroduce a one-battle preflight, and never treat a skipped `Fight times=0` as
 navigation proof. Positive historical ledger entries are not required.
 
-Actual farming runs one battle per transaction. Count explicit target-stage
-two-star results, or a zero-star result tied to that execution's recognized
-mission-failed screen. A three-star settlement resets the consecutive failure
-count even if later navigation fails. Only three consecutive actual failures
-automatically quarantine the saved proxy locally. Unknown OCR, login/network
-failures, insufficient sanity, navigation errors, and a missing checkbox never
-poison the proxy ledger. Replaying the same log must not count twice. An operator
-can run `maa-host proxy-reset --stage STAGE --activity-instance ID` after
-re-recording the saved proxy; do not silently erase local quarantine yourself.
+Actual farming uses MaaCore automatic series (`series=0`,
+`times=2147483647`) to keep clearing sanity and permitted expiring medicine
+within one Fight invocation. Retry and reconcile at the invocation boundary,
+not by restarting Core for every battle. Count at most one proxy failure per
+invocation from its last fresh battle result: explicit target-stage two-star
+results, or a zero-star result tied to that execution's recognized
+mission-failed screen. A final three-star settlement resets the consecutive
+failure count even if later navigation fails. Only three consecutive failed
+Fight invocations quarantine the saved proxy automatically, and that quarantine
+is scoped to this launcher run ID. A new full run, including a recovery replay,
+resets automatic failure counts and allows a fresh preflight; preserve history
+and log deduplication evidence. Manual quarantine remains until explicitly reset
+by the operator.
 
-Retry the same candidate before switching: first/second failure retries it,
-third quarantines it and moves on. Operational/screen failures have a separate
+Unknown OCR, login/network failures, insufficient sanity, navigation errors,
+and a missing checkbox never poison the proxy ledger. Replaying the same log
+must not count twice. An operator can run
+`maa-host proxy-reset --stage STAGE --activity-instance ID` after re-recording
+the saved proxy; do not silently erase manual quarantine yourself.
+
+Retry the same candidate before switching: first/second Fight failure retries
+it, third quarantines it for this run and moves on. Screen checks have two
+attempts (initial plus one retry); other operational failures have a separate
 three-attempt bound without a persistent instability mark. Follow the planner's
 ordered eligible activity candidates, then AP-5, then 1-7. An exhausted activity
 stage also hands its remaining sanity to AP-5/1-7. Do not invent an unrelated
 activity stage or report full success from just one completed battle. Clearing
-the tail requires a fresh clean result showing sanity below 6. Per-transaction
-timeouts, the candidate deadline, and scheduler cutoff remain in force.
+the tail requires a fresh clean result showing sanity below 6. Per-invocation
+timeouts, the four-hour candidate deadline, and scheduler cutoff remain in force.
 
 ### Login expired / possible operator login elsewhere
 
