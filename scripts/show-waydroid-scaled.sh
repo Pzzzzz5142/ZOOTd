@@ -4,7 +4,7 @@ set -Eeuo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 display_width=1280
 display_height=720
-display_mode="${MAA_WAYDROID_DISPLAY_MODE:-auto}"
+display_mode="${ZOOTD_DISPLAY_MODE:-auto}"
 session_started=false
 gamescope_pid=""
 desktop_available=false
@@ -114,7 +114,7 @@ configure_gamescope_window() {
             '.[] | select(.pid == $pid) | .address' | head -n 1 || true)"
         if [[ "${address}" =~ ^0x[0-9a-fA-F]+$ ]]; then
             hyprctl dispatch \
-                "hl.dsp.window.tag({ tag = '+maa-waydroid', window = 'address:${address}' })" \
+                "hl.dsp.window.tag({ tag = '+zootd', window = 'address:${address}' })" \
                 >/dev/null
             hyprctl dispatch \
                 "hl.dsp.window.float({ action = 'on', window = 'address:${address}' })" \
@@ -137,7 +137,7 @@ focus_existing_scaled_window() {
     local address=""
 
     address="$(hyprctl clients -j 2>/dev/null | jq -r \
-        '.[] | select(any(.tags[]?; . == "maa-waydroid")) | .address' |
+        '.[] | select(any(.tags[]?; . == "zootd")) | .address' |
         head -n 1 || true)"
     [[ "${address}" =~ ^0x[0-9a-fA-F]+$ ]] || return 1
     hyprctl dispatch "hl.dsp.focus({ window = 'address:${address}' })" >/dev/null
@@ -153,7 +153,7 @@ case "${display_mode}" in
     auto|desktop|headless)
         ;;
     *)
-        die "invalid MAA_WAYDROID_DISPLAY_MODE=${display_mode} (expected auto, desktop, or headless)"
+        die "invalid ZOOTD_DISPLAY_MODE=${display_mode} (expected auto, desktop, or headless)"
         ;;
 esac
 

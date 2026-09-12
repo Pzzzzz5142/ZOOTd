@@ -78,12 +78,12 @@ flowchart LR
 
 ## MAA Core 与资源一致性
 
-`config/cli.toml` 固定 `resource.auto_update = false`，因为 maa-cli 的 Git 热更新会在 MAA 命令启动前直接改写 live overlay，无法先证明新资源与当前稳定 MaaCore 兼容。maa-cli 0.7.5 还会在每个任务前检查 API `tasks.json` 并最后覆盖同名 Core 任务；正式运行因此使用 `var/data/cache` 中已验证的快照，并把该快照的新鲜期设为 100 年，普通任务只装载而不联网换版。`var/cache/maa-runtime` 是指向该目录的兼容链接。项目的 `bin/maa` 会拒绝配置漂回 Git 自动更新，也会拒绝对 live 直接执行 `maa hot-update`、`install` 或 `update`。
+`config/cli.toml` 固定 `resource.auto_update = false`，因为 maa-cli 的 Git 热更新会在 MAA 命令启动前直接改写 live overlay，无法先证明新资源与当前稳定 MaaCore 兼容。maa-cli 0.7.5 还会在每个任务前检查 API `tasks.json` 并最后覆盖同名 Core 任务；正式运行因此使用 `var/data/cache` 中已验证的快照，并把该快照的新鲜期设为 100 年，普通任务只装载而不联网换版。`var/cache/maa-runtime` 是指向该目录的兼容链接。项目的 `bin/zootd-maa` 会拒绝配置漂回 Git 自动更新，也会拒绝对 live 直接执行 `maa hot-update`、`install` 或 `update`。
 
-这里并不停止 Core 或资源更新，而是把它们合并到 `./bin/maa-host runtime-update`。更新器先在 `var/cache/maa-runtime-candidate.*` 复制当前代际，再用 maa-cli 安装最新 stable MaaCore 及其配套基础资源，同时取得最新 MaaResource 和 API tasks/活动表。候选按“最新 overlay/当前 overlay/仅基础资源”和“最新 API cache/当前 API cache”从新到旧组合，以候选 Core 对 daily、Award-only、剿灭、Depot、单进程代理 preflight 及两种 Fight 逐一 dry-run，并在提升前用候选代际实际生效的 `item_index.json` 核对蓝材料配方身份；选择第一个完整通过的组合。
+这里并不停止 Core 或资源更新，而是把它们合并到 `./bin/zootd runtime-update`。更新器先在 `var/cache/maa-runtime-candidate.*` 复制当前代际，再用 maa-cli 安装最新 stable MaaCore 及其配套基础资源，同时取得最新 MaaResource 和 API tasks/活动表。候选按“最新 overlay/当前 overlay/仅基础资源”和“最新 API cache/当前 API cache”从新到旧组合，以候选 Core 对 daily、Award-only、剿灭、Depot、单进程代理 preflight 及两种 Fight 逐一 dry-run，并在提升前用候选代际实际生效的 `item_index.json` 核对蓝材料配方身份；选择第一个完整通过的组合。
 
 Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `var/data` 代际。通过候选使用 Linux 原子目录交换一次发布，随后再次验证；失败则用同一种原子交换恢复上一代。上一份完整 runtime 保存在 `var/cache/MaaRuntime.previous`。候选失败或网络不可用时不会接触 live；只要 live 自检仍通过，游戏 service 继续使用它。
 
 每次完整验证成功后，更新器把 schema 3 generation receipt 原子写入 `var/state/runtime/maa-resource.json`。它密封 `var/data` 的文件身份/大小/时间 metadata、MaaCore 主库 SHA-256、API tasks 与活动表 SHA-256，以及真正参与候选 dry-run 的 `cli.toml`、任务、profile 和受保护宿舍配置摘要；`transition` 还保留当前代际启用时间及上一代 Core/resource 身份。规划目标、阈值等运行策略不被不必要地钉死，仍由每轮静态契约独立校验。02:00、07:30 和轻量 Award E2E 只重算并比较这份 receipt，再执行一次静态契约检查；它们不再逐项启动 MaaCore dry-run。更新器会在交换 live 前先写 `status = "promoting"`，因此中途掉电也不会让新旧代际被误认成已验证。旧 schema 2 receipt 只作为现有 live 的只读迁移桥接：必须匹配两份 hot-cache 哈希和全部静态契约；下一次 06:30 成功验证后自然升级为完整 schema 3。
 
-06:30 `maa-waydroid-runtime-update.timer` 每天同时检查 stable Core 与官方 MaaResource `main`，所以不会因为资源暂时要求更高 Core 而永久钉死旧版。`./bin/maa-host install-core`、`update` 和 `runtime-update` 都进入同一个事务式更新器；`resource-update` 只是旧命令的兼容别名。手工执行 `maa-planner sync` 也只调用这个入口；正式游戏 service 已持有全局锁，所以仅刷新 HTTP 规划来源，不会在任务中途改 runtime。状态证据位于 `var/state/runtime/maa-resource.json`。
+06:30 `zootd-runtime-update.timer` 每天同时检查 stable Core 与官方 MaaResource `main`，所以不会因为资源暂时要求更高 Core 而永久钉死旧版。`./bin/zootd install-core`、`update` 和 `runtime-update` 都进入同一个事务式更新器；`resource-update` 只是旧命令的兼容别名。手工执行 `zootd-planner sync` 也只调用这个入口；正式游戏 service 已持有全局锁，所以仅刷新 HTTP 规划来源，不会在任务中途改 runtime。状态证据位于 `var/state/runtime/maa-resource.json`。

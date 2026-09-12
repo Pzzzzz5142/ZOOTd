@@ -53,13 +53,13 @@ if [[ ! -r "${cli_config}" ]] || ! awk \
 ' "${cli_config}"; then
     printf 'Refusing to run: %s violates the validated runtime-update policy.\n' \
         "${cli_config}" >&2
-    printf 'Use bin/maa-host runtime-update for validated runtime updates.\n' >&2
+    printf 'Use bin/zootd runtime-update for validated runtime updates.\n' >&2
     exit 78
 fi
 
 for argument in "$@"; do
     if [[ "${argument}" == hot-update ]]; then
-        printf 'Direct maa hot-update is disabled; use bin/maa-host runtime-update.\n' >&2
+        printf 'Direct maa hot-update is disabled; use bin/zootd runtime-update.\n' >&2
         exit 78
     fi
 done
@@ -91,7 +91,7 @@ done
 if [[ "${candidate_mode}" != true ]]; then
     case "${maa_command}" in
         install|update)
-            printf 'Direct live Core installation/update is disabled; use bin/maa-host runtime-update.\n' >&2
+            printf 'Direct live Core installation/update is disabled; use bin/zootd runtime-update.\n' >&2
             exit 78
             ;;
     esac
@@ -108,7 +108,7 @@ case "${maa_command}" in
              [[ ! -s "${MAA_CACHE_DIR}/resource/tasks/tasks.json.etag" ]]; }; then
             printf 'Refusing to run task=%s: validated MAA hot cache is incomplete.\n' \
                 "${maa_command}" >&2
-            printf 'Run bin/maa-host runtime-update first.\n' >&2
+            printf 'Run bin/zootd runtime-update first.\n' >&2
             exit 78
         fi
         ;;

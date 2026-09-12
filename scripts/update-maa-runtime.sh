@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-maa="${project_root}/bin/maa"
-planner="${project_root}/bin/maa-planner"
+maa="${project_root}/bin/zootd-maa"
+planner="${project_root}/bin/zootd-planner"
 data_dir="${project_root}/var/data"
 runtime_cache_dir="${data_dir}/cache"
 control_cache_dir="${project_root}/var/cache"
@@ -543,7 +543,7 @@ mv --help | grep -Fq -- '--exchange' ||
 [[ -x "${planner}" ]] || die "planner wrapper is not executable: ${planner}"
 
 mkdir -p -- "${control_cache_dir}" "${lock_dir}"
-exec 9>"${lock_dir}/maa-host.lock"
+exec 9>"${lock_dir}/zootd.lock"
 flock -n 9 || die "another MAA run is already active"
 
 migrate_live_cache

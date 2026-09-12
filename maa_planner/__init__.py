@@ -1,4 +1,4 @@
-"""Deterministic farming planner for the MAA Waydroid launcher."""
+"""Deterministic farming planner for the ZOOTd launcher."""
 
 from .models import Activity, ActivityStage, Decision, StageEfficiency
 

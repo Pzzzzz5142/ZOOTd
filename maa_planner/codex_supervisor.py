@@ -139,7 +139,7 @@ def run_codex_supervisor(
             timeout_variable="MAA_CODEX_SUPERVISOR_TIMEOUT_SECONDS",
             model_variable="MAA_CODEX_SUPERVISOR_MODEL",
             default_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-            workspace_prefix="maa-codex-supervisor-",
+            workspace_prefix="zootd-codex-supervisor-",
             environ=environ,
             sdk_runner=sdk_runner,
         )
@@ -167,7 +167,7 @@ def main() -> int:
         raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
         output = run_codex_supervisor(raw)
     except CodexSupervisorError as exc:
-        print(f"maa-codex-supervisor: {exc}", file=sys.stderr)
+        print(f"zootd-codex-supervisor: {exc}", file=sys.stderr)
         return 1
     sys.stdout.buffer.write(output + b"\n")
     return 0

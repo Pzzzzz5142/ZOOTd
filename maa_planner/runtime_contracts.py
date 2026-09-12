@@ -73,11 +73,11 @@ def _require_exact_params(
 
 def validate_service_contracts(root: Path) -> None:
     expected_services = {
-        "maa-waydroid-prereset.service": (
-            "ExecStart=%h/Projects/maa-waydroid/bin/maa-host run --pre-reset-slot"
+        "zootd-prereset.service": (
+            "ExecStart=%h/Projects/zootd/bin/zootd run --pre-reset-slot"
         ),
-        "maa-waydroid.service": (
-            "ExecStart=%h/Projects/maa-waydroid/bin/maa-host run --post-reset-slot"
+        "zootd.service": (
+            "ExecStart=%h/Projects/zootd/bin/zootd run --post-reset-slot"
         ),
     }
     for service_name, expected_exec in expected_services.items():

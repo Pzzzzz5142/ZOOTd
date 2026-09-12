@@ -1299,7 +1299,9 @@ def _add_log_cursor_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Deterministic MAA farming planner")
+    parser = argparse.ArgumentParser(
+        prog="zootd-planner", description="ZOOTd deterministic farming planner"
+    )
     parser.add_argument("--project-root", default=str(Path(__file__).resolve().parents[1]))
     parser.add_argument("--config", help="planner TOML path (defaults to config/farming.toml)")
     subparsers = parser.add_subparsers(dest="command", required=True)

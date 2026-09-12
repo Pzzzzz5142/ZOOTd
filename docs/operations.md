@@ -6,39 +6,51 @@
 
 ## 初始化
 
-当前 systemd 单元使用 `%h/Projects/maa-waydroid`，`config/farming.toml` 中三个 adapter 命令使用绝对路径。迁移目录或用户时要同步调整这些路径。宿主需已有 Waydroid、Docker、Python 3 和 systemd；脚本不会代装游戏或完成账号登录。SDK 登录态需预先可用，`doctor` 会检查。
+当前 systemd 单元使用 `%h/Projects/zootd`，`config/farming.toml` 中三个 adapter 命令使用绝对路径。迁移目录或用户时要同步调整这些路径。宿主需已有 Waydroid、Docker、Python 3 和 systemd；脚本不会代装游戏或完成账号登录。SDK 登录态需预先可用，`doctor` 会检查。
 
 ```bash
 ./scripts/bootstrap.sh
 sudo ./scripts/install-network-fix.sh
 sudo loginctl enable-linger "$USER"
-./bin/maa-host install-core
-./bin/maa-host doctor
-./bin/maa-planner sync
+./bin/zootd install-core
+./bin/zootd doctor
+./bin/zootd-planner sync
 ```
 
 `bootstrap.sh` 安装项目本地的 maa-cli，并在 `.venv/` 安装 `requirements.txt` 声明的官方 Python Codex SDK；SDK 包自带同版本 Codex runtime，不再依赖交互 shell 中的 `codex` 可执行文件。在 Arch 上脚本还会按需安装 `android-tools`、`gamescope` 和 `jq`。`install-network-fix.sh` 一次性写入 Docker 原生的 `ip-forward-no-drop` 配置，并把当前 `FORWARD` 策略切为 `ACCEPT`；它不会重启 Docker。已有 `/etc/docker/daemon.json` 若缺少该选项，脚本会拒绝覆盖；需保留现有字段、手动合并该选项并验证后再运行。以后 Docker 启动时不会再把转发默认策略改回 `DROP`，启动器本身只检查联网，不再动态提权改 iptables。这个 Docker 选项是宿主机级配置，适合当前单网卡的可信家庭 LAN；如果以后把机器用作多网卡/VPN 路由器，应重新审查全局转发策略。Waydroid 需先完成 `waydroid init`，并在其中安装、登录国服官服明日方舟。
 
 `doctor` 只检查依赖、无人登录条件和已提升 runtime 的 generation receipt，不再重复启动 7 个 MaaCore dry-run。所有 Core/资源/任务兼容 dry-run 只属于 `install-core`/每日 06:30 的隔离更新事务。
 
-若新 Core/资源在真实设备上发生 dry-run 无法覆盖的语义回归，可执行 `./bin/maa-host runtime-rollback`。它先用当前任务契约验证 `var/cache/MaaRuntime.previous`，再原子交换完整 runtime、复验并重新密封 receipt；失败会交换回原代际。
+若新 Core/资源在真实设备上发生 dry-run 无法覆盖的语义回归，可执行 `./bin/zootd runtime-rollback`。它先用当前任务契约验证 `var/cache/MaaRuntime.previous`，再原子交换完整 runtime、复验并重新密封 receipt；失败会交换回原代际。
 
 第一次连接时运行：
 
 ```bash
 waydroid show-full-ui
 waydroid adb connect
-./bin/maa-host probe
+./bin/zootd probe
 ```
 
 Android 弹出调试授权时勾选“始终允许”。`probe` 应确认 ADB 已授权并找到官服包。
+
+## 旧版本名称迁移
+
+项目目录和 systemd 单元前缀现统一为 `zootd`，显示模式变量为 `ZOOTD_DISPLAY_MODE`，Hyprland 窗口标签为 `zootd`。主命令为 `bin/zootd`，规划器为 `bin/zootd-planner`，诊断与恢复入口为 `bin/zootd-codex-*`，MAA 包装入口为 `bin/zootd-maa`；上游 MAA 二进制仍为 `.local/bin/maa`。GitHub 仓库名称和 Git remote 不随本地部署迁移。
+
+已有部署应在任务空闲时按以下顺序迁移；安装器只安装新单元，不会自动清理旧名称的定时器：
+
+1. 使用 `systemctl --user list-timers --all` 和 `systemctl --user list-unit-files` 确认本项目旧名称的单元，记录启用状态并备份单元文件。用 `systemctl --user disable --now <旧 timer 名称...>` 停用本项目所有旧定时器，包括仍存在的旧资源更新定时器；确认对应 service 均已退出且没有手动托管或恢复任务。
+2. 将整个项目目录移动到 `~/Projects/zootd`，保留 `.git`、`.local`、`.venv` 和 `var`。不要修改历史日志、追加式审计、live runtime 或 generation receipt 中记录的旧路径。
+3. 核对虚拟环境的激活脚本、入口 shebang 和 `pyvenv.cfg`，修正其中指向原目录的绝对路径；如需重建虚拟环境，先保留原环境和依赖版本。将 `config/host.local.env` 或外部启动配置中的旧显示模式变量改为 `ZOOTD_DISPLAY_MODE`。核对三个 adapter 命令指向新目录。
+4. 删除已备份且停用的旧项目单元文件，执行 `systemctl --user daemon-reload`，再从新项目根目录执行 `./scripts/install-systemd.sh`。先保持新定时器停用，避免重复调度或 `Persistent=true` 立即追补。
+5. 完成代码测试后，在干净工作树运行 `./scripts/run-daily.sh --dry-run`，确认迁移后的静态契约与原 generation receipt 有效；不要通过手改 receipt 绕过失败。最后按迁移前的启用状态恢复新定时器，使用 `systemctl --user list-timers --all` 核对下次触发时间。持久化 timer 的触发记录位于用户数据目录下的 `systemd/timers/stamp-<timer 名称>`；在启用新 timer 前，将原触发记录连同时间戳复制到新名称，保留真实调度历史，并确认不会意外立即追补。
 
 ## 手动运行与检查
 
 受管运行要求 Git 工作树干净；手动完整运行成功后再启用定时器。配置修改涉及受管任务时，需要重新运行 runtime 更新事务并验证 receipt，详见[开发指南](development.md)和[运行时契约](architecture.md#maa-core-与资源一致性)。
 
 ```bash
-./bin/maa-host run
+./bin/zootd run
 ```
 
 不刷理智、绕过活动来源同步和材料规划；仍会先读 Depot，以确定无人机应该加速赤金还是贸易站：
@@ -71,7 +83,7 @@ Android 弹出调试授权时勾选“始终允许”。`probe` 应确认 ADB �
 ./scripts/run-daily.sh --stage AT-8
 
 # 仅在明确需要绕过统一编排时直跑旧式 MAA task
-./bin/maa-host raw-run [task] [profile]
+./bin/zootd raw-run [task] [profile]
 ```
 
 设备、ADB、官服包或网络本身不可用时没有执行 daily 的基础条件，因此这类错误仍会让启动器失败。daily 首次执行失败或缺少完整证明时会直接重试一次；重试仍失败则返回非零，由整轮恢复机制处理。
@@ -86,32 +98,32 @@ Android 弹出调试授权时勾选“始终允许”。`probe` 应确认 ADB �
 
 两个游戏槽位使用独立 service，避免同一个 oneshot 吞掉第二次触发。02:00 service 使用 `--pre-reset-slot`（隐含 `--daily-first`）；普通启动只接受 `02:00`–`02:04`，休眠后的过时触发会直接跳过。若本轮确定性审计失败，controller 注入 `MAA_RECOVERY_ACTIVE=true` 的同一 `--pre-reset-slot` 命令可在 `02:05`–`02:24` 做一轮受控恢复重放；`02:25` 起拒绝新重放。原 service 的 50 分钟运行上限和 4 分钟清理上限仍保证在 04:00 前退出。07:30 service 使用 `--post-reset-slot` 和 `Persistent=true`，但在 `02:00`–`04:00` 保护窗内不做追补。两个入口都会先停止仍占用设备的另一个定时槽，再获取全局锁；每个槽位内部只启动一个 Waydroid 会话，并在整轮结束时统一关闭。06:30 runtime timer 使用 `Persistent=false`，避免开机补跑更新与 07:30 游戏任务争锁；候选失败只保留 live 旧版，不影响游戏 service。
 
-定时任务不要求当时已经登录 Hyprland。安装器会确认 systemd user lingering 已启用，使 user manager 和 timer 能在开机后、登录桌面前运行。`MAA_WAYDROID_DISPLAY_MODE=auto` 会在存在有效 Hyprland socket 时显示原有的 1280×720 浮动窗口；无人登录时使用 Gamescope 官方 `headless` backend 提供同尺寸 Wayland surface。该 compositor 只属于本轮 service，结束时与 Waydroid 会话一起回收，不修改 Waydroid 系统脚本或防火墙。可用 `headless` 强制无人值守模式，或用 `desktop` 在没有图形会话时明确报错。
+定时任务不要求当时已经登录 Hyprland。安装器会确认 systemd user lingering 已启用，使 user manager 和 timer 能在开机后、登录桌面前运行。`ZOOTD_DISPLAY_MODE=auto` 会在存在有效 Hyprland socket 时显示原有的 1280×720 浮动窗口；无人登录时使用 Gamescope 官方 `headless` backend 提供同尺寸 Wayland surface。该 compositor 只属于本轮 service，结束时与 Waydroid 会话一起回收，不修改 Waydroid 系统脚本或防火墙。可用 `headless` 强制无人值守模式，或用 `desktop` 在没有图形会话时明确报错。
 
-无人托管依赖以下持久条件，`./bin/maa-host doctor` 会一起检查：
+无人托管依赖以下持久条件，`./bin/zootd doctor` 会一起检查：
 
 - `loginctl show-user "$USER" -p Linger` 为 `yes`；否则未登录时 user timer 不会运行。
 - 当前运行内核存在 `/usr/lib/modules/$(uname -r)`。Arch 更新内核包但尚未重启时，Waydroid 可能因无法加载 `nft_masq` 而在网络初始化阶段失败；这不是 Docker `ip-forward-no-drop` 配置回退，重启进入新内核即可。
 - `/etc/docker/daemon.json` 持久包含 `"ip-forward-no-drop": true`；启动器不在每轮动态改防火墙。
 
 ```bash
-systemctl --user start maa-waydroid.service
-systemctl --user status maa-waydroid.service
-systemctl --user list-timers maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer maa-waydroid-prereset.timer maa-waydroid.timer
-./bin/maa-host logs
+systemctl --user start zootd.service
+systemctl --user status zootd.service
+systemctl --user list-timers zootd-codex-update.timer zootd-runtime-update.timer zootd-prereset.timer zootd.timer
+./bin/zootd logs
 ```
 
 停用：
 
 ```bash
-systemctl --user disable --now maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer maa-waydroid-prereset.timer maa-waydroid.timer
+systemctl --user disable --now zootd-codex-update.timer zootd-runtime-update.timer zootd-prereset.timer zootd.timer
 ```
 
 ## 更新与回滚
 
 ```bash
-./bin/maa-host runtime-update
-./bin/maa-host runtime-rollback
+./bin/zootd runtime-update
+./bin/zootd runtime-rollback
 ./scripts/update-codex-sdk.sh
 ```
 
@@ -119,7 +131,7 @@ Core 和资源按完整代际验证、原子提升或回滚，详见[运行时�
 
 ## 排障入口
 
-先查看 `./bin/maa-host logs`、对应 service 的 journal 和下面的阶段账本；以失败 run 的日志和证据定位问题。
+先查看 `./bin/zootd logs`、对应 service 的 journal 和下面的阶段账本；以失败 run 的日志和证据定位问题。
 
 - 初始化或无人登录失败：检查 `doctor` 输出及上面的 systemd 持久条件。
 - 活动关返回 `NOOP`：检查决策的 `reason`，对照[拒绝条件](architecture.md#fail-closed-条件)和[库存及代理策略](configuration.md)。
@@ -129,22 +141,22 @@ Core 和资源按完整代际验证、原子提升或回滚，详见[运行时�
 ## Planner 命令与审计状态
 
 ```bash
-./bin/maa-planner validate-service-readiness
-./bin/maa-planner validate-runtime-contracts
-./bin/maa-planner sync
-./bin/maa-planner sync-calendar
-./bin/maa-planner plan --offline
-./bin/maa-planner plan-annihilation --offline
+./bin/zootd-planner validate-service-readiness
+./bin/zootd-planner validate-runtime-contracts
+./bin/zootd-planner sync
+./bin/zootd-planner sync-calendar
+./bin/zootd-planner plan --offline
+./bin/zootd-planner plan-annihilation --offline
 # 仅在游戏中核对已满额后执行，YYYY-MM-DD 必须是当前游戏周的周一
-./bin/maa-planner confirm-annihilation-complete --week-start-game-day YYYY-MM-DD --reason user-verified-in-game-weekly-cap
-./bin/maa-planner capabilities
-./bin/maa-planner quarantine --stage AT-8 --reason manual-investigation
+./bin/zootd-planner confirm-annihilation-complete --week-start-game-day YYYY-MM-DD --reason user-verified-in-game-weekly-cap
+./bin/zootd-planner capabilities
+./bin/zootd-planner quarantine --stage AT-8 --reason manual-investigation
 ```
 
 自定义配置是全局参数，必须放在子命令前：
 
 ```bash
-./bin/maa-planner --config config/farming.toml plan --offline
+./bin/zootd-planner --config config/farming.toml plan --offline
 ```
 
 主要状态：

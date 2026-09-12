@@ -6,11 +6,11 @@
 
 ## 目录
 
-- `bin/maa`：使用项目隔离目录的 maa-cli 入口。
-- `bin/maa-planner`：来源同步、库存解析、规划和能力账本 CLI。
-- `bin/maa-host`：统一宿主入口；`run` 转入完整启动器。
-- `bin/maa-codex-advisor` / `bin/maa-codex-supervisor`：分别承载规划 NOOP 诊断和非完整模式异常分类；两者均为只读结构化 adapter。
-- `bin/maa-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
+- `bin/zootd-maa`：使用项目隔离目录的 maa-cli 入口。
+- `bin/zootd-planner`：来源同步、库存解析、规划和能力账本 CLI。
+- `bin/zootd`：统一宿主入口；`run` 转入完整启动器。
+- `bin/zootd-codex-advisor` / `bin/zootd-codex-supervisor`：分别承载规划 NOOP 诊断和非完整模式异常分类；两者均为只读结构化 adapter。
+- `bin/zootd-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
 - `requirements.txt` / `.venv/`：官方 Python Codex SDK 的项目本地运行环境；不固定 SDK 版本，随最新稳定版升级，SDK 自动安装配套 Codex runtime。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
 - `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存、阶段账本及 LLM 权限边界。

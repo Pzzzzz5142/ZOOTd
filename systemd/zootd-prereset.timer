@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the pre-reset MAA Waydroid task
+Description=Run the pre-reset ZOOTd task
 
 [Timer]
 # 02:00 still belongs to the game day that ends at 04:00 Asia/Shanghai.
@@ -8,7 +8,7 @@ OnCalendar=*-*-* 02:00:00 Asia/Shanghai
 Persistent=false
 AccuracySec=1s
 RandomizedDelaySec=0
-Unit=maa-waydroid-prereset.service
+Unit=zootd-prereset.service
 
 [Install]
 WantedBy=timers.target

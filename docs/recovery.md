@@ -46,13 +46,13 @@
 两个只读 adapter 的真实连通性仍用合成探针验证：
 
 ```bash
-./bin/maa-host advisor-check
-./bin/maa-host supervisor-check
+./bin/zootd advisor-check
+./bin/zootd supervisor-check
 jq . var/state/planner/latest-advisor-probe.json
 jq . var/state/supervisor/latest-probe.json
 ```
 
-两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。恢复 adapter 不提供会触碰真实游戏的合成探针；可用 `./bin/maa-host recover RUN_ID post-reset` 显式恢复一个尚未尝试恢复的失败 full run。`doctor` 只启动 SDK 自带的本地 runtime 并检查 SDK 版本与现有登录态，不自动发起模型请求。三个 adapter 固定使用项目 `.venv`，不再解析或执行外部 `codex` CLI。
+两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。恢复 adapter 不提供会触碰真实游戏的合成探针；可用 `./bin/zootd recover RUN_ID post-reset` 显式恢复一个尚未尝试恢复的失败 full run。`doctor` 只启动 SDK 自带的本地 runtime 并检查 SDK 版本与现有登录态，不自动发起模型请求。三个 adapter 固定使用项目 `.venv`，不再解析或执行外部 `codex` CLI。
 
 三个 adapter 都通过官方 Python SDK 直接提交显式文本输入和 JSON Schema 结构化输出。顾问/分类器继续使用 ephemeral thread、空临时工作区、`Sandbox.read_only`，并关闭执行、联网、MCP、plugin 和 subagent 能力；恢复代理则使用可 resume 的持久 thread，在项目根目录附加本地图片，使用 `Sandbox.full_access` 与 `ApprovalMode.deny_all`，但关闭无关 connector/plugin/subagent。SDK 调用使用隔离后的最小环境，并由异步超时负责取消和关闭 runtime。默认恢复预算为六小时，仍受 service 的十小时总预算约束。返回后 Python 二次验证所有字段；超时、非法输出、虚构成功或未声明的 Git 工作树变化均按失败关闭。这里的 full access 是 operator 明确选择，实际停止条件来自本仓库 scope，而不是 Codex sandbox。[Codex SDK 官方说明](https://learn.chatgpt.com/docs/codex-sdk)
 
@@ -60,6 +60,6 @@ jq . var/state/supervisor/latest-probe.json
 
 `requirements.txt` 只声明 `openai-codex`，不设置版本上限或固定版本。`scripts/bootstrap.sh` 与 `scripts/update-codex-sdk.sh` 都通过项目 `.venv` 中的 pip 检查并升级到最新稳定版；SDK 自带的匹配 runtime 一起升级，不依赖全局 `codex` 命令。
 
-`maa-waydroid-codex-update.timer` 每天 06:00（Asia/Shanghai，与香港同为 UTC+8）执行更新；关机错过不补跑。更新器取得 MAA 全局锁与 SDK 独占锁，任务或恢复代理忙时本次跳过，下次定时再试。三个 Codex adapter 执行期间持有 SDK 共享锁。更新后执行 `pip check`、SDK 导入和配套 runtime 版本检查，实际版本及错误写入 systemd journal；版本检查不等同于真实模型调用成功。
+`zootd-codex-update.timer` 每天 06:00（Asia/Shanghai，与香港同为 UTC+8）执行更新；关机错过不补跑。更新器取得 MAA 全局锁与 SDK 独占锁，任务或恢复代理忙时本次跳过，下次定时再试。三个 Codex adapter 执行期间持有 SDK 共享锁。更新后执行 `pip check`、SDK 导入和配套 runtime 版本检查，实际版本及错误写入 systemd journal；版本检查不等同于真实模型调用成功。
 
-手动更新：`./scripts/update-codex-sdk.sh`。安装并启用定时器：`./scripts/install-systemd.sh --enable`。查看记录：`journalctl --user -u maa-waydroid-codex-update.service`。
+手动更新：`./scripts/update-codex-sdk.sh`。安装并启用定时器：`./scripts/install-systemd.sh --enable`。查看记录：`journalctl --user -u zootd-codex-update.service`。

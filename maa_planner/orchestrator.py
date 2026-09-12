@@ -192,7 +192,7 @@ def load_source_bundle(root: Path, config: PlannerConfig, *, online: bool) -> So
 
 
 def refresh_maa_resources(root: Path, timeout_seconds: int = 600) -> tuple[bool, str]:
-    host = root / "bin/maa-host"
+    host = root / "bin/zootd"
     try:
         completed = subprocess.run(
             [str(host), "runtime-update"],
@@ -212,7 +212,7 @@ def refresh_maa_resources(root: Path, timeout_seconds: int = 600) -> tuple[bool,
 def current_core_version(root: Path) -> str:
     try:
         completed = subprocess.run(
-            [str(root / "bin/maa"), "version", "core"],
+            [str(root / "bin/zootd-maa"), "version", "core"],
             cwd=root,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

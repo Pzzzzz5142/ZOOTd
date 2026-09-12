@@ -6,20 +6,14 @@ unit_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/systemd/user"
 login_user="$(id -un)"
 
 install -d -- "${unit_dir}"
-install -m 0644 -- "${project_root}/systemd/maa-waydroid.service" "${unit_dir}/maa-waydroid.service"
-install -m 0644 -- "${project_root}/systemd/maa-waydroid.timer" "${unit_dir}/maa-waydroid.timer"
-install -m 0644 -- "${project_root}/systemd/maa-waydroid-prereset.service" "${unit_dir}/maa-waydroid-prereset.service"
-install -m 0644 -- "${project_root}/systemd/maa-waydroid-prereset.timer" "${unit_dir}/maa-waydroid-prereset.timer"
-install -m 0644 -- "${project_root}/systemd/maa-waydroid-runtime-update.service" "${unit_dir}/maa-waydroid-runtime-update.service"
-install -m 0644 -- "${project_root}/systemd/maa-waydroid-runtime-update.timer" "${unit_dir}/maa-waydroid-runtime-update.timer"
-install -m 0644 -- "${project_root}/systemd/maa-waydroid-codex-update.service" "${unit_dir}/maa-waydroid-codex-update.service"
-install -m 0644 -- "${project_root}/systemd/maa-waydroid-codex-update.timer" "${unit_dir}/maa-waydroid-codex-update.timer"
-if [[ -e "${unit_dir}/maa-waydroid-resource-update.timer" ||
-      -e "${unit_dir}/maa-waydroid-resource-update.service" ]]; then
-    systemctl --user disable --now maa-waydroid-resource-update.timer >/dev/null 2>&1 || true
-    rm -f -- "${unit_dir}/maa-waydroid-resource-update.timer" \
-        "${unit_dir}/maa-waydroid-resource-update.service"
-fi
+install -m 0644 -- "${project_root}/systemd/zootd.service" "${unit_dir}/zootd.service"
+install -m 0644 -- "${project_root}/systemd/zootd.timer" "${unit_dir}/zootd.timer"
+install -m 0644 -- "${project_root}/systemd/zootd-prereset.service" "${unit_dir}/zootd-prereset.service"
+install -m 0644 -- "${project_root}/systemd/zootd-prereset.timer" "${unit_dir}/zootd-prereset.timer"
+install -m 0644 -- "${project_root}/systemd/zootd-runtime-update.service" "${unit_dir}/zootd-runtime-update.service"
+install -m 0644 -- "${project_root}/systemd/zootd-runtime-update.timer" "${unit_dir}/zootd-runtime-update.timer"
+install -m 0644 -- "${project_root}/systemd/zootd-codex-update.service" "${unit_dir}/zootd-codex-update.service"
+install -m 0644 -- "${project_root}/systemd/zootd-codex-update.timer" "${unit_dir}/zootd-codex-update.timer"
 systemctl --user daemon-reload
 
 printf 'Installed user units in %s\n' "${unit_dir}"
@@ -38,12 +32,12 @@ if [[ "${1:-}" == --enable ]]; then
         exit 1
     }
     systemctl --user enable --now \
-        maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer \
-        maa-waydroid-prereset.timer maa-waydroid.timer
+        zootd-codex-update.timer zootd-runtime-update.timer \
+        zootd-prereset.timer zootd.timer
     systemctl --user list-timers \
-        maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer \
-        maa-waydroid-prereset.timer maa-waydroid.timer --no-pager
+        zootd-codex-update.timer zootd-runtime-update.timer \
+        zootd-prereset.timer zootd.timer --no-pager
 else
     printf 'Timers remain disabled. Enable them after a successful manual run with:\n'
-    printf '  systemctl --user enable --now maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer maa-waydroid-prereset.timer maa-waydroid.timer\n'
+    printf '  systemctl --user enable --now zootd-codex-update.timer zootd-runtime-update.timer zootd-prereset.timer zootd.timer\n'
 fi

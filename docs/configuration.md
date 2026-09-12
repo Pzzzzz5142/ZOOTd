@@ -84,7 +84,7 @@ Depot 中缺失目标材料不会被理解为零。例如 OCR 没看到当前活
 
 执行时每个 `annihilation` task 只进行一次单倍事务，并使用 MAA 原生 `stage = "Annihilation"` 路径：先尝试 PRTS“全权委托”卡；没有卡时回退到已保存的普通代理并实际跑完整场，而不是把“无卡”当成失败或跳过剿灭。因此每笔始终预留完整 30 分钟，不能按有代理卡时的短耗时缩小预算。下一次事务会重新检查客户端状态，最多连续十次。一次体力不足以打满周奖励并不是异常：已结算的 `progress` 会跨 service 保留，本轮体力耗尽后停止，后续定时任务继续补；玩家手动打出的客户端进度也以随后读到的周计数为准。剿灭不吃普通药、不碎石，只允许使用两天内到期的理智药。规划决策同时签出绝对 `execute_before`：执行器在每笔事务前重查剩余时间，并为 30 秒强制清理预留余量，因此“无活动的两小时窗口”不会扩张成十笔各 30 分钟。自动结算从本轮新增 MaaCore 日志读取客户端 OCR 的 `annihilation_weekly_process = [current, total]`；只有同一 `uuid + taskid` 随后正常完成，且 `current >= total > 0`，才原子登记客户端证明的本周 `complete`。星级、命令退出 0 或本地自行累计次数都不能替代周上限证明。MaaCore 的星级 OCR 为 `0`（未知）时仍接受独立的周进度；明确为 `2` 时先记进度，再把本游戏周标记为 `BLOCKED`，后续运行不会继续撞不稳定代理。
 
-若玩家已经手动打满，本地不一定能从随后消失的剿灭 ToDo 入口取得周进度证明；相同现象也可能来自导航或模板识别失败。自动启动器不会把两者混为一谈：没有证明就把周状态保留为未知并结束本轮剿灭阶段。玩家核对游戏后可显式运行 `maa-planner confirm-annihilation-complete --week-start-game-day YYYY-MM-DD --reason <原因>`；该命令按 `client + account + week_start_game_day` 绑定，只接受当前游戏周，记录独立的 operator confirmation 而不伪造 `1800/1800` 客户端进度，并在 `annihilation-confirmations/` 留存审计副本。确认会随周界自然失效。无论是已确认满额、状态未知还是剿灭事务失败，剿灭都不是材料刷图的门禁，主流程会继续复用或取得本轮唯一的 Depot 快照，并进行材料规划与普通刷关。跨周一 04:00 的事务和人工确认都拒绝落盘。MaaCore 日志游标绑定设备号、inode 与字节偏移，日志读取失败、轮转或缩短都不能回收旧证明。当前周状态位于 `var/state/planner/annihilation.json`，整个排程和记账路径不调用 LLM。
+若玩家已经手动打满，本地不一定能从随后消失的剿灭 ToDo 入口取得周进度证明；相同现象也可能来自导航或模板识别失败。自动启动器不会把两者混为一谈：没有证明就把周状态保留为未知并结束本轮剿灭阶段。玩家核对游戏后可显式运行 `zootd-planner confirm-annihilation-complete --week-start-game-day YYYY-MM-DD --reason <原因>`；该命令按 `client + account + week_start_game_day` 绑定，只接受当前游戏周，记录独立的 operator confirmation 而不伪造 `1800/1800` 客户端进度，并在 `annihilation-confirmations/` 留存审计副本。确认会随周界自然失效。无论是已确认满额、状态未知还是剿灭事务失败，剿灭都不是材料刷图的门禁，主流程会继续复用或取得本轮唯一的 Depot 快照，并进行材料规划与普通刷关。跨周一 04:00 的事务和人工确认都拒绝落盘。MaaCore 日志游标绑定设备号、inode 与字节偏移，日志读取失败、轮转或缩短都不能回收旧证明。当前周状态位于 `var/state/planner/annihilation.json`，整个排程和记账路径不调用 LLM。
 
 ## 客户端代理判定与不稳定隔离
 
@@ -110,10 +110,10 @@ preflight 单独加载 `config/resource/tasks/tasks.json` 的保护 overlay，�
 schema 1 中旧的“一次非三星就自动隔离”迁移为失败计数 1；显式人工隔离保持原样。自动隔离无需手动清除；下一轮会重新做零体力画面检查。人工隔离仍需显式清除，也可在重新录制代理后手动清除标记：
 
 ```bash
-./bin/maa-host proxy-status --stage SR-8 --activity-instance <活动实例ID>
-./bin/maa-host proxy-reset --stage SR-8 --activity-instance <活动实例ID>
-./bin/maa-host proxy-status --stage AP-5
-./bin/maa-planner capabilities
+./bin/zootd proxy-status --stage SR-8 --activity-instance <活动实例ID>
+./bin/zootd proxy-reset --stage SR-8 --activity-instance <活动实例ID>
+./bin/zootd proxy-status --stage AP-5
+./bin/zootd-planner capabilities
 ```
 
 活动关不传实例 ID 时只从近期来源快照解析，不额外联网；常驻 AP-5/1-7 使用固定的账号隔离命名空间。MAA 活动窗口、可导航性与本轮库存仍是活动候选的必需条件；没有正面历史记录不会阻止新活动。

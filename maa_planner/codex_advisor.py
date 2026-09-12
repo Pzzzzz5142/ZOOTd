@@ -132,7 +132,7 @@ def run_codex_advisor(
             timeout_variable="MAA_CODEX_ADVISOR_TIMEOUT_SECONDS",
             model_variable="MAA_CODEX_ADVISOR_MODEL",
             default_timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
-            workspace_prefix="maa-codex-advisor-",
+            workspace_prefix="zootd-codex-advisor-",
             environ=environ,
             sdk_runner=sdk_runner,
         )
@@ -159,7 +159,7 @@ def main() -> int:
         raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
         output = run_codex_advisor(raw)
     except CodexAdvisorError as exc:
-        print(f"maa-codex-advisor: {exc}", file=sys.stderr)
+        print(f"zootd-codex-advisor: {exc}", file=sys.stderr)
         return 1
     sys.stdout.buffer.write(output + b"\n")
     return 0

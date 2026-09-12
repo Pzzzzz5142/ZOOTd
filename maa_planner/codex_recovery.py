@@ -498,7 +498,7 @@ def main() -> int:
         raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
         output = run_codex_recovery(raw)
     except CodexRecoveryError as exc:
-        print(f"maa-codex-recovery: {exc}", file=sys.stderr)
+        print(f"zootd-codex-recovery: {exc}", file=sys.stderr)
         return 1
     sys.stdout.buffer.write(output + b"\n")
     return 0

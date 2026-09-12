@@ -3,12 +3,12 @@ Description=Run MAA through a managed Waydroid session
 Documentation=https://github.com/MaaAssistantArknights/maa-cli
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=%h/Projects/maa-waydroid/bin/maa-host
+ConditionPathExists=%h/Projects/zootd/bin/zootd
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/Projects/maa-waydroid
-ExecStart=%h/Projects/maa-waydroid/bin/maa-host run --post-reset-slot
+WorkingDirectory=%h/Projects/zootd
+ExecStart=%h/Projects/zootd/bin/zootd run --post-reset-slot
 # Complete daily + Annihilation/material planning + final Award-only phase.
 TimeoutStartSec=10h
 TimeoutStopSec=4m

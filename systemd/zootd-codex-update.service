@@ -2,12 +2,12 @@
 Description=Update the project Codex Python SDK and bundled runtime
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=%h/Projects/maa-waydroid/scripts/update-codex-sdk.sh
+ConditionPathExists=%h/Projects/zootd/scripts/update-codex-sdk.sh
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/Projects/maa-waydroid
-ExecStart=%h/Projects/maa-waydroid/scripts/update-codex-sdk.sh
+WorkingDirectory=%h/Projects/zootd
+ExecStart=%h/Projects/zootd/scripts/update-codex-sdk.sh
 TimeoutStartSec=20m
 Nice=5
 IOSchedulingClass=idle

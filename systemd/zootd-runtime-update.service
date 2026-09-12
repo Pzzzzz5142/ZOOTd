@@ -3,12 +3,12 @@ Description=Validate and atomically promote a compatible MAA runtime
 Documentation=https://github.com/MaaAssistantArknights/maa-cli
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=%h/Projects/maa-waydroid/bin/maa-host
+ConditionPathExists=%h/Projects/zootd/bin/zootd
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/Projects/maa-waydroid
-ExecStart=%h/Projects/maa-waydroid/bin/maa-host runtime-update
+WorkingDirectory=%h/Projects/zootd
+ExecStart=%h/Projects/zootd/bin/zootd runtime-update
 TimeoutStartSec=30m
 Nice=10
 IOSchedulingClass=idle

@@ -2,11 +2,11 @@
 set -Eeuo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-maa="${project_root}/bin/maa"
-planner="${project_root}/bin/maa-planner"
-advisor_adapter="${project_root}/bin/maa-codex-advisor"
-supervisor_adapter="${project_root}/bin/maa-codex-supervisor"
-recovery_adapter="${project_root}/bin/maa-codex-recovery"
+maa="${project_root}/bin/zootd-maa"
+planner="${project_root}/bin/zootd-planner"
+advisor_adapter="${project_root}/bin/zootd-codex-advisor"
+supervisor_adapter="${project_root}/bin/zootd-codex-supervisor"
+recovery_adapter="${project_root}/bin/zootd-codex-recovery"
 daily_launcher="${project_root}/scripts/run-daily.sh"
 runtime_updater="${project_root}/scripts/update-maa-runtime.sh"
 host_config="${project_root}/config/host.env"
@@ -45,11 +45,11 @@ export MAA_STATE_DIR="${project_root}/var/state"
 export MAA_LOG
 
 info() {
-    printf '[maa-host] %s\n' "$*"
+    printf '[zootd] %s\n' "$*"
 }
 
 die() {
-    printf '[maa-host] error: %s\n' "$*" >&2
+    printf '[zootd] error: %s\n' "$*" >&2
     exit 1
 }
 
@@ -89,15 +89,15 @@ probe_device() {
     local official_package=com.hypergryph.arknights
 
     if ! waydroid_session_is_running; then
-        printf '[maa-host] live probe needs a running Waydroid session\n' >&2
-        printf '[maa-host] open it with: waydroid show-full-ui\n' >&2
+        printf '[zootd] live probe needs a running Waydroid session\n' >&2
+        printf '[zootd] open it with: waydroid show-full-ui\n' >&2
         return 1
     fi
 
     waydroid adb connect || return 1
     address="$(waydroid status | awk '/^IP address:/ { print $3 ":5555"; exit }')"
     [[ -n "${address}" ]] || {
-        printf '[maa-host] Waydroid did not report an IP address\n' >&2
+        printf '[zootd] Waydroid did not report an IP address\n' >&2
         return 1
     }
 
@@ -107,11 +107,11 @@ probe_device() {
             info "ADB is authorized: ${address}"
             ;;
         unauthorized)
-            printf '[maa-host] ADB is unauthorized; accept the debugging dialog in Waydroid and select Always allow\n' >&2
+            printf '[zootd] ADB is unauthorized; accept the debugging dialog in Waydroid and select Always allow\n' >&2
             return 1
             ;;
         *)
-            printf '[maa-host] ADB device is not ready: %s (%s)\n' "${address}" "${adb_state:-missing}" >&2
+            printf '[zootd] ADB device is not ready: %s (%s)\n' "${address}" "${adb_state:-missing}" >&2
             return 1
             ;;
     esac
@@ -122,7 +122,7 @@ probe_device() {
         return 0
     fi
 
-    printf '[maa-host] official CN Arknights package is not installed: %s\n' \
+    printf '[zootd] official CN Arknights package is not installed: %s\n' \
         "${official_package}" >&2
     return 1
 }
@@ -143,8 +143,8 @@ run_raw_task() {
     check_wayland
     mkdir -p -- "${lock_dir}" "${log_dir}"
 
-    exec 9>"${lock_dir}/maa-host.lock"
-    flock -n 9 || die "another maa-host run is already active"
+    exec 9>"${lock_dir}/zootd.lock"
+    flock -n 9 || die "another zootd run is already active"
 
     if waydroid_session_is_running; then
         session_was_running=true
@@ -181,7 +181,7 @@ doctor() {
         if command -v "${command_name}" >/dev/null 2>&1; then
             info "found ${command_name}: $(command -v "${command_name}")"
         else
-            printf '[maa-host] missing: %s\n' "${command_name}" >&2
+            printf '[zootd] missing: %s\n' "${command_name}" >&2
             failed=1
         fi
     done
@@ -189,28 +189,28 @@ doctor() {
     if [[ -x "${project_root}/.local/bin/maa" ]]; then
         "${maa}" version || failed=1
     else
-        printf '[maa-host] missing project-local maa-cli\n' >&2
+        printf '[zootd] missing project-local maa-cli\n' >&2
         failed=1
     fi
 
     if [[ -x "${advisor_adapter}" ]]; then
         info "found read-only advisor adapter: ${advisor_adapter}"
     else
-        printf '[maa-host] advisor adapter is not executable: %s\n' \
+        printf '[zootd] advisor adapter is not executable: %s\n' \
             "${advisor_adapter}" >&2
         failed=1
     fi
     if [[ -x "${supervisor_adapter}" ]]; then
         info "found exception-only supervisor adapter: ${supervisor_adapter}"
     else
-        printf '[maa-host] supervisor adapter is not executable: %s\n' \
+        printf '[zootd] supervisor adapter is not executable: %s\n' \
             "${supervisor_adapter}" >&2
         failed=1
     fi
     if [[ -x "${recovery_adapter}" ]]; then
         info "found unsandboxed recovery adapter: ${recovery_adapter}"
     else
-        printf '[maa-host] recovery adapter is not executable: %s\n' \
+        printf '[zootd] recovery adapter is not executable: %s\n' \
             "${recovery_adapter}" >&2
         failed=1
     fi
@@ -218,7 +218,7 @@ doctor() {
         PYTHONPATH="${project_root}" \
             "${sdk_python}" -m maa_planner.codex_sdk doctor || failed=1
     else
-        printf '[maa-host] Codex SDK environment is unavailable: %s; run scripts/bootstrap.sh\n' \
+        printf '[zootd] Codex SDK environment is unavailable: %s; run scripts/bootstrap.sh\n' \
             "${sdk_python}" >&2
         failed=1
     fi
@@ -234,7 +234,7 @@ doctor() {
     if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" == yes ]]; then
         info "systemd user lingering is enabled for unattended timers"
     else
-        printf '[maa-host] systemd user lingering is disabled; run sudo loginctl enable-linger %s\n' \
+        printf '[zootd] systemd user lingering is disabled; run sudo loginctl enable-linger %s\n' \
             "$(id -un)" >&2
         failed=1
     fi
@@ -242,7 +242,7 @@ doctor() {
     if [[ -d "/usr/lib/modules/$(uname -r)" ]]; then
         info "running kernel has matching modules: $(uname -r)"
     else
-        printf '[maa-host] running kernel modules are unavailable for %s; reboot after the kernel upgrade\n' \
+        printf '[zootd] running kernel modules are unavailable for %s; reboot after the kernel upgrade\n' \
             "$(uname -r)" >&2
         failed=1
     fi
@@ -251,7 +251,7 @@ doctor() {
        jq -e '."ip-forward-no-drop" == true' /etc/docker/daemon.json >/dev/null 2>&1; then
         info "Docker ip-forward-no-drop is configured"
     else
-        printf '[maa-host] persistent Docker forwarding config is missing; run sudo ./scripts/install-network-fix.sh\n' >&2
+        printf '[zootd] persistent Docker forwarding config is missing; run sudo ./scripts/install-network-fix.sh\n' >&2
         failed=1
     fi
 
@@ -260,7 +260,7 @@ doctor() {
         jq -n -f "${project_root}/config/fight-decision.jq" >/dev/null || failed=1
         jq -n -f "${project_root}/config/annihilation-decision.jq" >/dev/null || failed=1
     else
-        printf '[maa-host] farming planner is not executable: %s\n' "${planner}" >&2
+        printf '[zootd] farming planner is not executable: %s\n' "${planner}" >&2
         failed=1
     fi
 
@@ -276,7 +276,7 @@ doctor() {
 
 usage() {
     cat <<'EOF'
-Usage: bin/maa-host <command> [arguments]
+Usage: bin/zootd <command> [arguments]
 
 Commands:
   run [options]         Run the unified daily launcher (automatic farming by default)
@@ -362,15 +362,15 @@ case "${command_name}" in
     status)
         waydroid status
         systemctl --user status \
-            maa-waydroid-codex-update.timer maa-waydroid-runtime-update.timer \
-            maa-waydroid-prereset.timer maa-waydroid.timer --no-pager || true
+            zootd-codex-update.timer zootd-runtime-update.timer \
+            zootd-prereset.timer zootd.timer --no-pager || true
         ;;
     logs)
         exec journalctl \
-            --user-unit=maa-waydroid-codex-update.service \
-            --user-unit=maa-waydroid-runtime-update.service \
-            --user-unit=maa-waydroid-prereset.service \
-            --user-unit=maa-waydroid.service --follow
+            --user-unit=zootd-codex-update.service \
+            --user-unit=zootd-runtime-update.service \
+            --user-unit=zootd-prereset.service \
+            --user-unit=zootd.service --follow
         ;;
     -h|--help|help)
         usage

@@ -4,11 +4,11 @@ ZOOTd 是由 MAA 和 Waydroid 驱动的罗德岛自主运营守护进程，面�
 
 定时任务每天 02:00、07:30（Asia/Shanghai）执行完整流程，支持无人登录时的 headless 模式。正常流程由确定性程序执行和验收，失败时调用 LLM 恢复代理。
 
-ZOOTd 为项目品牌名；为保持兼容，现有 `maa-waydroid` 路径、systemd 单元名、CLI 名称和运行时标识保持不变。
+项目目录和 systemd 单元统一使用 `zootd`；从旧版本升级请先按[运维手册](docs/operations.md#旧版本名称迁移)迁移部署。
 
 ## Quick Start
 
-前提：Linux + systemd，已完成 Waydroid 初始化，并安装、登录国服官服客户端；已具备项目 Codex SDK 可用的登录态。当前 systemd 单元与 adapter 路径按 `~/Projects/maa-waydroid` 配置，使用其他目录需先调整这些路径。首次部署细节见[运维手册](docs/operations.md)。
+前提：Linux + systemd，已完成 Waydroid 初始化，并安装、登录国服官服客户端；已具备项目 Codex SDK 可用的登录态。当前 systemd 单元与 adapter 路径按 `~/Projects/zootd` 配置，使用其他目录需先调整这些路径。首次部署细节见[运维手册](docs/operations.md)。
 
 在项目根目录执行：
 
@@ -16,18 +16,18 @@ ZOOTd 为项目品牌名；为保持兼容，现有 `maa-waydroid` 路径、syst
 ./scripts/bootstrap.sh
 sudo ./scripts/install-network-fix.sh
 sudo loginctl enable-linger "$USER"
-./bin/maa-host install-core
+./bin/zootd install-core
 
 waydroid show-full-ui
 waydroid adb connect
-./bin/maa-host probe
+./bin/zootd probe
 ```
 
 首次连接时，在 Android 中允许 ADB 调试并勾选“始终允许”，再确认 `probe` 通过。网络修复脚本会持久配置 Docker 转发策略，适用于当前可信家庭 LAN，详见运维手册。
 
 ```bash
-./bin/maa-host doctor
-./bin/maa-host run
+./bin/zootd doctor
+./bin/zootd run
 ```
 
 受管运行要求 Git 工作树干净。手动运行成功后，启用定时托管：

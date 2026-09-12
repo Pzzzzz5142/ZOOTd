@@ -8,7 +8,7 @@ OnCalendar=*-*-* 06:30:00 Asia/Shanghai
 Persistent=false
 AccuracySec=1m
 RandomizedDelaySec=0
-Unit=maa-waydroid-runtime-update.service
+Unit=zootd-runtime-update.service
 
 [Install]
 WantedBy=timers.target
