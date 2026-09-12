@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class CodexUpdaterTests(unittest.TestCase):
     def test_busy_run_or_recovery_prevents_environment_mutation(self):
-        for lock_name in ("maa-host.lock", "codex-sdk.lock"):
+        for lock_name in ("zootd.lock", "codex-sdk.lock"):
             with self.subTest(lock=lock_name), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 (root / "scripts").mkdir()

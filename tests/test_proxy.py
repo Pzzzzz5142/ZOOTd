@@ -59,7 +59,7 @@ class ProxyLedgerTests(unittest.TestCase):
 
             def call(*args):
                 process = subprocess.run(
-                    [str(ROOT / "bin/maa-planner"), "--project-root", directory, *args],
+                    [str(ROOT / "bin/zootd-planner"), "--project-root", directory, *args],
                     text=True, capture_output=True, timeout=10,
                 )
                 self.assertEqual(process.returncode, 0, process.stderr)

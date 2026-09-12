@@ -344,7 +344,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
         self.assertIn("adb install --no-streaming -r", recovery_scope)
         self.assertIn("complete workflow through is the highest priority", recovery_scope)
-        self.assertIn("./bin/maa-host runtime-rollback", recovery_scope)
+        self.assertIn("./bin/zootd runtime-rollback", recovery_scope)
         self.assertIn("Operational repair and Git/PR protocol", recovery_scope)
         self.assertIn("choose a local repair branch", recovery_scope)
         self.assertNotIn("client-package-update", recovery_scope)
@@ -478,8 +478,8 @@ class HighLevelRequirementTests(unittest.TestCase):
         )
 
         updater = (ROOT / "scripts/update-maa-runtime.sh").read_text()
-        wrapper = (ROOT / "bin/maa").read_text()
-        host = (ROOT / "bin/maa-host").read_text()
+        wrapper = (ROOT / "bin/zootd-maa").read_text()
+        host = (ROOT / "bin/zootd").read_text()
         self.assertIn("staging the latest stable MaaCore", updater)
         self.assertIn(
             '"${project_root}/config/infrast" "${root}/infrast"',
@@ -510,18 +510,18 @@ class HighLevelRequirementTests(unittest.TestCase):
             "openai-codex",
         )
         for adapter_name in (
-            "maa-codex-advisor",
-            "maa-codex-supervisor",
-            "maa-codex-recovery",
+            "zootd-codex-advisor",
+            "zootd-codex-supervisor",
+            "zootd-codex-recovery",
         ):
             adapter = (ROOT / "bin" / adapter_name).read_text()
             self.assertIn(".venv/bin/python", adapter)
             self.assertNotIn("codex exec", adapter)
         self.assertNotIn("MAA_CODEX_BIN", host)
 
-        runtime_timer = (ROOT / "systemd/maa-waydroid-runtime-update.timer").read_text()
-        pre_timer = (ROOT / "systemd/maa-waydroid-prereset.timer").read_text()
-        post_timer = (ROOT / "systemd/maa-waydroid.timer").read_text()
+        runtime_timer = (ROOT / "systemd/zootd-runtime-update.timer").read_text()
+        pre_timer = (ROOT / "systemd/zootd-prereset.timer").read_text()
+        post_timer = (ROOT / "systemd/zootd.timer").read_text()
         surface = (ROOT / "scripts/show-waydroid-scaled.sh").read_text()
         self.assertIn("OnCalendar=*-*-* 06:30:00 Asia/Shanghai", runtime_timer)
         self.assertIn("Persistent=false", runtime_timer)
@@ -529,10 +529,10 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn("OnCalendar=*-*-* 07:30:00 Asia/Shanghai", post_timer)
         self.assertIn("Persistent=true", post_timer)
         self.assertIn("--backend headless", surface)
-        pre_service = (ROOT / "systemd/maa-waydroid-prereset.service").read_text()
-        post_service = (ROOT / "systemd/maa-waydroid.service").read_text()
-        self.assertIn("maa-host run --pre-reset-slot", pre_service)
-        self.assertIn("maa-host run --post-reset-slot", post_service)
+        pre_service = (ROOT / "systemd/zootd-prereset.service").read_text()
+        post_service = (ROOT / "systemd/zootd.service").read_text()
+        self.assertIn("zootd run --pre-reset-slot", pre_service)
+        self.assertIn("zootd run --post-reset-slot", post_service)
         farming = tomllib.loads((ROOT / "config/farming.toml").read_text())
         self.assertEqual(farming["annihilation"]["transaction_timeout_minutes"], 30)
         self.assertEqual(

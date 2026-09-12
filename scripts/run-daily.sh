@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-maa="${project_root}/bin/maa"
-planner="${project_root}/bin/maa-planner"
+maa="${project_root}/bin/zootd-maa"
+planner="${project_root}/bin/zootd-planner"
 scaled_ui="${project_root}/scripts/show-waydroid-scaled.sh"
 host_config="${project_root}/config/host.env"
 local_config="${project_root}/config/host.local.env"
@@ -49,7 +49,7 @@ official_package=com.hypergryph.arknights
 network_test_url=https://ak.hypergryph.com
 stage=""
 farm_mode="${MAA_FARM_MODE}"
-display_mode="${MAA_WAYDROID_DISPLAY_MODE:-auto}"
+display_mode="${ZOOTD_DISPLAY_MODE:-auto}"
 dry_run=false
 check_device=false
 e2e_award=false
@@ -345,7 +345,7 @@ validate_recovery_invocation() {
             ;;
     esac
 }
-export MAA_WAYDROID_DISPLAY_MODE="${display_mode}"
+export ZOOTD_DISPLAY_MODE="${display_mode}"
 if [[ ! "${drone_threshold}" =~ ^[0-9]{1,9}$ ]]; then
     die "invalid Pure Gold drone threshold: ${drone_threshold}"
 fi
@@ -382,9 +382,9 @@ if [[ "${pre_reset_slot}" == true ]]; then
 fi
 
 [[ "${MAA_HOST_TASK}" == daily ]] ||
-    die "the unified launcher always runs task=daily; use maa-host raw-run for other tasks"
+    die "the unified launcher always runs task=daily; use zootd raw-run for other tasks"
 [[ "${MAA_HOST_PROFILE}" == waydroid ]] ||
-    die "the unified launcher always uses the validated waydroid profile; use maa-host raw-run for other profiles"
+    die "the unified launcher always uses the validated waydroid profile; use zootd raw-run for other profiles"
 
 import_desktop_environment() {
     local key value
@@ -1488,20 +1488,20 @@ if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]; then
     pre_reset_fight_deadline_epoch="$(
         TZ="${server_timezone}" date --date="$(TZ="${server_timezone}" date '+%F') 02:25:00" '+%s'
     )"
-    stop_user_service_if_active maa-waydroid.service
+    stop_user_service_if_active zootd.service
 elif [[ "${dry_run}" != true && "${post_reset_slot}" == true ]]; then
     server_minute="$(server_minute_of_day_now)"
     if (( server_minute >= 120 && server_minute < 240 )); then
         info "post-reset catch-up suppressed during the 02:00-04:00 old-game-day protection window"
         exit 0
     fi
-    stop_user_service_if_active maa-waydroid-prereset.service
+    stop_user_service_if_active zootd-prereset.service
 fi
 
 mkdir -p -- "${project_root}/var/run" "${project_root}/var/state/host"
 exec 9>"${project_root}/var/run/maa-daily.lock"
 flock -n 9 || die "another one-click daily run is already active"
-exec 8>"${project_root}/var/run/maa-host.lock"
+exec 8>"${project_root}/var/run/zootd.lock"
 flock -n 8 || die "another MAA run is already active"
 
 if [[ "${dry_run}" == true ]]; then
@@ -1523,7 +1523,7 @@ if [[ "${check_device}" != true ]]; then
     supervisor_begin_phase runtime-readiness
     info "checking the promoted runtime generation receipt without starting MaaCore"
     readiness_fields="$("${planner}" validate-service-readiness --value-only 8>&- 9>&-)" ||
-        die "live runtime/config no longer matches a validated generation; run bin/maa-host runtime-update"
+        die "live runtime/config no longer matches a validated generation; run bin/zootd runtime-update"
     IFS=$'\t' read -r receipt_mode farming_contracts_ready <<<"${readiness_fields}"
     [[ -n "${receipt_mode}" &&
        ( "${farming_contracts_ready}" == true || "${farming_contracts_ready}" == false ) ]] ||

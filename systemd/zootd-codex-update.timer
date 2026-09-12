@@ -6,7 +6,7 @@ OnCalendar=*-*-* 06:00:00 Asia/Shanghai
 Persistent=false
 AccuracySec=1m
 RandomizedDelaySec=0
-Unit=maa-waydroid-codex-update.service
+Unit=zootd-codex-update.service
 
 [Install]
 WantedBy=timers.target

@@ -216,7 +216,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 8,
+                    "version": 10,
                 },
             }
             seen: dict[str, object] = {}
@@ -237,7 +237,7 @@ class RecoveryTests(unittest.TestCase):
                     "summary": "Interactive login is required.",
                     "actions_taken": ["Inspected the login screen."],
                     "verification": {
-                        "command": "./bin/maa-host run",
+                        "command": "./bin/zootd run",
                         "exit_status": None,
                         "successful_run_id": None,
                         "audit_path": None,
@@ -409,6 +409,13 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(
                     evidence["recent_successful_full_run"]["run_id"],
                     successful_run_id,
+                )
+                scope = (repo / evidence["scope"]["path"]).read_text()
+                self.assertIn(f'Version: {evidence["scope"]["version"]}\n', scope)
+                self.assertEqual(evidence["retry_argv"], ["./bin/zootd", "run"])
+                self.assertEqual(
+                    evidence["additional_evidence_locations"]["journal_units"],
+                    ["zootd.service", "waydroid-container.service"],
                 )
                 comparison = evidence["runtime_context"]["comparison"]
                 self.assertIn("core_version", comparison["changed_fields"])

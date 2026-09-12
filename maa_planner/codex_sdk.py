@@ -380,7 +380,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         doctor()
     except CodexSDKError as exc:
-        print(f"maa-codex-sdk: {exc}", file=sys.stderr)
+        print(f"zootd-codex-sdk: {exc}", file=sys.stderr)
         return 1
     return 0
 

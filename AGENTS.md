@@ -2,9 +2,9 @@
 
 ## 项目与入口
 
-这是仅支持明日方舟国服官服的 MAA + Waydroid 启动器。先读 [README.md](README.md) 和[文档索引](docs/README.md)，再按任务阅读相关专题。
+ZOOTd 是由 MAA 和 Waydroid 驱动、仅支持明日方舟国服官服的罗德岛自主运营守护进程。先读 [README.md](README.md) 和[文档索引](docs/README.md)，再按任务阅读相关专题。
 
-- `scripts/run-daily.sh`：完整运行编排；`bin/maa-host`：宿主操作入口。
+- `scripts/run-daily.sh`：完整运行编排；`bin/zootd`：宿主操作入口。
 - `maa_planner/`：确定性规划、日志证明、缓存、审计和恢复控制。
 - `config/`：受管任务与策略；`systemd/`：用户级定时单元。
 - `var/`、`.local/`、`.venv/`：忽略的本地运行状态和依赖，不提交日志、账号状态或凭据。

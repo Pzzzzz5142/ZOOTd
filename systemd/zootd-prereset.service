@@ -1,14 +1,14 @@
 [Unit]
-Description=Run the pre-reset MAA Waydroid task with daily first
+Description=Run the pre-reset ZOOTd task with daily first
 Documentation=https://github.com/MaaAssistantArknights/maa-cli
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=%h/Projects/maa-waydroid/bin/maa-host
+ConditionPathExists=%h/Projects/zootd/bin/zootd
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/Projects/maa-waydroid
-ExecStart=%h/Projects/maa-waydroid/bin/maa-host run --pre-reset-slot
+WorkingDirectory=%h/Projects/zootd
+ExecStart=%h/Projects/zootd/bin/zootd run --pre-reset-slot
 # Initial starts are guarded to 02:00-02:04; scoped recovery may replay before
 # 02:25. Force cleanup before the 04:00 reset.
 TimeoutStartSec=50m

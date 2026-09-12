@@ -4,7 +4,7 @@ set -Eeuo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 venv_dir="${project_root}/.venv"
 mkdir -p -- "${project_root}/var/run"
-exec 9>"${project_root}/var/run/maa-host.lock"
+exec 9>"${project_root}/var/run/zootd.lock"
 exec 8>"${project_root}/var/run/codex-sdk.lock"
 if ! flock -n 9 || ! flock -n 8; then
     printf 'MAA or Codex is active; skipping this SDK update.\n'

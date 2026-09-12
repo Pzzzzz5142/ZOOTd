@@ -319,11 +319,11 @@ def _failed_run(
 
 def _retry_argv(slot: str) -> list[str]:
     if slot == "pre-reset":
-        return ["./bin/maa-host", "run", "--pre-reset-slot"]
+        return ["./bin/zootd", "run", "--pre-reset-slot"]
     if slot == "post-reset":
-        return ["./bin/maa-host", "run", "--post-reset-slot"]
+        return ["./bin/zootd", "run", "--post-reset-slot"]
     if slot == "manual":
-        return ["./bin/maa-host", "run"]
+        return ["./bin/zootd", "run"]
     raise RecoveryError(f"invalid recovery slot: {slot}")
 
 
@@ -556,7 +556,7 @@ def _retained_previous_runtime(
             "resource_commit": transition.get("previous_resource_commit"),
         }
     )
-    maa = root / "bin/maa"
+    maa = root / "bin/zootd-maa"
     if not maa.is_file() or not os.access(maa, os.X_OK):
         result["core_version"] = transition.get("previous_core_version")
         result["version_probe"] = "unavailable"
@@ -757,14 +757,14 @@ def _incident_evidence(
                 Path.home() / ".local/share/waydroid/data/anr"
             ),
             "journal_units": [
-                "maa-waydroid.service",
+                "zootd.service",
                 "waydroid-container.service",
             ],
         },
         "scope": {
             "path": "docs/llm-recovery-scope.md",
             "sha256": sha256_bytes(scope_bytes),
-            "version": 8,
+            "version": 10,
         },
         "controller_repository": controller_repository,
         "repair_policy": {
@@ -815,8 +815,8 @@ def _incident_evidence(
             "allow_downgrade": False,
         },
         "runtime_recovery_policy": {
-            "transactional_update_command": "./bin/maa-host runtime-update",
-            "validated_rollback_command": "./bin/maa-host runtime-rollback",
+            "transactional_update_command": "./bin/zootd runtime-update",
+            "validated_rollback_command": "./bin/zootd runtime-rollback",
             "manual_runtime_receipt_edits": False,
         },
         "controller_success_requirement": (

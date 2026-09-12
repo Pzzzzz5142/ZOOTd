@@ -138,7 +138,7 @@ class HttpCache:
         )
         headers = {
             "Accept": accept,
-            "User-Agent": "maa-waydroid-planner/1 (+local unattended launcher)",
+            "User-Agent": "zootd-planner/1 (+local unattended launcher)",
         }
         if request_body is not None:
             headers["Content-Type"] = "application/json"

@@ -1,6 +1,6 @@
-# MAA unattended recovery scope
+# ZOOTd unattended recovery scope
 
-Version: 9
+Version: 10
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -76,7 +76,7 @@ The agent may use unrestricted user-level shell commands and network access to:
 - retry downloads and endpoints with bounded backoff, consult public technical
   documentation through shell network tools, and run the supplied full
   launcher repeatedly;
-- run `./bin/maa-host runtime-rollback` to validate and atomically restore the
+- run `./bin/zootd runtime-rollback` to validate and atomically restore the
   retained previous complete runtime when fresh evidence points to an upgrade
   regression; use only the transactional updater/rollback entrypoints to
   change a runtime receipt;
@@ -191,7 +191,7 @@ by the operator.
 Unknown OCR, login/network failures, insufficient sanity, navigation errors,
 and a missing checkbox never poison the proxy ledger. Replaying the same log
 must not count twice. An operator can run
-`maa-host proxy-reset --stage STAGE --activity-instance ID` after re-recording
+`zootd proxy-reset --stage STAGE --activity-instance ID` after re-recording
 the saved proxy; do not silently erase manual quarantine yourself.
 
 Retry the same candidate before switching: first/second Fight failure retries

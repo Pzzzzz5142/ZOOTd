@@ -21,7 +21,7 @@ class RuntimeUpdaterTests(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
 
     def _make_fake_maa(self, root: Path) -> None:
-        fake = root / "bin/maa"
+        fake = root / "bin/zootd-maa"
         shutil.copy2(
             self.project_root / "var/data/resource/item_index.json",
             root / "config/item-index.fixture.json",
@@ -115,8 +115,8 @@ esac
             )
             (root / "scripts/update-maa-runtime.sh").chmod(0o755)
             shutil.copytree(self.project_root / "config", root / "config")
-            shutil.copy2(self.project_root / "bin/maa-planner", root / "bin/maa-planner")
-            (root / "bin/maa-planner").chmod(0o755)
+            shutil.copy2(self.project_root / "bin/zootd-planner", root / "bin/zootd-planner")
+            (root / "bin/zootd-planner").chmod(0o755)
             shutil.copytree(self.project_root / "maa_planner", root / "maa_planner")
             self._make_fake_maa(root)
             remote, candidate_commit = self._make_resource_remote(root)

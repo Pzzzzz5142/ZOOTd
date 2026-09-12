@@ -60,7 +60,7 @@ value_url = "https://backend.yituliu.cn/item/v7/value"
 # An advisor reads an evidence JSON object on stdin and returns the schema
 # documented in docs/recovery.md. It is advisory-only and can never authorize execution.
 enabled = true
-command = ["/home/pzzzzz/Projects/maa-waydroid/bin/maa-codex-advisor"]
+command = ["/home/pzzzzz/Projects/zootd/bin/zootd-codex-advisor"]
 timeout_seconds = 60
 
 [supervisor]
@@ -71,10 +71,10 @@ timeout_seconds = 60
 # verified.
 enabled = true
 required_on_exception = true
-command = ["/home/pzzzzz/Projects/maa-waydroid/bin/maa-codex-supervisor"]
+command = ["/home/pzzzzz/Projects/zootd/bin/zootd-codex-supervisor"]
 timeout_seconds = 90
 recovery_enabled = true
-recovery_command = ["/home/pzzzzz/Projects/maa-waydroid/bin/maa-codex-recovery"]
+recovery_command = ["/home/pzzzzz/Projects/zootd/bin/zootd-codex-recovery"]
 recovery_timeout_seconds = 21600
 
 # Optional per-item overrides for the dynamic target of 200. Missing observed
