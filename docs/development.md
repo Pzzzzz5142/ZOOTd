@@ -48,16 +48,16 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
 
 ### 分支与提交约定
 
-本仓库主分支为 `main`。每次开发，包括代码、配置和文档修改，都必须在独立分支完成，并提交、推送、创建 PR。PR 合并后切回 `main` 并拉取远端，交付时必须保持工作区干净且本地 `main` 与 `origin/main` 一致。除用户明确指定本次例外外，不直接在 `main` 修改、提交或推送。
+本仓库主分支为 `main`。每次开发，包括代码、配置和文档修改，都必须在独立分支完成，并提交、推送、创建 PR。PR 只允许 squash merge；合并后切回 `main` 并用 `git pull --rebase` 同步远端，交付时必须保持工作区干净且本地 `main` 与 `origin/main` 一致。除用户明确指定本次例外外，不直接在 `main` 修改、提交或推送。
 
 标准流程：
 
-1. 执行 `git fetch origin` 和 `git status`，确认没有遗留改动；切回 `main` 后检查 `git log --oneline origin/main..main`，确认没有未推送提交，再执行 `git pull --ff-only`。
+1. 执行 `git fetch origin` 和 `git status`，确认没有遗留改动；切回 `main` 后检查 `git log --oneline origin/main..main`，确认没有未推送提交，再执行 `git pull --rebase`。
 2. 用 `git switch -c <开发分支>` 创建本次工作的独立分支，再开始修改。
 3. 完成相关验证，检查 diff，将本次改动明确加入暂存区并创建普通 commit。每次改动都要提交，不能以 dirty 工作区结束任务，也不能仅为绕过运行检查而提交未经核对的改动。
 4. 执行 `git push -u origin <开发分支>`，通过 `gh pr create` 创建面向 `main` 的 PR，说明最终行为和验证结果。
-5. 确认 PR 检查和仓库合并条件满足后，执行 `gh pr merge <PR编号> --merge`，保留已有提交历史；不 amend、不 squash、不 rebase，不 force-push，也不绕过检查或分支保护。
-6. 确认 PR 已合并后执行 `git switch main`、`git pull --ff-only`，再用 `git status --short` 和 `git rev-list --left-right --count main...origin/main` 确认无未提交文件、提交差异为 `0 0`。
+5. 确认 PR 检查和仓库合并条件满足后，执行 `gh pr merge <PR编号> --squash`，将本次 PR 的改动合为一个提交进入 `main`。不使用 merge commit 或 GitHub 的 rebase merge；本地 `git pull --rebase` 用于同步，与 PR 合并方式是不同操作。不擅自 amend 或改写其他已有提交，不 force-push，也不绕过检查或分支保护。
+6. 确认 PR 已合并后执行 `git switch main`、`git pull --rebase`，再用 `git status --short` 和 `git rev-list --left-right --count main...origin/main` 确认无未提交文件、提交差异为 `0 0`。
 
 若发现遗留的未提交改动或本地 `main` 上未推送的提交，先用备份分支、stash 或补丁妥善保存，再整理到对应开发分支；不得删除或混入无关工作。不要把仅存在于本地 `main` 的提交带入新 PR 分支后又留在本地 `main`，以免后续远端合并导致主分支分叉。遇到凭据、网络或 PR 检查阻塞时，保留已验证的本地提交和干净工作区，明确报告尚未完成的 push、PR 或合并步骤，不声称流程已完成。
 
