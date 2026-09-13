@@ -10,6 +10,9 @@ from typing import Any, Mapping
 from .inventory import InventorySnapshot
 
 
+CRAFTABLE_CREDIT_PERCENT = 80
+
+
 class MaterialRecipeError(ValueError):
     """Raised when a blue-material equivalence recipe is unsafe or malformed."""
 
@@ -39,6 +42,7 @@ class BlueEquivalentInventory:
     t2_from_t1: int
     t2_available: int
     craftable_t3: int
+    credited_craftable_t3: int
     effective_t3: int
     recipe_applied: bool
 
@@ -49,6 +53,8 @@ class BlueEquivalentInventory:
             "missing_lower_tiers_are_zero_credit": True,
             "workshop_byproducts_included": False,
             "crafting_performed": False,
+            "white_materials_included": False,
+            "craftable_credit_percent": CRAFTABLE_CREDIT_PERCENT,
         }
 
 
@@ -198,15 +204,18 @@ def blue_equivalent_inventory(
             t2_from_t1=0,
             t2_available=0,
             craftable_t3=0,
+            credited_craftable_t3=0,
             effective_t3=direct_t3,
             recipe_applied=False,
         )
 
     direct_t2 = snapshot.quantity(chain.t2_item_id)
     direct_t1 = snapshot.quantity(chain.t1_item_id)
-    t2_from_t1 = (direct_t1 or 0) // chain.t1_per_t2
-    t2_available = (direct_t2 or 0) + t2_from_t1
+    # White materials remain observable for audit but never earn stock credit.
+    t2_from_t1 = 0
+    t2_available = direct_t2 or 0
     craftable_t3 = t2_available // chain.t2_per_t3
+    credited_craftable_t3 = craftable_t3 * CRAFTABLE_CREDIT_PERCENT // 100
     return BlueEquivalentInventory(
         t3_item_id=t3_item_id,
         direct_t3=direct_t3,
@@ -215,6 +224,7 @@ def blue_equivalent_inventory(
         t2_from_t1=t2_from_t1,
         t2_available=t2_available,
         craftable_t3=craftable_t3,
-        effective_t3=direct_t3 + craftable_t3,
+        credited_craftable_t3=credited_craftable_t3,
+        effective_t3=direct_t3 + credited_craftable_t3,
         recipe_applied=True,
     )

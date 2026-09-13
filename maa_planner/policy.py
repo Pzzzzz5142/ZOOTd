@@ -5,7 +5,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Iterable, Mapping
 
 from .inventory import InventorySnapshot
-from .materials import BlueMaterialChain, blue_equivalent_inventory
+from .materials import (
+    CRAFTABLE_CREDIT_PERCENT,
+    BlueMaterialChain,
+    blue_equivalent_inventory,
+)
 from .models import (
     Activity,
     CandidateReport,
@@ -91,7 +95,9 @@ def select_farming_plan(
     equivalence_evidence = {
         "unit": "t3-blue-material",
         "configured_item_ids": sorted(material_chains),
-        "lower_tiers": "deterministic-workshop-recipes-only",
+        "lower_tiers": "green-only-deterministic-workshop-recipes",
+        "white_materials_included": False,
+        "craftable_credit_percent": CRAFTABLE_CREDIT_PERCENT,
         "missing_lower_tiers": "zero-credit",
         "workshop_byproducts_included": False,
         "crafting_performed": False,
@@ -182,7 +188,7 @@ def select_farming_plan(
                 else:
                     report.inventory = equivalent.effective_t3
                     report.direct_inventory = equivalent.direct_t3
-                    report.craftable_equivalent = equivalent.craftable_t3
+                    report.craftable_equivalent = equivalent.credited_craftable_t3
                     report.inventory_breakdown = equivalent.as_dict()
                     effective = max(0, equivalent.effective_t3 - target.reserved)
                     report.deficit = max(0, target.target - effective)

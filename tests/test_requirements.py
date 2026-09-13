@@ -668,8 +668,7 @@ class HighLevelRequirementTests(unittest.TestCase):
             activities=activities,
             efficiencies=efficiencies,
             inventory=InventorySnapshot(
-                # 150 blue + floor((245 green + floor(15 / 3)) / 5)
-                # = 200 blue-equivalent rocks.
+                # White materials are excluded; 49 craftable blues earn 39 credit.
                 items={"30013": 150, "30012": 245, "30011": 15},
                 captured_at=now,
                 complete=True,
@@ -694,15 +693,49 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertEqual(decision.medicine_expire_days, 2)
         self.assertEqual(decision.stone, 0)
         self.assertEqual(decision.candidates[0].direct_inventory, 150)
-        self.assertEqual(decision.candidates[0].craftable_equivalent, 50)
-        self.assertEqual(decision.candidates[0].inventory, 200)
-        self.assertEqual(decision.candidates[0].deficit, 0)
+        self.assertEqual(decision.candidates[0].craftable_equivalent, 39)
+        self.assertEqual(decision.candidates[0].inventory, 189)
+        self.assertEqual(decision.candidates[0].deficit, 11)
         self.assertTrue(jq_accepts(ROOT / "config/fight-decision.jq", decision.as_dict()))
         self.assertEqual(decision.series, 0)
         self.assertEqual(decision.evidence["execution_candidates"][0]["times_per_transaction"], 2147483647)
         batched = decision.as_dict()
         batched["evidence"]["execution_candidates"][0]["times_per_transaction"] = 3
         self.assertFalse(jq_accepts(ROOT / "config/fight-decision.jq", batched))
+
+    def test_discounted_green_stock_prioritizes_sr8_and_ignores_white(self) -> None:
+        activity = make_activity(stages=(
+            ActivityStage("SR-8", "30043"),
+            ActivityStage("SR-6", "31073"),
+        ))
+        for white in (None, 0, 233, 999999):
+            with self.subTest(white=white):
+                items = {"30043": 36, "30042": 602, "31073": 237}
+                if white is not None:
+                    items["30041"] = white
+                decision = select_plan(
+                    activity=activity,
+                    inventory=InventorySnapshot(
+                        items=items, captured_at=START, complete=True,
+                    ),
+                    targets={item: StockTarget(item, low=0, target=200)
+                             for item in ("30043", "31073")},
+                    efficiencies={
+                        "SR-8": efficiency("SR-8", "30043", 27.0, 1.1145),
+                        "SR-6": efficiency("SR-6", "31073", 32.4, 1.1316),
+                    },
+                )
+                self.assertEqual(decision.selected_stage, "SR-8")
+                iron = next(c for c in decision.candidates if c.stage_code == "SR-8")
+                self.assertEqual(iron.inventory, 156)
+                self.assertEqual(iron.deficit, 44)
+                self.assertEqual(iron.craftable_equivalent, 120)
+                self.assertEqual(iron.inventory_breakdown["craftable_t3"], 150)
+                self.assertEqual(iron.inventory_breakdown["credited_craftable_t3"], 120)
+                self.assertEqual(iron.inventory_breakdown["t2_from_t1"], 0)
+                self.assertEqual(iron.inventory_breakdown["craftable_credit_percent"], 80)
+                self.assertFalse(iron.inventory_breakdown["white_materials_included"])
+                self.assertTrue(jq_accepts(ROOT / "config/fight-decision.jq", decision.as_dict()))
 
     def test_planner_fails_closed_or_uses_next_candidate_for_unsafe_inputs(self) -> None:
         activity = make_activity()
