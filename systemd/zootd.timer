@@ -1,9 +1,9 @@
 [Unit]
-Description=Run the post-reset ZOOTd task
+Description=Run the morning ZOOTd task
 
 [Timer]
 # CN server resets at 04:00 Asia/Shanghai. This is the new-game-day run.
-OnCalendar=*-*-* 07:30:00 Asia/Shanghai
+OnCalendar=*-*-* 06:00:00 Asia/Shanghai
 Persistent=true
 AccuracySec=1s
 RandomizedDelaySec=0

@@ -122,11 +122,11 @@ def _full_week_is_covered(
     return cursor >= end
 
 
-def _post_reset_slots(week: GameWeek) -> list[datetime]:
+def _morning_slots(week: GameWeek) -> list[datetime]:
     return [
         datetime.combine(
             week.start_game_day + timedelta(days=offset),
-            time(7, 30),
+            time(6, 0),
             tzinfo=SERVER_TIMEZONE,
         ).astimezone(UTC)
         for offset in range(7)
@@ -487,7 +487,7 @@ def plan_annihilation(
     if not source_available:
         uncertainty.append(f"SOURCE_UNAVAILABLE:{source_error or 'unspecified'}")
     uncertainty = sorted(set(uncertainty))
-    monday = _post_reset_slots(week)[0]
+    monday = _morning_slots(week)[0]
     evidence: dict[str, Any] = {
         "source_policy": "maa-stage-activity-v2",
         "source_uncertainty": uncertainty,
@@ -507,7 +507,7 @@ def plan_annihilation(
             "evidence": evidence,
         }
 
-    # The 02:00 civil-time run is the old game week's final recovery slot.
+    # Manual or recovery runs in the final two hours may still finish this week.
     if now >= deadline - timedelta(hours=2):
         return {
             **base,
@@ -565,7 +565,7 @@ def plan_annihilation(
 
     future_free = [
         slot
-        for slot in _post_reset_slots(week)
+        for slot in _morning_slots(week)
         if slot > now
         and slot + execution_budget <= deadline
         and _window_is_free(slot, slot + execution_budget, occupancy)

@@ -170,7 +170,7 @@ def _parse_evidence(raw: bytes, root: Path) -> tuple[dict[str, Any], str, list[P
     if (
         not isinstance(attempt_id, str)
         or _ATTEMPT_ID_RE.fullmatch(attempt_id) is None
-        or slot not in {"pre-reset", "post-reset", "manual"}
+        or slot not in {"evening", "morning", "manual"}
     ):
         raise CodexRecoveryError("recovery attempt identity is invalid")
 

@@ -29,7 +29,7 @@
 - `config/profiles/waydroid.toml`：Waydroid 连接配置。
 - `config/host.env`：Waydroid profile、`MAA_FARM_MODE` 和运行策略；统一入口固定执行 `daily`。
 - `scripts/update-maa-runtime.sh`：隔离安装 stable Core 和全部资源，验证整套候选后原子提升为 live；旧资源脚本仅保留为兼容入口。
-- `systemd/`：用户级 service/timer；06:30 安全更新完整 MAA runtime，02:00 槽位会在 04:00 前强制清理，07:30 完整链路预留 10 小时上限。
+- `systemd/`：用户级 service/timer；05:30 安全更新完整 MAA runtime，06:00/18:00 完整链路各预留 9 小时 50 分钟运行与 4 分钟清理。
 - `var/`：MaaCore、资源、来源缓存、决策、日志和运行状态，不提交 Git。
 - `scripts/update-codex-sdk.sh`：更新项目 SDK 与配套 runtime，使用独立锁避免与 adapter 并发升级。
 - `docs/`：按运维、配置、架构、开发、恢复及历史分工的专题文档。

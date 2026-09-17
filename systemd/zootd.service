@@ -8,9 +8,9 @@ ConditionPathExists=%h/Projects/zootd/bin/zootd
 [Service]
 Type=oneshot
 WorkingDirectory=%h/Projects/zootd
-ExecStart=%h/Projects/zootd/bin/zootd run --post-reset-slot
-# Complete daily + Annihilation/material planning + final Award-only phase.
-TimeoutStartSec=10h
+ExecStart=%h/Projects/zootd/bin/zootd run --morning-slot
+# Both slots allow 9h50m plus 4m cleanup. A scheduled 18:00 run ends before 04:00.
+TimeoutStartSec=590m
 TimeoutStopSec=4m
 KillSignal=SIGINT
 Nice=5

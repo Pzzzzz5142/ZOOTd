@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Sequence
+from zoneinfo import ZoneInfo
 
 from .agent import AgentAdviceError, run_advisor
 from .annihilation import (
@@ -722,6 +723,12 @@ def command_select_drones(args: argparse.Namespace) -> int:
             seconds=config.freshness.inventory_seconds
         ):
             raise InventoryError(f"inventory snapshot age is outside policy: {age}")
+        if args.current_game_day:
+            zone = ZoneInfo("Asia/Shanghai")
+            snapshot_day = (snapshot.captured_at.astimezone(zone) - timedelta(hours=4)).date()
+            current_day = (now.astimezone(zone) - timedelta(hours=4)).date()
+            if snapshot_day != current_day:
+                raise InventoryError("inventory snapshot is not from the current game day")
         mode, quantity = select_drone_mode(snapshot, threshold=args.threshold)
     except (OSError, ValueError, ConfigError, InventoryError) as exc:
         print(f"cannot select drone target: {exc}", file=sys.stderr)
@@ -1330,6 +1337,7 @@ def build_parser() -> argparse.ArgumentParser:
         "select-drones", help="select PureGold or Money from a fresh Depot snapshot"
     )
     select_drones.add_argument("--inventory")
+    select_drones.add_argument("--current-game-day", action="store_true")
     select_drones.add_argument("--threshold", type=int, default=150)
     select_drones.add_argument("--now")
     select_drones.add_argument("--value-only", action="store_true")
@@ -1511,7 +1519,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     supervisor_recover.add_argument("--run-id", required=True)
     supervisor_recover.add_argument(
-        "--slot", choices=("pre-reset", "post-reset", "manual"), required=True
+        "--slot", choices=("evening", "morning", "manual"), required=True
     )
     supervisor_recover.set_defaults(func=command_supervisor_recover_run)
 

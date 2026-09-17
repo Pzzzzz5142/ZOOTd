@@ -22,10 +22,9 @@ maa_activity_seconds = 1800
 yituliu_stage_seconds = 86400
 yituliu_matrix_seconds = 259200
 yituliu_value_seconds = 86400
-# Automatic execution takes at most one Depot snapshot in the current launcher
-# run. Both scheduled slots take it before daily for drones and reuse it for
-# farming; this is the maximum delay allowed between that scan and the decision.
-inventory_seconds = 1800
+# The 06:00 slot scans once per game day; 18:00 reuses that morning's snapshot.
+# The launcher also checks the 04:00 game-day boundary before cache reuse.
+inventory_seconds = 86400
 
 [policy]
 when_satisfied = "best_event"
