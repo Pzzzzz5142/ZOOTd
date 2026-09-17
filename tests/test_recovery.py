@@ -216,7 +216,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 10,
+                    "version": 11,
                 },
             }
             seen: dict[str, object] = {}
@@ -625,7 +625,7 @@ class RecoveryTests(unittest.TestCase):
             outcome = recover_failed_run(
                 repo,
                 failed_run_id,
-                slot="post-reset",
+                slot="morning",
                 command=("fake-recovery",),
                 timeout_seconds=60,
                 runner=blocked_runner,
@@ -1024,7 +1024,7 @@ class RecoveryTests(unittest.TestCase):
             outcome = recover_failed_run(
                 repo,
                 failed_run_id,
-                slot="post-reset",
+                slot="morning",
                 command=("fake-recovery",),
                 timeout_seconds=60,
                 runner=blocked_runner,

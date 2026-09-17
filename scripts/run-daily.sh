@@ -54,9 +54,8 @@ dry_run=false
 check_device=false
 e2e_award=false
 verify_proxy=false
-pre_reset_slot=false
-post_reset_slot=false
-pre_reset_fight_deadline_epoch=0
+evening_slot=false
+morning_slot=false
 auto_farm_ready=true
 planner_helpers_ready=true
 farming_contracts_ready=true
@@ -217,9 +216,9 @@ Options:
   --verify-proxy Compatibility flag; all automatic runs now use zero-sanity
                  proxy screens and the same three-consecutive-failure policy.
   --daily-first  Compatibility flag; daily-first is now the default order.
-  --pre-reset-slot
-  --post-reset-slot
-                 Scheduler-only guarded slots; prefer --daily-first manually.
+  --evening-slot
+  --morning-slot
+                 Scheduler slots; prefer --daily-first manually.
   --stage STAGE  Spend sanity on STAGE after the initial daily routine.
                  This is an explicit operator override; the planner cannot veto it.
                  All medicine expiring within two days is allowed; normal
@@ -270,12 +269,12 @@ while (( $# > 0 )); do
         --daily-first)
             shift
             ;;
-        --pre-reset-slot)
-            pre_reset_slot=true
+        --evening-slot)
+            evening_slot=true
             shift
             ;;
-        --post-reset-slot)
-            post_reset_slot=true
+        --morning-slot)
+            morning_slot=true
             shift
             ;;
         --dry-run)
@@ -328,16 +327,16 @@ validate_recovery_invocation() {
        "${dry_run}" == false && "${check_device}" == false ]] ||
         die "recovery must replay the complete automatic farming workflow"
     case "${MAA_RECOVERY_SLOT:-}" in
-        pre-reset)
-            [[ "${pre_reset_slot}" == true && "${post_reset_slot}" == false ]] ||
-                die "recovery slot does not match --pre-reset-slot"
+        evening)
+            [[ "${evening_slot}" == true && "${morning_slot}" == false ]] ||
+                die "recovery slot does not match --evening-slot"
             ;;
-        post-reset)
-            [[ "${post_reset_slot}" == true && "${pre_reset_slot}" == false ]] ||
-                die "recovery slot does not match --post-reset-slot"
+        morning)
+            [[ "${morning_slot}" == true && "${evening_slot}" == false ]] ||
+                die "recovery slot does not match --morning-slot"
             ;;
         manual)
-            [[ "${pre_reset_slot}" == false && "${post_reset_slot}" == false ]] ||
+            [[ "${evening_slot}" == false && "${morning_slot}" == false ]] ||
                 die "manual recovery must not use a scheduler slot flag"
             ;;
         *)
@@ -356,7 +355,7 @@ if [[ "${verify_proxy}" == true && -n "${stage}" ]]; then
 fi
 if [[ "${e2e_award}" == true &&
       ( -n "${stage}" || "${verify_proxy}" == true ||
-        "${pre_reset_slot}" == true || "${post_reset_slot}" == true ||
+        "${evening_slot}" == true || "${morning_slot}" == true ||
         "${check_device}" == true ) ]]; then
     die "--e2e-award cannot be combined with stage, proxy, scheduler-slot, or device-only modes"
 fi
@@ -369,17 +368,12 @@ fi
 if [[ "${stage}" == Annihilation ]]; then
     die "--stage Annihilation is reserved for the weekly planner and cannot bypass its one-transaction checks"
 fi
-if [[ "${pre_reset_slot}" == true && "${post_reset_slot}" == true ]]; then
-    die "--pre-reset-slot and --post-reset-slot are mutually exclusive"
+if [[ "${evening_slot}" == true && "${morning_slot}" == true ]]; then
+    die "--evening-slot and --morning-slot are mutually exclusive"
 fi
 validate_recovery_invocation
 export MAA_RECOVERY_ACTIVE MAA_RECOVERY_PARENT_RUN_ID \
     MAA_RECOVERY_ATTEMPT_ID MAA_RECOVERY_SLOT
-if [[ "${pre_reset_slot}" == true ]]; then
-    # Bound a stuck first attempt so the reentrant retry still fits before the
-    # old-game-day cutoff.
-    daily_attempt_timeout=22m
-fi
 
 [[ "${MAA_HOST_TASK}" == daily ]] ||
     die "the unified launcher always runs task=daily; use zootd raw-run for other tasks"
@@ -515,10 +509,10 @@ cleanup() {
               "${finish_status}" -ne 129 &&
               "${finish_status}" -ne 130 &&
               "${finish_status}" -ne 143 ]]; then
-            if [[ "${pre_reset_slot}" == true ]]; then
-                recovery_slot=pre-reset
-            elif [[ "${post_reset_slot}" == true ]]; then
-                recovery_slot=post-reset
+            if [[ "${evening_slot}" == true ]]; then
+                recovery_slot=evening
+            elif [[ "${morning_slot}" == true ]]; then
+                recovery_slot=morning
             fi
 
             # A nested full launcher must acquire these exact locks. Closing
@@ -649,24 +643,8 @@ run_soft_with_timeout() {
 
 farming_timeout_seconds() {
     local maximum_seconds="$1"
-    local now_epoch remaining_seconds
-
     [[ "${maximum_seconds}" =~ ^[0-9]+$ ]] || return 1
-    if (( pre_reset_fight_deadline_epoch <= 0 )); then
-        printf '%s\n' "${maximum_seconds}"
-        return 0
-    fi
-    now_epoch="$(date -u '+%s')"
-    # timeout may need its 30-second kill grace. Stop the command five seconds
-    # before the policy cutoff even if SIGINT is ignored.
-    remaining_seconds=$(( pre_reset_fight_deadline_epoch - now_epoch - 35 ))
-    if (( remaining_seconds < 60 )); then
-        return 1
-    fi
-    if (( maximum_seconds < remaining_seconds )); then
-        remaining_seconds="${maximum_seconds}"
-    fi
-    printf '%s\n' "${remaining_seconds}"
+    printf '%s\n' "${maximum_seconds}"
 }
 
 run_farming_soft_with_timeout() {
@@ -675,7 +653,7 @@ run_farming_soft_with_timeout() {
     shift
 
     if ! duration_seconds="$(farming_timeout_seconds "${maximum_seconds}")"; then
-        info "pre-reset farming window is closed; preserving time for final Award"
+        info "invalid farming timeout"
         return 1
     fi
     run_soft_with_timeout "${duration_seconds}s" "$@"
@@ -687,6 +665,10 @@ scan_depot_inventory_once() {
 
     depot_evidence_log="${log_file}"
     supervisor_active_evidence="${log_file}"
+    if [[ "${evening_slot}" == true ]]; then
+        info "evening slot only reuses the morning inventory; Depot scan is disabled"
+        return 1
+    fi
     if [[ "${depot_scan_attempted}" == true ]]; then
         info "refusing a second Depot scan in the same launcher run"
         return 1
@@ -793,7 +775,7 @@ run_sanity_fight() {
     supervisor_active_evidence="${log_file}"
     info "running ${stage_code} with all medicine expiring within two days; normal medicine and Originite Prime remain disabled"
     if ! duration_seconds="$(farming_timeout_seconds "${maximum_seconds}")"; then
-        info "pre-reset Fight window is closed; preserving time for final Award"
+        info "invalid Fight timeout"
         return 1
     fi
     render_runtime_task sanity-fight "${stage_code}"
@@ -811,7 +793,7 @@ run_verify_fight() {
     supervisor_active_evidence="${log_file}"
     info "verifying one ${stage_code} proxy result with native two-day medicine parameters"
     if ! duration_seconds="$(farming_timeout_seconds 5400)"; then
-        info "pre-reset Fight window is closed; skipping proxy verification"
+        info "invalid proxy verification timeout"
         return 1
     fi
     render_runtime_task verify-fight "${stage_code}"
@@ -1051,11 +1033,6 @@ run_weekly_annihilation_if_due() {
         annihilation_phase_outcome=invalid-deadline
         info "weekly Annihilation skipped because its execution deadline is invalid"
         return 0
-    fi
-    if (( pre_reset_fight_deadline_epoch > 0 &&
-          pre_reset_fight_deadline_epoch < execute_before_epoch )); then
-        execute_before_epoch="${pre_reset_fight_deadline_epoch}"
-        execute_before="02:25 ${server_timezone} pre-reset Fight cutoff"
     fi
     now_epoch="$(date -u '+%s')"
     remaining_seconds=$(( execute_before_epoch - now_epoch - 35 ))
@@ -1362,7 +1339,7 @@ select_daily_drone_policy_from_snapshot() {
         return 1
     fi
     selected="$(timeout --signal=TERM --kill-after=2s 1m "${planner}" \
-        select-drones --threshold "${drone_threshold}" --value-only 2>/dev/null || true)"
+        select-drones --current-game-day --threshold "${drone_threshold}" --value-only 2>/dev/null || true)"
     case "${selected}" in
         PureGold)
             drone_mode=PureGold
@@ -1384,6 +1361,19 @@ prepare_daily_drone_policy() {
     if [[ "${farming_contracts_ready}" != true ]]; then
         drone_mode=_NotUse
         info "drone Depot skipped because its managed-task contract is invalid"
+        return 0
+    fi
+
+    if select_daily_drone_policy_from_snapshot; then
+        inventory_snapshot_ready=true
+        depot_scan_outcome=reused
+        depot_evidence_log="${project_root}/var/state/planner/inventory.json"
+        info "reusing the current game day's inventory snapshot; no Depot scan"
+        return 0
+    fi
+    if [[ "${evening_slot}" == true ]]; then
+        depot_scan_outcome=morning-snapshot-unavailable
+        info "morning inventory is unavailable; evening slot will not scan Depot"
         return 0
     fi
 
@@ -1437,15 +1427,6 @@ ensure_farming_inventory_snapshot() {
     return 1
 }
 
-server_minute_of_day_now() {
-    local hour minute
-
-    read -r hour minute < <(TZ="${server_timezone}" date '+%H %M')
-    [[ "${hour}" =~ ^[0-9]{2}$ && "${minute}" =~ ^[0-9]{2}$ ]] ||
-        die "cannot read the ${server_timezone} server clock"
-    printf '%s\n' "$(( 10#${hour} * 60 + 10#${minute} ))"
-}
-
 stop_user_service_if_active() {
     local unit="$1"
 
@@ -1471,30 +1452,9 @@ require_command waydroid
 [[ -x "${planner}" ]] || die "planner wrapper is not executable: ${planner}"
 [[ -x "${scaled_ui}" ]] || die "scaled Waydroid launcher is not executable: ${scaled_ui}"
 
-if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]; then
-    server_minute="$(server_minute_of_day_now)"
-    if (( server_minute < 120 )); then
-        info "missed the 02:00-02:04 pre-reset start window; old-game-day work is not recoverable now"
-        exit 0
-    elif [[ "${MAA_RECOVERY_ACTIVE}" != true ]] && (( server_minute >= 125 )); then
-        info "missed the 02:00-02:04 pre-reset start window; old-game-day work is not recoverable now"
-        exit 0
-    elif (( server_minute >= 145 )); then
-        info "missed the pre-reset recovery replay window ending at 02:25; old-game-day work is no longer safe to replay"
-        exit 0
-    elif (( server_minute >= 125 )); then
-        info "allowing the scoped recovery agent to replay the pre-reset slot before the 02:25 cutoff"
-    fi
-    pre_reset_fight_deadline_epoch="$(
-        TZ="${server_timezone}" date --date="$(TZ="${server_timezone}" date '+%F') 02:25:00" '+%s'
-    )"
+if [[ "${dry_run}" != true && "${evening_slot}" == true ]]; then
     stop_user_service_if_active zootd.service
-elif [[ "${dry_run}" != true && "${post_reset_slot}" == true ]]; then
-    server_minute="$(server_minute_of_day_now)"
-    if (( server_minute >= 120 && server_minute < 240 )); then
-        info "post-reset catch-up suppressed during the 02:00-04:00 old-game-day protection window"
-        exit 0
-    fi
+elif [[ "${dry_run}" != true && "${morning_slot}" == true ]]; then
     stop_user_service_if_active zootd-prereset.service
 fi
 
@@ -1662,12 +1622,16 @@ if [[ "${e2e_award}" == true ]]; then
     exit 0
 fi
 
-info "daily-first mode: protecting the game day that ends at 04:00 ${server_timezone}"
+info "daily-first mode: running daily before farming and final Award"
 supervisor_begin_phase depot
 prepare_daily_drone_policy
 if [[ "${farming_contracts_ready}" != true ]]; then
     supervisor_record_phase depot degraded managed-task-contract-invalid \
         --detail "drone_mode=${drone_mode}" || true
+elif [[ "${depot_scan_outcome}" == reused && -f "${depot_evidence_log}" ]]; then
+    supervisor_record_phase depot succeeded inventory-snapshot-reused \
+        --detail "drone_mode=${drone_mode}" \
+        --evidence-file "${depot_evidence_log}" || true
 elif [[ "${depot_scan_outcome}" == ready &&
         ( "${drone_mode}" == PureGold || "${drone_mode}" == Money ) &&
         -f "${depot_evidence_log}" ]]; then

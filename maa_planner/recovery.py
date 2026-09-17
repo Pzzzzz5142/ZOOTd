@@ -318,10 +318,10 @@ def _failed_run(
 
 
 def _retry_argv(slot: str) -> list[str]:
-    if slot == "pre-reset":
-        return ["./bin/zootd", "run", "--pre-reset-slot"]
-    if slot == "post-reset":
-        return ["./bin/zootd", "run", "--post-reset-slot"]
+    if slot == "evening":
+        return ["./bin/zootd", "run", "--evening-slot"]
+    if slot == "morning":
+        return ["./bin/zootd", "run", "--morning-slot"]
     if slot == "manual":
         return ["./bin/zootd", "run"]
     raise RecoveryError(f"invalid recovery slot: {slot}")
@@ -764,7 +764,7 @@ def _incident_evidence(
         "scope": {
             "path": "docs/llm-recovery-scope.md",
             "sha256": sha256_bytes(scope_bytes),
-            "version": 10,
+            "version": 11,
         },
         "controller_repository": controller_repository,
         "repair_policy": {
