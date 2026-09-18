@@ -185,6 +185,22 @@ Core 和资源按完整代际验证、原子提升或回滚，详见[运行时�
 
 安全拒绝是正常业务结果，因此 `plan` 写入 `NOOP` 时通常仍退出 0；调用方必须读取 JSON 的 `decision` 和 `reason`。`sync`、`validate-config` 等操作失败才使用非零退出码。
 
+## 日志保留
+
+项目日志按最近修改时间滚动保留 7×24 小时。`zootd-log-cleanup.timer` 每天 04:30（Asia/Shanghai）清理，关机错过后补跑；运行、更新或恢复忙时跳过，下次再试。通过 `./scripts/install-systemd.sh --enable` 安装并启用。
+
+清理范围包括 `host/` 日志、`debug/` 日志与截图、历史规划和探针，以及已结束的 supervisor run 和对应 recovery 目录。审计按整轮删除，不截断或改写单条事件。持续追加的 `asst.log` / `asst.bak.log` 在空闲时移入 `debug/archive/`，保留原始内容和修改时间，下次 MAA 运行重新创建日志；归档同样按 7 天过期。刚启用时，已有聚合日志内部可能包含更早的行，随整个文件过期清除。
+
+当前状态、库存、能力账本、runtime/receipt 和缓存不清理。未结束的 run、最近一次成功 full run、当前状态或保留审计引用的证据及关联 run 会延长保留；带 repair worktree 的事故也保留，避免删除未交付的修复。存在未结束的恢复时整次清理延后。孤立的 recovery 目录保守保留，需人工确认归属。系统 journal 由宿主 journald 管理，不更改其他服务的保留策略。
+
+预览和手动执行（不启动游戏）：
+
+```bash
+./bin/zootd log-cleanup --dry-run
+./bin/zootd log-cleanup
+systemctl --user status zootd-log-cleanup.timer
+```
+
 ## 上游资料
 
 - [maa-cli 使用文档](https://docs.maa.plus/zh-cn/manual/cli/usage.html)

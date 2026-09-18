@@ -1,0 +1,11 @@
+[Unit]
+Description=Rotate ZOOTd logs and expire history older than seven days
+ConditionPathExists=%h/Projects/zootd/scripts/cleanup-logs.sh
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/zootd
+ExecStart=%h/Projects/zootd/scripts/cleanup-logs.sh
+TimeoutStartSec=10m
+Nice=10
+IOSchedulingClass=idle
