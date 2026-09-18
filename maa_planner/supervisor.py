@@ -356,7 +356,7 @@ def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
             or _RUN_ID_RE.fullmatch(recovery_values["parent_run_id"]) is None
             or not isinstance(recovery_values["attempt_id"], str)
             or _RECOVERY_ATTEMPT_RE.fullmatch(recovery_values["attempt_id"]) is None
-            or recovery_values["slot"] not in {"pre-reset", "post-reset", "manual"}
+            or recovery_values["slot"] not in {"evening", "morning", "manual"}
         ):
             raise SupervisorError("recovery run environment is incomplete or invalid")
         payload["recovery_context"] = recovery_values

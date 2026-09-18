@@ -2,7 +2,7 @@
 Description=Update Codex daily before MAA runtime validation and game tasks
 
 [Timer]
-OnCalendar=*-*-* 06:00:00 Asia/Shanghai
+OnCalendar=*-*-* 05:00:00 Asia/Shanghai
 Persistent=false
 AccuracySec=1m
 RandomizedDelaySec=0

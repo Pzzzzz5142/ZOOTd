@@ -304,9 +304,9 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertEqual(launcher.count(final_award), 1)
         self.assertGreater(launcher.index(final_award), launcher.index("run_regular_fallback"))
         scheduled_workflow = launcher[
-            launcher.index('info "daily-first mode: protecting the game day'):
+            launcher.index('info "daily-first mode: running daily'):
         ]
-        self.assertNotIn("pre_reset_slot", scheduled_workflow)
+        self.assertNotIn("evening_slot", scheduled_workflow)
         self.assertIn('"${planner}" validate-service-readiness --value-only', launcher)
         self.assertNotIn('--profile "${MAA_HOST_PROFILE}" --dry-run', launcher)
         self.assertIn('[[ "${MAA_HOST_PROFILE}" == waydroid ]]', launcher)
@@ -321,13 +321,6 @@ class HighLevelRequirementTests(unittest.TestCase):
             farming_config["supervisor"]["recovery_timeout_seconds"], 21600
         )
         self.assertIn("MAA_RECOVERY_ACTIVE", launcher)
-        pre_reset_guard = launcher[
-            launcher.index('if [[ "${dry_run}" != true && "${pre_reset_slot}" == true ]]'):
-            launcher.index('\nmkdir -p -- "${project_root}/var/run"')
-        ]
-        self.assertIn('[[ "${MAA_RECOVERY_ACTIVE}" != true ]]', pre_reset_guard)
-        self.assertIn("server_minute >= 145", pre_reset_guard)
-        self.assertIn("02:25 cutoff", pre_reset_guard)
         self.assertIn(" supervisor-recover-run --run-id ", launcher)
         self.assertIn("--defer-to-recovery", launcher)
         recovery_scope = (ROOT / "docs/llm-recovery-scope.md").read_text()
@@ -378,11 +371,11 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertIn("run_stage_with_proxy_retries", activity_function)
         self.assertNotIn("check-fight", activity_function)
         self.assertNotIn("quarantine-fight", activity_function)
-        self.assertNotIn("pre_reset_slot", activity_function)
+        self.assertNotIn("evening_slot", activity_function)
 
         fallback_start = launcher.index("run_regular_fallback() {")
         fallback_end = launcher.index("\nactivity_decision_is_safe() {", fallback_start)
-        self.assertNotIn("pre_reset_slot", launcher[fallback_start:fallback_end])
+        self.assertNotIn("evening_slot", launcher[fallback_start:fallback_end])
         self.assertIn("farming_sanity_cleared", launcher[fallback_start:fallback_end])
         self.assertNotIn("any_fight_proof", launcher[fallback_start:fallback_end])
 
@@ -443,7 +436,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertNotIn("printf '%s\\n' \"${stage_code}\" |", launcher)
 
         reuse_start = launcher.index("ensure_farming_inventory_snapshot() {")
-        reuse_end = launcher.index("\nserver_minute_of_day_now() {", reuse_start)
+        reuse_end = launcher.index("\nrequire_command adb", reuse_start)
         reuse_function = launcher[reuse_start:reuse_end]
         self.assertIn('if [[ "${inventory_snapshot_ready}" == true ]]', reuse_function)
         self.assertIn('if [[ "${depot_scan_attempted}" == true ]]', reuse_function)
@@ -454,11 +447,11 @@ class HighLevelRequirementTests(unittest.TestCase):
             "\nensure_farming_inventory_snapshot() {", drone_start
         )
         drone_function = launcher[drone_start:drone_end]
-        self.assertNotIn("pre_reset_slot", drone_function)
+        self.assertIn("evening_slot", drone_function)
         self.assertEqual(drone_function.count("scan_depot_inventory_once"), 1)
         self.assertIn("depot_scan_outcome=drone-target-unavailable", drone_function)
-        self.assertNotIn("pre-reset-auxiliary-scan-skipped", launcher)
-        self.assertNotIn("pre-reset-cutoff-after-fight-attempt", launcher)
+        self.assertNotIn("evening-auxiliary-scan-skipped", launcher)
+        self.assertNotIn("evening-cutoff-after-fight-attempt", launcher)
 
         refresh_start = launcher.index("refresh_planner_sources_if_needed() {")
         refresh_end = launcher.index(
@@ -470,7 +463,7 @@ class HighLevelRequirementTests(unittest.TestCase):
             refresh_function.count('"${planner}" sync --skip-maa-hot-update'),
             1,
         )
-        self.assertNotIn("pre_reset_slot", refresh_function)
+        self.assertNotIn("evening_slot", refresh_function)
         self.assertIn("planner_source_args=(--offline)", refresh_function)
         self.assertEqual(
             launcher.count('"${planner_source_args[@]}" --skip-maa-hot-update'),
@@ -523,16 +516,18 @@ class HighLevelRequirementTests(unittest.TestCase):
         pre_timer = (ROOT / "systemd/zootd-prereset.timer").read_text()
         post_timer = (ROOT / "systemd/zootd.timer").read_text()
         surface = (ROOT / "scripts/show-waydroid-scaled.sh").read_text()
-        self.assertIn("OnCalendar=*-*-* 06:30:00 Asia/Shanghai", runtime_timer)
+        sdk_timer = (ROOT / "systemd/zootd-codex-update.timer").read_text()
+        self.assertIn("OnCalendar=*-*-* 05:00:00 Asia/Shanghai", sdk_timer)
+        self.assertIn("OnCalendar=*-*-* 05:30:00 Asia/Shanghai", runtime_timer)
         self.assertIn("Persistent=false", runtime_timer)
-        self.assertIn("OnCalendar=*-*-* 02:00:00 Asia/Shanghai", pre_timer)
-        self.assertIn("OnCalendar=*-*-* 07:30:00 Asia/Shanghai", post_timer)
+        self.assertIn("OnCalendar=*-*-* 18:00:00 Asia/Shanghai", pre_timer)
+        self.assertIn("OnCalendar=*-*-* 06:00:00 Asia/Shanghai", post_timer)
         self.assertIn("Persistent=true", post_timer)
         self.assertIn("--backend headless", surface)
         pre_service = (ROOT / "systemd/zootd-prereset.service").read_text()
         post_service = (ROOT / "systemd/zootd.service").read_text()
-        self.assertIn("zootd run --pre-reset-slot", pre_service)
-        self.assertIn("zootd run --post-reset-slot", post_service)
+        self.assertIn("zootd run --evening-slot", pre_service)
+        self.assertIn("zootd run --morning-slot", post_service)
         farming = tomllib.loads((ROOT / "config/farming.toml").read_text())
         self.assertEqual(farming["annihilation"]["transaction_timeout_minutes"], 30)
         self.assertEqual(
@@ -584,6 +579,95 @@ class HighLevelRequirementTests(unittest.TestCase):
             )
 
 
+    def test_morning_and_evening_share_runtime_limit_without_old_cutoff(self) -> None:
+        launcher = (ROOT / "scripts/run-daily.sh").read_text()
+        self.assertNotIn("pre_reset_fight_deadline_epoch", launcher)
+        self.assertNotIn("03:25", launcher)
+        self.assertNotIn("server_minute", launcher)
+        for name in ("zootd.service", "zootd-prereset.service"):
+            service = (ROOT / "systemd" / name).read_text()
+            self.assertIn("TimeoutStartSec=590m", service)
+            self.assertIn("TimeoutStopSec=4m", service)
+        self.assertLess(18 * 60 + 590 + 4, 28 * 60)
+
+    def test_inventory_reuse_checks_game_day_and_snapshot_validity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            inventory = Path(temporary) / "inventory.json"
+            snapshot = InventorySnapshot(
+                items={"3003": 149}, captured_at=datetime(2026, 9, 16, 22, 1, tzinfo=UTC),
+                complete=True, client="Official", account="official-main",
+            ).as_dict()
+            cases = (
+                ("2026-09-17T10:00:00Z", {}, True),  # same-day 18:00
+                ("2026-09-17T19:24:00Z", {}, True),  # late recovery
+                ("2026-09-17T01:00:00Z", {}, True),  # morning replay
+                ("2026-09-17T20:00:00Z", {}, False),  # 04:00 reset
+                ("2026-09-17T22:00:00Z", {}, False),  # next 06:00, <24h old
+                ("2026-09-18T18:00:00Z", {}, False),
+                ("2026-09-17T18:00:00Z", {"complete": False}, False),
+                ("2026-09-17T18:00:00Z", {"account": "another-account"}, False),
+                ("2026-09-17T18:00:00Z", {"items": {"30013": 2}}, False),
+                ("2026-09-17T18:00:00Z", {"captured_at": "2026-09-17T19:00:00Z"}, False),
+            )
+            for now, changes, accepted in cases:
+                with self.subTest(now=now, changes=changes):
+                    inventory.write_text(json.dumps({**snapshot, **changes}))
+                    result = subprocess.run(
+                        [sys.executable, "-m", "maa_planner.cli", "select-drones",
+                         "--inventory", str(inventory), "--current-game-day",
+                         "--now", now, "--value-only"],
+                        cwd=ROOT, capture_output=True, text=True, timeout=10,
+                    )
+                    self.assertEqual(result.returncode == 0, accepted, result.stderr)
+                    if accepted:
+                        self.assertEqual(result.stdout.strip(), "PureGold")
+
+    def test_scheduled_inventory_reuses_cache_without_night_scans(self) -> None:
+        launcher = (ROOT / "scripts/run-daily.sh").read_text()
+        functions = launcher[
+            launcher.index("prepare_daily_drone_policy() {"):
+            launcher.index("\nrequire_command adb")
+        ]
+        scan = launcher[
+            launcher.index("scan_depot_inventory_once() {"):
+            launcher.index("proxy_preflight_log_is_complete() {")
+        ]
+        for pre_reset, cache_valid, expected_scans, expected_outcome in (
+            (True, True, 0, "reused"), (False, True, 0, "reused"),
+            (True, False, 0, "morning-snapshot-unavailable"),
+            (False, False, 1, "ready"),
+        ):
+            with self.subTest(pre_reset=pre_reset, cache_valid=cache_valid):
+                harness = """
+set -eu
+project_root=/unused
+farming_contracts_ready=true
+inventory_snapshot_ready=false
+depot_scan_attempted=false
+depot_scan_outcome=not-attempted
+maa=fake-maa
+planner=fake-planner
+MAA_HOST_PROFILE=waydroid
+scans=0
+info() { :; }
+select_daily_drone_policy_from_snapshot() { [[ "$CACHE_VALID" == true || "$scans" -gt 0 ]]; }
+run_farming_soft_with_timeout() {
+    if [[ "$2" == fake-maa ]]; then scans=$((scans + 1)); fi
+    return 0
+}
+""" + scan + functions + """
+prepare_daily_drone_policy
+ensure_farming_inventory_snapshot /unused/fallback.log || true
+printf '%s:%s' "$scans" "$depot_scan_outcome"
+"""
+                result = subprocess.run(
+                    ["bash", "-c", harness],
+                    env={**os.environ, "evening_slot": str(pre_reset).lower(),
+                         "CACHE_VALID": str(cache_valid).lower()},
+                    capture_output=True, text=True, check=True, timeout=10,
+                )
+                self.assertEqual(result.stdout, f"{expected_scans}:{expected_outcome}")
+
     def test_recovery_invocation_rejects_partial_or_wrong_slot_replays(self) -> None:
         launcher = ROOT / "scripts/run-daily.sh"
         base_env = {
@@ -595,8 +679,8 @@ class HighLevelRequirementTests(unittest.TestCase):
         cases = (
             ("manual", ["--no-farm"], "complete automatic farming workflow"),
             ("manual", ["--dry-run"], "complete automatic farming workflow"),
-            ("pre-reset", [], "does not match --pre-reset-slot"),
-            ("post-reset", ["--pre-reset-slot"], "does not match --post-reset-slot"),
+            ("evening", [], "does not match --evening-slot"),
+            ("morning", ["--evening-slot"], "does not match --morning-slot"),
         )
         for slot, arguments, expected_error in cases:
             with self.subTest(slot=slot, arguments=arguments):
@@ -782,6 +866,12 @@ class HighLevelRequirementTests(unittest.TestCase):
             "client": "Official",
             "account": "main",
         }
+        before_morning = plan_annihilation(
+            now=datetime(2026, 8, 23, 21, 0, tzinfo=UTC),
+            activities=[], client="Official", account="main", source_available=False,
+        )
+        self.assertEqual(before_morning["decision"], "WAIT")
+        self.assertEqual(before_morning["due_at"], "2026-08-23T22:00:00Z")
         first = plan_annihilation(**base)
         partial = plan_annihilation(
             **base, state=weekly_state(730, 1800, "progress")

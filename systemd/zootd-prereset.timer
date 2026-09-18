@@ -1,10 +1,9 @@
 [Unit]
-Description=Run the pre-reset ZOOTd task
+Description=Run the evening ZOOTd task
 
 [Timer]
-# 02:00 still belongs to the game day that ends at 04:00 Asia/Shanghai.
-OnCalendar=*-*-* 02:00:00 Asia/Shanghai
-# The launcher also rejects suspend catch-up outside 02:00-02:04.
+# Evening run reuses the inventory captured by the morning slot.
+OnCalendar=*-*-* 18:00:00 Asia/Shanghai
 Persistent=false
 AccuracySec=1s
 RandomizedDelaySec=0

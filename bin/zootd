@@ -287,7 +287,7 @@ Commands:
   supervisor-check      Send one synthetic failure to the exception-only LLM supervisor
   recover RUN_ID [SLOT]
                         Recover a failed full audit; SLOT is manual (default),
-                        pre-reset, or post-reset
+                        evening, or morning
   runtime-update        Validate stable Core plus staged resources, then atomically promote them
   runtime-rollback      Validate and atomically restore the retained previous runtime
   resource-update       Compatibility alias for runtime-update

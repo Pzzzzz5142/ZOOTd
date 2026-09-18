@@ -1,6 +1,6 @@
 # ZOOTd unattended recovery scope
 
-Version: 10
+Version: 11
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -41,12 +41,20 @@ preserve `MAA_RECOVERY_ACTIVE=true` together with the supplied
 that is currently hosting it. The controller, not the model, makes the final
 success decision.
 
-For a `pre-reset` incident, `MAA_RECOVERY_ACTIVE=true` allows the supplied
-`--pre-reset-slot` retry to start from 02:05 through 02:24 Asia/Shanghai. This
-exception is only for a nested recovery replay; an ordinary or suspend catch-up
-start is still limited to 02:00 through 02:04. At 02:25 the launcher refuses a
-new replay, so return `scope-blocked` if no already-started retry can satisfy the
-success proof within the outer service deadline.
+Scheduled runs use `morning` (`--morning-slot`, 06:00 Asia/Shanghai) and
+`evening` (`--evening-slot`, 18:00) identities. Both outer services allow
+590 minutes plus 4 minutes for cleanup. Recovery replays use the same slot and
+share the outer service's remaining time; they do not start a new timeout.
+There is no old pre-reset launch-minute restriction or 03:25 replay/farming
+cutoff. Return `scope-blocked` when the outer service's remaining window cannot
+produce a complete successful run.
+
+The 06:00 slot obtains one valid inventory snapshot per game day (04:00 reset,
+Asia/Shanghai). Replays reuse a complete, account-matching snapshot from that
+game day within the 24-hour freshness limit. The 18:00 slot and its recovery
+replays only reuse the same morning's snapshot; never run Depot to replace a missing
+or invalid snapshot at night. Do not alter snapshot timestamps or fabricate
+inventory. Missing valid inventory remains a failed phase, not a success proof.
 
 ## In scope
 

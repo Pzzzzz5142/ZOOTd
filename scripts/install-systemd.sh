@@ -40,6 +40,6 @@ if [[ "${1:-}" == --enable ]]; then
         zootd-log-cleanup.timer zootd-codex-update.timer zootd-runtime-update.timer \
         zootd-prereset.timer zootd.timer --no-pager
 else
-    printf 'Timers remain disabled. Enable them after a successful manual run with:\n'
+    printf 'Existing timer enablement is unchanged. Enable timers after a successful manual run with:\n'
     printf '  systemctl --user enable --now zootd-log-cleanup.timer zootd-codex-update.timer zootd-runtime-update.timer zootd-prereset.timer zootd.timer\n'
 fi

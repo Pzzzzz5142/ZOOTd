@@ -19,7 +19,7 @@ sudo loginctl enable-linger "$USER"
 
 `bootstrap.sh` 安装项目本地的 maa-cli，并在 `.venv/` 安装 `requirements.txt` 声明的官方 Python Codex SDK；SDK 包自带同版本 Codex runtime，不再依赖交互 shell 中的 `codex` 可执行文件。在 Arch 上脚本还会按需安装 `android-tools`、`gamescope` 和 `jq`。`install-network-fix.sh` 一次性写入 Docker 原生的 `ip-forward-no-drop` 配置，并把当前 `FORWARD` 策略切为 `ACCEPT`；它不会重启 Docker。已有 `/etc/docker/daemon.json` 若缺少该选项，脚本会拒绝覆盖；需保留现有字段、手动合并该选项并验证后再运行。以后 Docker 启动时不会再把转发默认策略改回 `DROP`，启动器本身只检查联网，不再动态提权改 iptables。这个 Docker 选项是宿主机级配置，适合当前单网卡的可信家庭 LAN；如果以后把机器用作多网卡/VPN 路由器，应重新审查全局转发策略。Waydroid 需先完成 `waydroid init`，并在其中安装、登录国服官服明日方舟。
 
-`doctor` 只检查依赖、无人登录条件和已提升 runtime 的 generation receipt，不再重复启动 7 个 MaaCore dry-run。所有 Core/资源/任务兼容 dry-run 只属于 `install-core`/每日 06:30 的隔离更新事务。
+`doctor` 只检查依赖、无人登录条件和已提升 runtime 的 generation receipt，不再重复启动 7 个 MaaCore dry-run。所有 Core/资源/任务兼容 dry-run 只属于 `install-core`/每日 05:30 的隔离更新事务。
 
 若新 Core/资源在真实设备上发生 dry-run 无法覆盖的语义回归，可执行 `./bin/zootd runtime-rollback`。它先用当前任务契约验证 `var/cache/MaaRuntime.previous`，再原子交换完整 runtime、复验并重新密封 receipt；失败会交换回原代际。
 
@@ -53,7 +53,7 @@ Android 弹出调试授权时勾选“始终允许”。`probe` 应确认 ADB �
 ./bin/zootd run
 ```
 
-不刷理智、绕过活动来源同步和材料规划；仍会先读 Depot，以确定无人机应该加速赤金还是贸易站：
+不刷理智、绕过活动来源同步和材料规划；仍会先校验当前游戏日的库存快照，缺失时读 Depot，以确定无人机应该加速赤金还是贸易站：
 
 ```bash
 ./scripts/run-daily.sh --no-farm
@@ -90,13 +90,13 @@ Android 弹出调试授权时勾选“始终允许”。`probe` 应确认 ADB �
 
 ## systemd 定时托管
 
-四个 timer 固定按国服时区 `Asia/Shanghai` 运行。`06:00` 更新项目 Codex SDK 与配套 runtime，`06:30` 只做隔离的 Core/资源候选验证，不启动 Waydroid；游戏任务在每天 `02:00` 与 `07:30` 运行。两个游戏槽位的业务步骤完全相同：先做 Depot 和无人机决策，再运行同一份完整 `daily.toml`，刷新同一组完整规划来源，规划剿灭和材料刷图，最后只执行 Award-only。明日方舟在 `04:00` 切换游戏日，因此 02:00 清即将结束的游戏日，07:30 清重置后的新游戏日。为了不让 02:00 的旧游戏日任务跨过重置，它的刷图阶段共用 02:25 硬截止；这只缩短可用执行窗口，不改变任务顺序、无人机策略、候选回退或来源范围。剿灭只有在截止前仍容得下完整 30 分钟事务时才启动，不会为了旧周补救而中途打断一场。两个槽位都不依赖宿主当前设置的时区。安装并启用：
+四个 timer 固定按国服时区 `Asia/Shanghai` 运行。`05:00` 更新项目 Codex SDK 与配套 runtime，`05:30` 只做隔离的 Core/资源候选验证，不启动 Waydroid；游戏任务在每天 `06:00` 与 `18:00` 运行。早上取得每日库存，晚上复用当天快照，具体有效性和失败处理见[基建无人机](configuration.md#基建无人机)。两轮都先决定无人机目标，再执行完整 `daily.toml`、刷新完整规划来源、规划剿灭和材料刷图，最后执行 Award-only。游戏仍在 `04:00` 换日。两个槽位都不依赖宿主当前设置的时区。安装并启用：
 
 ```bash
 ./scripts/install-systemd.sh --enable
 ```
 
-两个游戏槽位使用独立 service，避免同一个 oneshot 吞掉第二次触发。02:00 service 使用 `--pre-reset-slot`（隐含 `--daily-first`）；普通启动只接受 `02:00`–`02:04`，休眠后的过时触发会直接跳过。若本轮确定性审计失败，controller 注入 `MAA_RECOVERY_ACTIVE=true` 的同一 `--pre-reset-slot` 命令可在 `02:05`–`02:24` 做一轮受控恢复重放；`02:25` 起拒绝新重放。原 service 的 50 分钟运行上限和 4 分钟清理上限仍保证在 04:00 前退出。07:30 service 使用 `--post-reset-slot` 和 `Persistent=true`，但在 `02:00`–`04:00` 保护窗内不做追补。两个入口都会先停止仍占用设备的另一个定时槽，再获取全局锁；每个槽位内部只启动一个 Waydroid 会话，并在整轮结束时统一关闭。06:30 runtime timer 使用 `Persistent=false`，避免开机补跑更新与 07:30 游戏任务争锁；候选失败只保留 live 旧版，不影响游戏 service。
+两个游戏槽位使用独立 service，避免同一个 oneshot 吞掉第二次触发。06:00 的 `zootd.service` 使用 `--morning-slot`，timer 保持 `Persistent=true`；18:00 的 `zootd-prereset.service` 使用 `--evening-slot`，timer 保持 `Persistent=false`。晚间单元保留旧文件名以兼容已安装部署，其当前语义是晚间托管。两轮均允许 9 小时 50 分钟运行、另留 4 分钟清理；正常 18:00 触发最晚在次日 03:54 清理结束。原凌晨专用的启动分钟限制、刷图截止和恢复重放截止已取消，恢复受外层 service 的剩余运行时间约束。两个入口都会先停止仍占用设备的另一个定时槽，再获取全局锁；每轮只启动一个 Waydroid 会话，并在结束时统一关闭。05:30 runtime timer 使用 `Persistent=false`，避免开机补跑更新与游戏任务争锁；候选失败只保留 live 旧版。升级后运行 `./scripts/install-systemd.sh` 重装单元即可保留已有 timer 启用状态并加载新时刻。
 
 定时任务不要求当时已经登录 Hyprland。安装器会确认 systemd user lingering 已启用，使 user manager 和 timer 能在开机后、登录桌面前运行。`ZOOTD_DISPLAY_MODE=auto` 会在存在有效 Hyprland socket 时显示原有的 1280×720 浮动窗口；无人登录时使用 Gamescope 官方 `headless` backend 提供同尺寸 Wayland surface。该 compositor 只属于本轮 service，结束时与 Waydroid 会话一起回收，不修改 Waydroid 系统脚本或防火墙。可用 `headless` 强制无人值守模式，或用 `desktop` 在没有图形会话时明确报错。
 
@@ -177,17 +177,17 @@ Core 和资源按完整代际验证、原子提升或回滚，详见[运行时�
 - `var/state/supervisor/latest-probe.json` 与 `probes/`：异常监督器的合成连通性探针，不启动 Waydroid、MAA 或游戏。
 - `var/state/runtime/maa-resource.json`：最近候选/当前 Core 版本、资源提交、组合选择、验证结果、generation fingerprint 及回滚原因。
 - `var/cache/planner/http/`：响应正文和带请求身份、ETag、时间及 SHA-256 的 metadata。
-- `var/state/host/*-pre-daily-depot.log`：02:00 与 07:30 在 daily 前取得、同时用于无人机和材料规划的本轮唯一 Depot 日志。
+- `var/state/host/*-pre-daily-depot.log`：06:00 在 daily 前取得、同时用于无人机和材料规划的每日 Depot 日志；18:00 复用其快照。
 - `var/state/host/*-e2e-award.log`：只领取普通任务奖励的轻量 E2E 探针日志；必须仅含 `Award Completed` 与总链完成证明。
 - `var/state/host/*-award-final.log`：正式 service 最后的同一 Award-only 任务日志，同样禁止出现基建、公招、商店、邮件或战斗任务。
-- `var/state/host/*-depot.log`：仅在前置 Depot 尚未尝试时由材料规划补取的库存日志；`*-proxy-preflight-<stage>.log`、`*-annihilation-*.log`、`*-farm-<stage>.log`、`*-daily.log` 分别记录单进程客户端代理 preflight、剿灭、各候选刷图和日常执行。
+- `var/state/host/*-depot.log`：仅在非晚间槽且前置 Depot 尚未尝试时由材料规划补取的库存日志；`*-proxy-preflight-<stage>.log`、`*-annihilation-*.log`、`*-farm-<stage>.log`、`*-daily.log` 分别记录单进程客户端代理 preflight、剿灭、各候选刷图和日常执行。
 - `var/state/debug/asst.log`：用于验证本次三星完成的 MaaCore 核心日志。
 
 安全拒绝是正常业务结果，因此 `plan` 写入 `NOOP` 时通常仍退出 0；调用方必须读取 JSON 的 `decision` 和 `reason`。`sync`、`validate-config` 等操作失败才使用非零退出码。
 
 ## 日志保留
 
-项目日志按最近修改时间滚动保留 7×24 小时。`zootd-log-cleanup.timer` 每天 05:30（Asia/Shanghai）清理，关机错过后补跑；运行、更新或恢复忙时跳过，下次再试。通过 `./scripts/install-systemd.sh --enable` 安装并启用。
+项目日志按最近修改时间滚动保留 7×24 小时。`zootd-log-cleanup.timer` 每天 04:30（Asia/Shanghai）清理，关机错过后补跑；运行、更新或恢复忙时跳过，下次再试。通过 `./scripts/install-systemd.sh --enable` 安装并启用。
 
 清理范围包括 `host/` 日志、`debug/` 日志与截图、历史规划和探针，以及已结束的 supervisor run 和对应 recovery 目录。审计按整轮删除，不截断或改写单条事件。持续追加的 `asst.log` / `asst.bak.log` 在空闲时移入 `debug/archive/`，保留原始内容和修改时间，下次 MAA 运行重新创建日志；归档同样按 7 天过期。刚启用时，已有聚合日志内部可能包含更早的行，随整个文件过期清除。
 
