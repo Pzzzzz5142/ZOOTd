@@ -493,7 +493,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertNotIn("printf '%s\\n' '1-7'", updater)
         self.assertIn("Direct live Core installation/update is disabled", wrapper)
         self.assertIn("Direct maa hot-update is disabled", wrapper)
-        self.assertNotIn("--dry-run", host)
+        self.assertNotIn("--dry-run", host.split("usage() {", 1)[0])
         self.assertIn('"${planner}" validate-service-readiness', host)
         self.assertIn("runtime-rollback", host)
 

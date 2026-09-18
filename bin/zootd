@@ -299,6 +299,7 @@ Commands:
   install-core          Install the first validated stable runtime
   update                Alias for the transactional stable runtime update
   status                Show Waydroid and systemd timer status
+  log-cleanup [--dry-run] Rotate logs and expire project history older than seven days
   logs                  Follow logs from the user service
 EOF
 }
@@ -364,6 +365,10 @@ case "${command_name}" in
         systemctl --user status \
             zootd-codex-update.timer zootd-runtime-update.timer \
             zootd-prereset.timer zootd.timer --no-pager || true
+        ;;
+    log-cleanup)
+        shift
+        exec "${project_root}/scripts/cleanup-logs.sh" "$@"
         ;;
     logs)
         exec journalctl \

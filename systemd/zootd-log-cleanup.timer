@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily seven-day ZOOTd log retention
+
+[Timer]
+OnCalendar=*-*-* 05:30:00 Asia/Shanghai
+Persistent=true
+AccuracySec=1m
+Unit=zootd-log-cleanup.service
+
+[Install]
+WantedBy=timers.target
