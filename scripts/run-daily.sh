@@ -100,6 +100,7 @@ supervisor_active_evidence=""
 supervisor_audit_error=false
 supervisor_finishing=false
 supervisor_mode=""
+launcher_stop_signal=""
 
 info() {
     printf '[maa-daily] %s\n' "$*"
@@ -411,7 +412,10 @@ cleanup() {
     local -a cleanup_evidence=()
     local -a finish_args=()
 
-    trap - EXIT INT TERM HUP
+    trap - EXIT INT TERM
+    # A disconnected terminal must not kill cleanup or the recovery child.
+    # Explicit INT/TERM still stop the process (including systemd slot handoff).
+    trap '' HUP
 
     if [[ -n "${supervisor_run_id}" && -n "${supervisor_active_phase}" ]]; then
         if [[ -n "${supervisor_active_evidence}" &&
@@ -506,9 +510,8 @@ cleanup() {
         if [[ "${supervisor_mode}" == full &&
               "${MAA_RECOVERY_ACTIVE}" != true &&
               "${supervisor_finish_status}" -eq 1 &&
-              "${finish_status}" -ne 129 &&
-              "${finish_status}" -ne 130 &&
-              "${finish_status}" -ne 143 ]]; then
+              "${launcher_stop_signal}" != INT &&
+              "${launcher_stop_signal}" != TERM ]]; then
             if [[ "${evening_slot}" == true ]]; then
                 recovery_slot=evening
             elif [[ "${morning_slot}" == true ]]; then
@@ -538,10 +541,18 @@ cleanup() {
     exit "${status}"
 }
 
+handle_hangup() {
+    trap '' HUP
+    # The terminal may already be gone. Keep the audit and recovery output in
+    # the existing host log directory and prevent children reading that tty.
+    exec </dev/null >>"${project_root}/var/state/host/${supervisor_run_id:-launcher}-hangup.log" 2>&1
+    exit 129
+}
+
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
+trap 'launcher_stop_signal=INT; exit 130' INT
+trap 'launcher_stop_signal=TERM; exit 143' TERM
+trap handle_hangup HUP
 
 wait_for_waydroid() {
     local deadline=$(( SECONDS + 120 ))
