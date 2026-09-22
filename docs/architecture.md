@@ -87,3 +87,9 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 每次完整验证成功后，更新器把 schema 3 generation receipt 原子写入 `var/state/runtime/maa-resource.json`。它密封 `var/data` 的文件身份/大小/时间 metadata、MaaCore 主库 SHA-256、API tasks 与活动表 SHA-256，以及真正参与候选 dry-run 的 `cli.toml`、任务、profile 和受保护宿舍配置摘要；`transition` 还保留当前代际启用时间及上一代 Core/resource 身份。规划目标、阈值等运行策略不被不必要地钉死，仍由每轮静态契约独立校验。18:00、06:00 和轻量 Award E2E 只重算并比较这份 receipt，再执行一次静态契约检查；它们不再逐项启动 MaaCore dry-run。更新器会在交换 live 前先写 `status = "promoting"`，因此中途掉电也不会让新旧代际被误认成已验证。旧 schema 2 receipt 只作为现有 live 的只读迁移桥接：必须匹配两份 hot-cache 哈希和全部静态契约；下一次 05:30 成功验证后自然升级为完整 schema 3。
 
 05:30 `zootd-runtime-update.timer` 每天同时检查 stable Core 与官方 MaaResource `main`，所以不会因为资源暂时要求更高 Core 而永久钉死旧版。`./bin/zootd install-core`、`update` 和 `runtime-update` 都进入同一个事务式更新器；`resource-update` 只是旧命令的兼容别名。手工执行 `zootd-planner sync` 也只调用这个入口；正式游戏 service 已持有全局锁，所以仅刷新 HTTP 规划来源，不会在任务中途改 runtime。状态证据位于 `var/state/runtime/maa-resource.json`。
+
+## 实验性 Operator Box 边界
+
+独立 `box-login` / `box-sync` 入口位于 `maa_planner/box_cli.py`；Skland 的认证、签名、官服绑定、字段校验和错误分类集中在 `skland.py`，下游只消费 `operator_box.py` 的 `BoxProvider → OperatorBox`。凭据和原始玩家响应不进入 HTTP 公共缓存、普通日志或受管任务审计；只有最小规范快照落入本地状态目录。失败不会写出空 Box 代替错误。
+
+技能使用 canonical ID，专精、模组等级和解锁状态保留未知值；名字、技能序号与模组类型需要后续静态数据映射。获取时间不意味着远端练度与客户端实时一致，静态匹配也不等于通关证明。当前模块没有 PRTS、matcher 或游戏执行能力；daily、planner、timer 与恢复 controller 均不调用它。后续实验仍必须由用户显式触发，详见 [路线图](copilot/README.md)，登录与文件权限见[运维手册](operations.md#森空岛登录与-box-同步experimental)。

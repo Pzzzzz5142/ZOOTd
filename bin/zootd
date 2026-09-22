@@ -282,6 +282,9 @@ Commands:
   run [options]         Run the unified daily launcher (automatic farming by default)
   raw-run [task] [profile]
                         Run one MAA task directly, without launcher orchestration
+  box-login [--token|--cred]
+                        Experimental: interactive Skland phone/SMS login
+  box-sync [--uid UID]   Experimental: read-only operator Box sync (no game launch)
   doctor                Check dependencies and the promoted runtime receipt
   advisor-check         Run and archive one bounded real-model connectivity probe
   supervisor-check      Send one synthetic failure to the exception-only LLM supervisor
@@ -316,6 +319,11 @@ case "${command_name}" in
     raw-run)
         shift
         run_raw_task "$@"
+        ;;
+    box-login|box-sync)
+        shift
+        export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec python3 -m maa_planner.box_cli --project-root "${project_root}" "${command_name}" "$@"
         ;;
     proxy-status|proxy-reset)
         shift

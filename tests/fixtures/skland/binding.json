@@ -1,0 +1,28 @@
+{
+  "code": 0,
+  "data": {
+    "list": [
+      {
+        "appCode": "endfield",
+        "bindingList": []
+      },
+      {
+        "appCode": "arknights",
+        "bindingList": [
+          {
+            "uid": "123456789",
+            "isOfficial": true,
+            "isDelete": false,
+            "channelMasterId": "1"
+          },
+          {
+            "uid": "987654321",
+            "isOfficial": false,
+            "isDelete": false,
+            "channelMasterId": "2"
+          }
+        ]
+      }
+    ]
+  }
+}

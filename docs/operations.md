@@ -235,3 +235,32 @@ journalctl --user -u zootd-dashboard.service -n 50
 `./scripts/install-systemd.sh` 也会安装面板 unit，但不会自动启用面板。如需无人登录时持续运行，按前述部署步骤启用用户 lingering。改端口可用 `systemctl --user edit zootd-dashboard.service` 覆盖 `ExecStart`（先写空 `ExecStart=`，再写 `/usr/bin/python3 -m maa_planner.dashboard --host 0.0.0.0 --port 新端口`），随后重启服务。停止面板：`systemctl --user disable --now zootd-dashboard.service`。
 
 面板默认监听 `0.0.0.0:8765`，允许通过服务器任意 IPv4 地址或主机名访问，无需登录，适用于可信内网；无需新增 Python 或 Node 依赖。如需仅本机访问，将 `--host` 改为 `127.0.0.1`。面板不启动游戏、不修改 runtime 或审计记录，也不提供执行任务的接口。
+
+## 森空岛登录与 Box 同步（experimental）
+
+这是用户单独调用的实验功能；不接入 `run`、daily、定时器或自动恢复，不启动 Waydroid、MAA 或游戏。未来查找并执行 Copilot 也只允许显式实验命令触发，进度见 [Copilot 路线图](copilot/README.md)。目前尚未实现 `copilot-run`。
+
+在自己的交互终端、项目根目录运行：
+
+```bash
+./bin/zootd box-login
+./bin/zootd box-sync
+```
+
+`box-login` 正常显示手机号和短信验证码输入，方便本机核对；发送一次验证码，完成认证后保存登录 token。手机号和验证码不保存；程序不打印 token、cred、签名 token 或远端错误原文，不接受命令行凭据值和管道输入。不要把这些值粘贴到聊天或代理工具调用中。首次使用前应已在官方森空岛绑定明日方舟国服官服角色。
+
+凭据文件为 `var/secrets/skland.json`（0600），父目录 `var/secrets` 为 0700，均在 Git 忽略目录中；该文件是依靠文件权限保护的本地明文，不是加密保险库。不要把它收集进日志或提交。失败的重新登录保留上次凭据；token 失效时重新执行 `box-login`。不自动发送验证码、不自动重试登录。若服务器要求额外风控验证，先到 [森空岛官网](https://www.skland.com/) 完成，命令本身不会绕过验证。
+
+可选手动导入已有登录凭据（同样在终端隐藏输入，不写到参数中）：
+
+```bash
+./bin/zootd box-login --token
+# 或已有 Skland cred 时：
+./bin/zootd box-login --cred
+```
+
+浏览器获取 token 的备用方式：先在森空岛官网登录，再在同一浏览器访问 [鹰角登录凭据接口](https://web-api.skland.com/account/info/hg)，将 `data.content` 只粘贴到 `--token` 的隐藏提示中。[开源客户端操作参考](https://github.com/xjwwjx/skland-auto-sign#1-获取-token)。手机号登录接口与签名依据见 [Phase 0 调研](copilot/phase-0-skland-box.md#协议调研与模型调整)，第三方协议可能变化；当前真实账号验收状态以路线图为准。
+
+`box-sync` 只读取绑定与干员练度；唯一官服角色自动选中，多官服角色必须显式指定 `--uid UID`。成功后仅打印数量、时间、内容哈希和路径，最小化的规范 Box 保存在 `var/state/operator-box.json`（0600）；含账号命名空间但不保存完整 player response。失败返回非零并保留旧文件，旧文件不代表这次同步成功。错误类别区分 authentication、permission、network、protocol、no_official_account、account_selection、account_mismatch、input 和 storage。
+
+真实验收时在本机查看该规范快照，对照游戏核对一个六星的精英化、等级、有专精的技能和已开启模组；记录核对是否通过即可，不上传凭据或完整原始响应。缺失字段 null 表示未知，不能当作 0 或满足作业条件。此命令仅做只读同步，不改变现有 runtime receipt 或能力账本。
