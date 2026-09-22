@@ -71,6 +71,7 @@ activity_fight_completed=false
 server_timezone=Asia/Shanghai
 daily_completed_game_day=""
 daily_attempt_timeout=3h
+daily_attempt_pid=""
 drone_threshold="${MAA_PURE_GOLD_DRONE_THRESHOLD}"
 drone_mode=_NotUse
 runtime_task_config_dir=""
@@ -93,6 +94,7 @@ farming_phase_outcome=not-applicable
 farming_evidence_log=""
 depot_evidence_log=""
 daily_evidence_log=""
+daily_attempt_evidence=()
 award_evidence_log=""
 supervisor_run_id=""
 supervisor_active_phase=""
@@ -417,6 +419,10 @@ cleanup() {
     # Explicit INT/TERM still stop the process (including systemd slot handoff).
     trap '' HUP
 
+    if [[ -n "${daily_attempt_pid:-}" ]]; then
+        stop_daily_attempt
+    fi
+
     if [[ -n "${supervisor_run_id}" && -n "${supervisor_active_phase}" ]]; then
         if [[ -n "${supervisor_active_evidence}" &&
               -f "${supervisor_active_evidence}" ]]; then
@@ -603,6 +609,171 @@ network_is_ready() {
     timeout --signal=TERM --kill-after=2s 12s adb -s "${waydroid_serial}" shell \
         "curl -kfsSI --connect-timeout 4 --max-time 8 '${network_test_url}' >/dev/null" \
         >/dev/null 2>&1
+}
+
+prepare_waydroid_device() {
+    local runtime_dir wait_status size_output package_path
+    import_desktop_environment
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    runtime_dir="${XDG_RUNTIME_DIR}"
+
+    if ! waydroid_session_is_running; then
+        session_started_by_launcher=true
+    fi
+
+    waydroid_ui_log="${project_root}/var/state/host/waydroid-ui-$(date '+%Y%m%d-%H%M%S').log"
+    if [[ "${session_started_by_launcher}" == true ]]; then
+        info "opening the scaled Waydroid UI (log: ${waydroid_ui_log})"
+        "${scaled_ui}" 8>&- 9>&- >"${waydroid_ui_log}" 2>&1 &
+    else
+        if [[ -n "${WAYLAND_DISPLAY:-}" && -S "${runtime_dir}/${WAYLAND_DISPLAY}" ]]; then
+            info "reusing the running Waydroid session and opening its UI (log: ${waydroid_ui_log})"
+            waydroid show-full-ui 8>&- 9>&- >"${waydroid_ui_log}" 2>&1 &
+            waydroid_ui_pid=$!
+        else
+            # A session started by another managed run is already usable through
+            # ADB. It needs neither a desktop surface nor a synthetic watcher.
+            info "reusing the running headless Waydroid session"
+            : >"${waydroid_ui_log}"
+            waydroid_ui_pid=""
+        fi
+    fi
+    if [[ "${session_started_by_launcher}" == true ]]; then
+        waydroid_ui_pid=$!
+    fi
+
+    if wait_for_waydroid; then
+        :
+    else
+        wait_status=$?
+        if (( wait_status == 2 )); then
+            die "Waydroid UI exited during startup; inspect ${waydroid_ui_log}"
+        fi
+        if timeout --signal=TERM --kill-after=2s 5s adb devices 2>/dev/null |
+           awk -v serial="${waydroid_serial}" '$1 == serial && $2 == "unauthorized" { found = 1 } END { exit !found }'; then
+            die "ADB is unauthorized; accept the debugging dialog in Waydroid and retry"
+        fi
+        die "Waydroid did not become ready within 120 seconds; inspect ${waydroid_ui_log}"
+    fi
+
+    info "ADB is ready: ${waydroid_serial}"
+    timeout --signal=TERM --kill-after=2s 10s waydroid prop set persist.waydroid.width "${display_width}"
+    timeout --signal=TERM --kill-after=2s 10s waydroid prop set persist.waydroid.height "${display_height}"
+    timeout --signal=TERM --kill-after=2s 10s waydroid prop set persist.waydroid.multi_windows false
+    timeout --signal=TERM --kill-after=2s 10s \
+        adb -s "${waydroid_serial}" shell wm size "${display_width}x${display_height}"
+
+    size_output="$(timeout --signal=TERM --kill-after=2s 10s \
+        adb -s "${waydroid_serial}" shell wm size | tr -d '\r')"
+    if ! grep -Eq "(Override|Physical) size: ${display_width}x${display_height}$" <<<"${size_output}"; then
+        die "failed to set Waydroid resolution to ${display_width}x${display_height}: ${size_output}"
+    fi
+    info "Waydroid resolution: ${display_width}x${display_height}"
+
+    package_path="$(timeout --signal=TERM --kill-after=2s 10s \
+        adb -s "${waydroid_serial}" shell pm path "${official_package}" 2>/dev/null |
+        tr -d '\r' || true)"
+    grep -Fq 'package:' <<<"${package_path}" ||
+        die "official Arknights package is not installed: ${official_package}"
+
+    network_is_ready ||
+        die "Waydroid cannot reach ${network_test_url}; run scripts/install-network-fix.sh once"
+    info "Waydroid network is ready"
+}
+
+daily_log_has_game_offline() {
+    local log_file="$1"
+    [[ -s "${log_file}" ]] &&
+        grep -Eq '^\[[^]]+ WARN[[:space:]]*\] GameOffline[[:space:]]*$' "${log_file}"
+}
+
+stop_daily_attempt() {
+    local attempt
+    [[ -n "${daily_attempt_pid}" ]] || return 0
+    # setsid gives this attempt its own process group, including Maa children.
+    kill -INT -- "-${daily_attempt_pid}" 2>/dev/null ||
+        kill -INT "${daily_attempt_pid}" 2>/dev/null || true
+    for attempt in {1..20}; do
+        if ! kill -0 -- "-${daily_attempt_pid}" 2>/dev/null &&
+           ! kill -0 "${daily_attempt_pid}" 2>/dev/null; then
+            break
+        fi
+        sleep 0.25
+    done
+    kill -KILL -- "-${daily_attempt_pid}" 2>/dev/null || true
+    kill -KILL "${daily_attempt_pid}" 2>/dev/null || true
+    wait "${daily_attempt_pid}" 2>/dev/null || true
+    daily_attempt_pid=""
+}
+
+run_daily_attempt() {
+    local duration="$1"
+    local log_file="$2"
+    local status=0
+    [[ ! -e "${log_file}" ]] || die "refusing to monitor an existing daily log: ${log_file}"
+    setsid timeout --foreground --signal=INT --kill-after=5s "${duration}" \
+        env MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" \
+        --log-file="${log_file}" run "${MAA_HOST_TASK}" --profile "${MAA_HOST_PROFILE}" \
+        8>&- 9>&- &
+    daily_attempt_pid=$!
+    while kill -0 "${daily_attempt_pid}" 2>/dev/null; do
+        if daily_log_has_game_offline "${log_file}"; then
+            info "GameOffline detected; interrupting this MAA attempt without waiting for later tasks"
+            stop_daily_attempt
+            return 75
+        fi
+        sleep 0.5
+    done
+    wait "${daily_attempt_pid}" || status=$?
+    # A timeout or crashed MAA can leave descendants after its leader exits.
+    stop_daily_attempt
+    # A short-lived MAA may finish before the polling loop sees its callback.
+    if daily_log_has_game_offline "${log_file}"; then
+        return 75
+    fi
+    return "${status}"
+}
+
+restart_waydroid_after_game_offline() {
+    local attempt
+    info "GameOffline in this daily attempt; rebuilding Waydroid once before the daily retry"
+    if [[ -n "${waydroid_serial}" ]]; then
+        timeout --signal=TERM --kill-after=2s 10s \
+            adb -s "${waydroid_serial}" shell am force-stop "${official_package}" || true
+    fi
+    timeout --signal=TERM --kill-after=5s 20s waydroid session stop ||
+        die "could not stop Waydroid for the GameOffline retry"
+    if waydroid_session_is_running; then
+        die "Waydroid is still running after the GameOffline session stop"
+    fi
+    if [[ -n "${waydroid_ui_pid}" ]]; then
+        if kill -0 "${waydroid_ui_pid}" 2>/dev/null; then
+            kill -TERM "${waydroid_ui_pid}" 2>/dev/null || true
+        fi
+        for attempt in {1..20}; do
+            kill -0 "${waydroid_ui_pid}" 2>/dev/null || break
+            sleep 0.25
+        done
+        if kill -0 "${waydroid_ui_pid}" 2>/dev/null; then
+            kill -KILL "${waydroid_ui_pid}" 2>/dev/null || true
+        fi
+        wait "${waydroid_ui_pid}" 2>/dev/null || true
+        waydroid_ui_pid=""
+    fi
+    # A reused surface may have its own owner. Let it release its UI lock;
+    # never kill an unrelated compositor or bypass that lock.
+    for attempt in {1..20}; do
+        if flock -n "${project_root}/var/run/waydroid-scaled-ui.lock" true; then
+            break
+        fi
+        sleep 0.25
+    done
+    flock -n "${project_root}/var/run/waydroid-scaled-ui.lock" true ||
+        die "the previous Waydroid surface is still busy after GameOffline"
+    waydroid_serial=""
+    session_started_by_launcher=false
+    prepare_waydroid_device
+    info "Waydroid rebuilt; the daily retry will relaunch the existing official game account"
 }
 
 run_with_timeout() {
@@ -913,23 +1084,25 @@ run_daily_routine() {
     daily_stamp="$(date '+%Y%m%d-%H%M%S-%N')"
     daily_log="${project_root}/var/state/host/${daily_stamp}-daily.log"
     daily_evidence_log="${daily_log}"
+    daily_attempt_evidence=(--evidence-file "${daily_log}")
     supervisor_active_evidence="${daily_log}"
     info "MAA log: ${daily_log}"
     render_runtime_task daily "${drone_mode}"
-    if run_soft_with_timeout "${daily_attempt_timeout}" env \
-       MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${daily_log}" \
-           run "${MAA_HOST_TASK}" --profile "${MAA_HOST_PROFILE}" &&
+    if run_daily_attempt "${daily_attempt_timeout}" "${daily_log}" &&
        daily_log_is_complete "${daily_log}"; then
         info "daily first attempt has complete protected task-chain evidence"
     else
+        if daily_log_has_game_offline "${daily_log}"; then
+            restart_waydroid_after_game_offline
+        fi
         retry_log="${project_root}/var/state/host/${daily_stamp}-daily-retry.log"
+        daily_attempt_evidence+=(--evidence-file "${retry_log}")
         daily_evidence_log="${retry_log}"
         supervisor_active_evidence="${retry_log}"
         info "daily is reentrant; retrying the complete managed stage once"
         info "MAA retry log: ${retry_log}"
-        run_with_timeout "${daily_attempt_timeout}" env \
-            MAA_CONFIG_DIR="${runtime_task_config_dir}" "${maa}" --log-file="${retry_log}" \
-                run "${MAA_HOST_TASK}" --profile "${MAA_HOST_PROFILE}"
+        run_daily_attempt "${daily_attempt_timeout}" "${retry_log}" ||
+            die "daily retry failed after the bounded local recovery; inspect ${retry_log}"
         daily_log_is_complete "${retry_log}" ||
             die "daily retry returned without complete task-chain evidence; inspect ${retry_log}"
     fi
@@ -1456,6 +1629,7 @@ require_command grep
 require_command ln
 require_command mktemp
 require_command rm
+require_command setsid
 require_command systemctl
 require_command timeout
 require_command waydroid
@@ -1547,72 +1721,7 @@ if [[ "${dry_run}" == true ]]; then
 fi
 
 supervisor_begin_phase device-readiness
-import_desktop_environment
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-runtime_dir="${XDG_RUNTIME_DIR}"
-
-if ! waydroid_session_is_running; then
-    session_started_by_launcher=true
-fi
-
-waydroid_ui_log="${project_root}/var/state/host/waydroid-ui-$(date '+%Y%m%d-%H%M%S').log"
-if [[ "${session_started_by_launcher}" == true ]]; then
-    info "opening the scaled Waydroid UI (log: ${waydroid_ui_log})"
-    "${scaled_ui}" 8>&- 9>&- >"${waydroid_ui_log}" 2>&1 &
-else
-    if [[ -n "${WAYLAND_DISPLAY:-}" && -S "${runtime_dir}/${WAYLAND_DISPLAY}" ]]; then
-        info "reusing the running Waydroid session and opening its UI (log: ${waydroid_ui_log})"
-        waydroid show-full-ui 8>&- 9>&- >"${waydroid_ui_log}" 2>&1 &
-        waydroid_ui_pid=$!
-    else
-        # A session started by another managed run is already usable through
-        # ADB. It needs neither a desktop surface nor a synthetic watcher.
-        info "reusing the running headless Waydroid session"
-        : >"${waydroid_ui_log}"
-        waydroid_ui_pid=""
-    fi
-fi
-if [[ "${session_started_by_launcher}" == true ]]; then
-    waydroid_ui_pid=$!
-fi
-
-if wait_for_waydroid; then
-    :
-else
-    wait_status=$?
-    if (( wait_status == 2 )); then
-        die "Waydroid UI exited during startup; inspect ${waydroid_ui_log}"
-    fi
-    if timeout --signal=TERM --kill-after=2s 5s adb devices 2>/dev/null |
-       awk -v serial="${waydroid_serial}" '$1 == serial && $2 == "unauthorized" { found = 1 } END { exit !found }'; then
-        die "ADB is unauthorized; accept the debugging dialog in Waydroid and retry"
-    fi
-    die "Waydroid did not become ready within 120 seconds; inspect ${waydroid_ui_log}"
-fi
-
-info "ADB is ready: ${waydroid_serial}"
-timeout --signal=TERM --kill-after=2s 10s waydroid prop set persist.waydroid.width "${display_width}"
-timeout --signal=TERM --kill-after=2s 10s waydroid prop set persist.waydroid.height "${display_height}"
-timeout --signal=TERM --kill-after=2s 10s waydroid prop set persist.waydroid.multi_windows false
-timeout --signal=TERM --kill-after=2s 10s \
-    adb -s "${waydroid_serial}" shell wm size "${display_width}x${display_height}"
-
-size_output="$(timeout --signal=TERM --kill-after=2s 10s \
-    adb -s "${waydroid_serial}" shell wm size | tr -d '\r')"
-if ! grep -Eq "(Override|Physical) size: ${display_width}x${display_height}$" <<<"${size_output}"; then
-    die "failed to set Waydroid resolution to ${display_width}x${display_height}: ${size_output}"
-fi
-info "Waydroid resolution: ${display_width}x${display_height}"
-
-package_path="$(timeout --signal=TERM --kill-after=2s 10s \
-    adb -s "${waydroid_serial}" shell pm path "${official_package}" 2>/dev/null |
-    tr -d '\r' || true)"
-grep -Fq 'package:' <<<"${package_path}" ||
-    die "official Arknights package is not installed: ${official_package}"
-
-network_is_ready ||
-    die "Waydroid cannot reach ${network_test_url}; run scripts/install-network-fix.sh once"
-info "Waydroid network is ready"
+prepare_waydroid_device
 
 supervisor_record_phase device-readiness succeeded device-ready \
     --detail "serial=${waydroid_serial}" \
@@ -1665,7 +1774,7 @@ run_daily_routine
 supervisor_record_phase daily succeeded protected-daily-complete \
     --detail "game_day=${daily_completed_game_day}" \
     --detail "drone_mode=${drone_mode}" \
-    --evidence-file "${daily_evidence_log}" || true
+    "${daily_attempt_evidence[@]}" || true
 
 supervisor_begin_phase source-refresh
 refresh_planner_sources_if_needed

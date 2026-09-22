@@ -422,7 +422,12 @@ class HighLevelRequirementTests(unittest.TestCase):
             "daily is reentrant; retrying the complete managed stage once",
             daily_function,
         )
-        self.assertEqual(daily_function.count('run "${MAA_HOST_TASK}"'), 2)
+        self.assertEqual(daily_function.count('run_daily_attempt "${daily_attempt_timeout}"'), 2)
+        daily_attempt = launcher[
+            launcher.index("run_daily_attempt() {"):
+            launcher.index("restart_waydroid_after_game_offline() {")
+        ]
+        self.assertEqual(daily_attempt.count('run "${MAA_HOST_TASK}"'), 1)
         self.assertIn('render_runtime_task daily "${drone_mode}"', daily_function)
         self.assertNotIn("drone_input_index", launcher)
         self.assertNotIn("[tasks.params.drones]", (ROOT / "config/tasks/daily.toml").read_text())
