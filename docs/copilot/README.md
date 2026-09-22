@@ -16,7 +16,7 @@
 | Phase | 文档 | 状态 | 依赖 |
 |---|---|---|---|
 | 0 | [skland-box](phase-0-skland-box.md) | done（7/7，2026-09-23） | 无 |
-| 1 | [prts-client](phase-1-prts-client.md) | todo | Phase 0 |
+| 1 | [prts-client](phase-1-prts-client.md) | done（4/4，2026-09-23） | Phase 0 |
 | 2 | [matcher](phase-2-matcher.md) | todo | Phase 1 |
 | 3 | [technical-mvp](phase-3-technical-mvp.md) | todo | Phase 2 |
 | 4 | [retry](phase-4-retry.md) | todo | Phase 3 |
@@ -28,4 +28,4 @@
 
 Technical MVP：Phase 3 完成后评估一次。Experimental Operational MVP：Phase 6 完成；仍不启用日常自动触发。Phase 7 仅作为后续增强。
 
-Phase 0：Skland Box 与交互式登录已完成，真实同步与人工核对通过。下一步为 Phase 1 的 PRTS 只读候选查询，尚未开始。Phase 0–2 不启动游戏；Phase 3 起真实战斗另需用户明确指定关卡和授权。
+Phase 0：Skland Box 与交互式登录已完成，真实同步与人工核对通过。Phase 1：PRTS 轻量查询、指定 ID 完整获取、关卡身份复核和真实只读验收已完成。下一步为 Phase 2 matcher。Phase 0–2 不启动游戏；Phase 3 起真实战斗另需用户明确指定关卡和授权。

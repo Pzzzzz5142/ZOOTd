@@ -284,6 +284,10 @@ Commands:
                         Run one MAA task directly, without launcher orchestration
   box-login [--token|--cred]
                         Experimental: interactive Skland phone/SMS login
+  copilot-query STAGE [--page N] [--limit N]
+                        Experimental: query lightweight PRTS candidates
+  copilot-get ID --stage STAGE
+                        Experimental: retrieve one full PRTS copilot (no game launch)
   box-sync [--uid UID]   Experimental: read-only operator Box sync (no game launch)
   doctor                Check dependencies and the promoted runtime receipt
   advisor-check         Run and archive one bounded real-model connectivity probe
@@ -319,6 +323,11 @@ case "${command_name}" in
     raw-run)
         shift
         run_raw_task "$@"
+        ;;
+    copilot-query|copilot-get)
+        shift
+        export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec python3 -m maa_planner.prts_cli --project-root "${project_root}" "${command_name}" "$@"
         ;;
     box-login|box-sync)
         shift
