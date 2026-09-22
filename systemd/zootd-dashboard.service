@@ -1,0 +1,16 @@
+[Unit]
+Description=ZOOTd read-only web monitoring dashboard
+ConditionPathExists=%h/Projects/zootd/web/index.html
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/zootd
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m maa_planner.dashboard --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target
