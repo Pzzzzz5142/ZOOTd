@@ -16,7 +16,9 @@ class LauncherSignalTests(unittest.TestCase):
         launcher = (ROOT / "scripts/run-daily.sh").read_text()
         # Execute the production cleanup and signal handlers; stub only device
         # operations and the planner so no test touches the game or a model.
-        section = launcher[launcher.index("cleanup() {"):
+        stop = launcher[launcher.index("stop_daily_attempt() {"):
+                        launcher.index("run_daily_attempt() {")]
+        section = stop + launcher[launcher.index("cleanup() {"):
                            launcher.index("wait_for_waydroid() {")]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -89,6 +91,16 @@ exec 9>"$project_root/lock9"
                         f'kill -{signal} "$$"', audit_error=audit_error)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertNotIn("supervisor-recover-run", calls)
+
+    def test_explicit_stop_reaps_the_monitored_daily_process(self):
+        result, calls, _ = self.run_cleanup(
+            'setsid sleep 60 & daily_attempt_pid=$!; sleep 0.05; '
+            'echo "daily-pid $daily_attempt_pid" >>"$project_root/calls"; kill -TERM "$$"')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("supervisor-recover-run", calls)
+        pid = next(line.split()[1] for line in calls.splitlines()
+                   if line.startswith("daily-pid "))
+        self.assertFalse(Path(f"/proc/{pid}").exists())
 
     def test_failed_recovery_does_not_become_success(self):
         result, calls, log = self.run_cleanup('kill -HUP "$$"', recovery=1)

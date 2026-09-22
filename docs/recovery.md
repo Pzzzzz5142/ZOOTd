@@ -41,6 +41,8 @@
 
 所有受管阶段都按可重入处理，包括 daily：无论父 run 已进入或完成基建、公招、商店，恢复代理都可重新执行一轮完整 launcher；`unsafe-stateful-replay` 不再是 blocker。每个 agent 内部子 run 失败后仍由同一恢复会话继续分析和整轮重试。
 
+daily 的 `GameOffline` 先由启动器进行快速中断和一次确定性会话重建；成功后的完整 daily 重试仍需通过原有证据验收，本地修复或重试失败才调用 LLM。触发条件、等待上限和日志见[运维手册](operations.md#手动运行与检查)。
+
 手动运行的终端挂断（SIGHUP）也会记录失败并进入整轮恢复；后续输出写入 `var/state/host/<run-id>-hangup.log`，cleanup 和恢复子进程忽略重复 HUP，不再依赖已断开的终端输入输出。只有启动器实际收到 SIGINT（如 Ctrl-C）或 SIGTERM 时才按显式停止处理，不自动重启任务，以保留 systemd 停止和槽位交接的语义。普通命令返回 129/130/143 本身不代表操作者取消，不能据此跳过恢复。嵌套恢复仍由已有恢复线程接管，不递归调用代理。
 
 没有代理作战或关卡未开放属于局部游戏状态：自动模式应跳过该候选并尝试下一候选/常驻回退；用户明确指定的唯一关卡不可用，或所有合规候选/回退都不可用时，才允许以 `proxy-unavailable` 或 `stage-closed` scope blocker 结束。游戏内资源下载和官服 APK 更新都属于恢复范围；若商店要求人工账号操作，代理改用 `https://ak.hypergryph.com/downloads/android_lastest` 动态解析当期官服 APK，并通过 ADB replacement install 保留数据。
