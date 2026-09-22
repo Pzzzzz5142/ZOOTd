@@ -1,4 +1,4 @@
-"""Loopback-only, read-only view of the supervisor's immutable history."""
+"""Read-only web view of the supervisor's immutable history."""
 from __future__ import annotations
 
 import argparse
@@ -90,10 +90,6 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        # Reject foreign Host headers (including DNS rebinding). No CORS is enabled.
-        if self.headers.get("Host") not in {f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"}:
-            self.send_body(403, b"Forbidden", "text/plain")
-            return
         url = urlsplit(self.path)
         static = {"/": ("index.html", "text/html; charset=utf-8"),
                   "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -129,14 +125,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="ZOOTd read-only local dashboard")
+    parser = argparse.ArgumentParser(description="ZOOTd read-only web dashboard")
     parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument("--host", default="0.0.0.0", help="IPv4 listen address (default: all interfaces)")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), partial(Handler, root=args.project_root.resolve()))
-    print(f"ZOOTd 面板：http://127.0.0.1:{args.port} （Ctrl+C 停止）", flush=True)
+    server = ThreadingHTTPServer((args.host, args.port), partial(Handler, root=args.project_root.resolve()))
+    print(f"ZOOTd 面板：http://{args.host}:{args.port} （Ctrl+C 停止）", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -13,7 +13,7 @@
 - `bin/zootd-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
 - `requirements.txt` / `.venv/`：官方 Python Codex SDK 的项目本地运行环境；不固定 SDK 版本，随最新稳定版升级，SDK 自动安装配套 Codex runtime。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
-- `maa_planner/dashboard.py` / `web/`：仅监听 loopback 的标准库 HTTP 服务与无构建步骤的中文 Web 面板；`tests/test_dashboard.py` 验证历史证据、分页及只读 HTTP 边界。
+- `maa_planner/dashboard.py` / `web/`：默认监听所有 IPv4 接口的标准库 HTTP 服务与无构建步骤的中文 Web 面板；`tests/test_dashboard.py` 验证历史证据、分页及只读 HTTP 边界。
 - `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存、阶段账本及 LLM 权限边界。
 - `config/farming.toml`：活动、freshness、选关和库存目标策略。
 - `config/material-recipes.toml`：严格校验的经典 T1→T2→T3 合成链，只用于蓝材料等价库存计算，不执行合成。

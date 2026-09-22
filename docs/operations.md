@@ -214,13 +214,13 @@ systemctl --user status zootd-log-cleanup.timer
 
 ## Web 监控面板
 
-本地只读 Web 面板展示早晚托管 systemd 服务状态、MAA Core receipt 版本、历史运行结果和每轮阶段详情。历史直接读取 `var/state/supervisor/runs/`，校验事件哈希链，并以完整阶段及终态判断通过；不以 `latest-run.json` 或进程退出码替代运行证据。恢复后的重跑单独展示，原失败记录保留。阶段数据含已记录的刷图结果和证据文件路径，不提供原始日志下载。
+内网只读 Web 面板展示早晚托管 systemd 服务状态、MAA Core receipt 版本、历史运行结果和每轮阶段详情。历史直接读取 `var/state/supervisor/runs/`，校验事件哈希链，并以完整阶段及终态判断通过；不以 `latest-run.json` 或进程退出码替代运行证据。恢复后的重跑单独展示，原失败记录保留。阶段数据含已记录的刷图结果和证据文件路径，不提供原始日志下载。
 
 ```bash
-./bin/zootd dashboard --port 8765
+./bin/zootd dashboard --host 0.0.0.0 --port 8765
 ```
 
-打开 <http://127.0.0.1:8765>，页面每 10 秒刷新；支持分页、当前页状态筛选、运行 ID 搜索及阶段详情。服务状态仅对应 `zootd.service` 与 `zootd-prereset.service`，手动启动的任务不属于该状态；未结束记录不代表进程仍存活。连接失败保留并标记旧快照。历史保留期沿用日志清理策略，默认七天；面板不创建额外历史副本。runtime 版本是最近 receipt 中的记录，不代表实时重新验证。
+内网设备打开 `http://服务器内网IP:8765`，服务器本机也可打开 <http://127.0.0.1:8765>。页面每 10 秒刷新；支持分页、当前页状态筛选、运行 ID 搜索及阶段详情。服务状态仅对应 `zootd.service` 与 `zootd-prereset.service`，手动启动的任务不属于该状态；未结束记录不代表进程仍存活。连接失败保留并标记旧快照。历史保留期沿用日志清理策略，默认七天；面板不创建额外历史副本。runtime 版本是最近 receipt 中的记录，不代表实时重新验证。
 
 注册为用户级 systemd 服务（默认仓库路径 `~/Projects/zootd`）：
 
@@ -232,6 +232,6 @@ systemctl --user status zootd-dashboard.service --no-pager
 journalctl --user -u zootd-dashboard.service -n 50
 ```
 
-`./scripts/install-systemd.sh` 也会安装面板 unit，但不会自动启用面板。如需无人登录时持续运行，按前述部署步骤启用用户 lingering。改端口可用 `systemctl --user edit zootd-dashboard.service` 覆盖 `ExecStart`（先写空 `ExecStart=`，再写 `/usr/bin/python3 -m maa_planner.dashboard --port 新端口`），随后重启服务。停止面板：`systemctl --user disable --now zootd-dashboard.service`。
+`./scripts/install-systemd.sh` 也会安装面板 unit，但不会自动启用面板。如需无人登录时持续运行，按前述部署步骤启用用户 lingering。改端口可用 `systemctl --user edit zootd-dashboard.service` 覆盖 `ExecStart`（先写空 `ExecStart=`，再写 `/usr/bin/python3 -m maa_planner.dashboard --host 0.0.0.0 --port 新端口`），随后重启服务。停止面板：`systemctl --user disable --now zootd-dashboard.service`。
 
-面板只监听 `127.0.0.1`，无需新增 Python 或 Node 依赖。远程查看可建立 SSH 隧道：`ssh -L 8765:127.0.0.1:8765 用户@宿主机`，然后访问本机同一地址。面板不启动游戏、不修改 runtime 或审计记录，也不提供执行任务的接口。
+面板默认监听 `0.0.0.0:8765`，允许通过服务器任意 IPv4 地址或主机名访问，无需登录，适用于可信内网；无需新增 Python 或 Node 依赖。如需仅本机访问，将 `--host` 改为 `127.0.0.1`。面板不启动游戏、不修改 runtime 或审计记录，也不提供执行任务的接口。
