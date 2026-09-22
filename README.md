@@ -38,6 +38,6 @@ waydroid adb connect
 
 ## 文档
 
-- [运维手册](docs/operations.md)：部署、运行、定时器、更新回滚与排障。
+- [运维手册](docs/operations.md)：部署、运行、Web 监控面板、定时器、更新回滚与排障。
 - [策略与配置](docs/configuration.md)：库存目标、基建、剿灭与代理隔离。
 - [完整文档索引](docs/README.md)：架构、开发、恢复契约与历史记录。
