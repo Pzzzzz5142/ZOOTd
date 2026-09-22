@@ -14,6 +14,7 @@
 - `requirements.txt` / `.venv/`：官方 Python Codex SDK 的项目本地运行环境；不固定 SDK 版本，随最新稳定版升级，SDK 自动安装配套 Codex runtime。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
 - `maa_planner/dashboard.py` / `web/`：默认监听所有 IPv4 接口的标准库 HTTP 服务与无构建步骤的中文 Web 面板；`tests/test_dashboard.py` 验证历史证据、分页及只读 HTTP 边界。
+- `maa_planner/operator_box.py` / `skland.py` / `box_cli.py`：独立 experimental Box 模型、森空岛协议与本机交互登录；`tests/test_skland.py` 使用合成 fixture 离线验证，不发送短信或调用真实账号。进度见 [Copilot 路线图](copilot/README.md)。
 - `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存、阶段账本及 LLM 权限边界。
 - `config/farming.toml`：活动、freshness、选关和库存目标策略。
 - `config/material-recipes.toml`：严格校验的经典 T1→T2→T3 合成链，只用于蓝材料等价库存计算，不执行合成。

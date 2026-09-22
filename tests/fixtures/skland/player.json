@@ -1,0 +1,17 @@
+{
+  "code": 0,
+  "data": {
+    "status": {"uid": "123456789", "name": "SYNTHETIC-PRIVATE-NAME"},
+    "chars": [
+      {
+        "charId": "char_fixture_six", "evolvePhase": 2, "level": 70,
+        "potentialRank": 0, "mainSkillLvl": 7,
+        "skills": [{"id": "skcom_atk_up[1]", "specializeLevel": 0}, {"id": "skchr_fixture_3", "specializeLevel": 3}],
+        "equip": [{"id": "uniequip_fixture_x", "level": 3, "locked": false}, {"id": "uniequip_fixture_y", "level": 1, "locked": true}],
+        "gainTime": 12345, "skinId": "not-needed"
+      },
+      {"charId": "char_fixture_unknown"}
+    ],
+    "building": {"private": "SYNTHETIC-PRIVATE-BUILDING"}
+  }
+}
