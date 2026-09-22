@@ -57,7 +57,7 @@ def service_status(unit: str = "zootd.service") -> dict:
     try:
         response = subprocess.run(
             ["systemctl", "--user", "show", unit, "--no-pager",
-             "--property=LoadState,ActiveState,SubState,MainPID,Result"],
+             "--property=LoadState,ActiveState,SubState,MainPID,Result,ExecMainStatus,ExecMainExitTimestamp"],
             capture_output=True, text=True, timeout=3, check=False)
         values = dict(line.split("=", 1) for line in response.stdout.splitlines() if "=" in line)
         if response.returncode or values.get("LoadState") != "loaded":
@@ -72,6 +72,25 @@ def history(root: Path, offset: int = 0, limit: int = 30) -> dict:
     ids = sorted((p.name for p in directory.iterdir() if RUN_ID.fullmatch(p.name)), reverse=True) if directory.exists() else []
     runs = [read_run(root, run_id) for run_id in ids[offset:offset + limit]]
     return {"total": len(ids), "offset": offset, "limit": limit, "runs": runs}
+
+
+def overview(root: Path) -> dict:
+    services = {unit: service_status(unit) for unit in
+                ("zootd.service", "zootd-prereset.service")}
+    active = [{"unit": unit, **service} for unit, service in services.items()
+              if service.get("available") and service.get("ActiveState") in
+              {"active", "activating", "deactivating", "reloading"}]
+    known_idle = all(service.get("available") and service.get("ActiveState") in
+                     {"inactive", "failed"} for service in services.values())
+    failures = [{"unit": unit, **service} for unit, service in services.items()
+                if service.get("available") and service.get("ActiveState") == "failed"]
+    latest = history(root, limit=1)["runs"]
+    return {"observed_at": datetime.now(UTC).isoformat(), "services": services,
+            "activity": {"state": "running" if active else "idle" if known_idle else "unknown",
+                         "units": active},
+            "service_failures": failures,
+            "latest_run": latest[0] if latest else None,
+            "runtime": runtime_snapshot(root)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -100,9 +119,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_body(200, (self.root / "web" / filename).read_bytes(), mime)
                 return
             if url.path == "/api/status":
-                data = {"observed_at": datetime.now(UTC).isoformat(), "services": {unit: service_status(unit) for unit in
-                                     ("zootd.service", "zootd-prereset.service")},
-                        "runtime": runtime_snapshot(self.root)}
+                data = overview(self.root)
             elif url.path == "/api/runs":
                 query = parse_qs(url.query)
                 offset, limit = int(query.get("offset", ["0"])[0]), int(query.get("limit", ["30"])[0])

@@ -10,7 +10,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from maa_planner.dashboard import Handler, history, read_run, service_status
+from maa_planner.dashboard import Handler, history, overview, read_run, service_status
 from maa_planner.supervisor import start_run, record_phase, finish_run
 from maa_planner.util import canonical_json, sha256_bytes
 
@@ -77,6 +77,41 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(history(self.root)['runs'], [])
         with patch('maa_planner.dashboard.subprocess.run', side_effect=OSError):
             self.assertEqual(service_status(), {'available':False})
+
+    def test_old_service_failure_does_not_override_idle_or_latest_success(self):
+        self.run_record(result='failed')
+        latest = self.run_record()
+        idle = {'available': True, 'ActiveState': 'inactive'}
+        failed = {'available': True, 'ActiveState': 'failed', 'Result': 'exit-code',
+                  'ExecMainStatus': '1', 'ExecMainExitTimestamp': 'yesterday'}
+        with patch('maa_planner.dashboard.service_status', side_effect=[idle, failed]):
+            result = overview(self.root)
+        self.assertEqual(result['activity']['state'], 'idle')
+        self.assertEqual(result['latest_run']['run_id'], latest)
+        self.assertEqual(result['latest_run']['status'], 'success')
+        self.assertEqual(result['service_failures'][0]['unit'], 'zootd-prereset.service')
+        self.assertEqual(result['service_failures'][0]['ExecMainStatus'], '1')
+
+    def test_running_and_partial_service_availability(self):
+        active = {'available': True, 'ActiveState': 'activating', 'MainPID': '123'}
+        with patch('maa_planner.dashboard.service_status', side_effect=[active, {'available': False}]):
+            result = overview(self.root)
+        self.assertEqual(result['activity']['state'], 'running')
+        self.assertIsNone(result['latest_run'])
+        with patch('maa_planner.dashboard.service_status', side_effect=[
+                {'available': True, 'ActiveState': 'inactive'}, {'available': False}]):
+            self.assertEqual(overview(self.root)['activity']['state'], 'unknown')
+
+    def test_latest_unfinished_or_invalid_run_is_not_skipped(self):
+        self.run_record()
+        latest = self.run_record(False)
+        with patch('maa_planner.dashboard.service_status', return_value={'available': False}):
+            self.assertEqual(overview(self.root)['latest_run']['status'], 'unfinished')
+            path = next((self.root / 'var/state/supervisor/runs' / latest / 'events').glob('*.json'))
+            path.write_text('{')
+            result = overview(self.root)
+        self.assertEqual(result['latest_run']['run_id'], latest)
+        self.assertEqual(result['latest_run']['status'], 'invalid')
 
     def test_http_routes_and_read_only_boundary(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, root=self.root))

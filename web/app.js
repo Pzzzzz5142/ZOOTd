@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const labels = {success:'已通过',failed:'未通过',invalid:'证据异常',unfinished:'未结束',succeeded:'通过','policy-resolved':'策略完成','not-applicable':'无需执行',degraded:'降级',pending:'尚无记录'};
 const phases = {'runtime-readiness':'运行环境','device-readiness':'设备准备',depot:'仓库扫描',daily:'基建与日常','source-refresh':'来源刷新',annihilation:'每周剿灭',farming:'材料刷图',award:'奖励领取',cleanup:'设备清理'};
 const modes = {full:'完整托管',award:'奖励领取','dry-run':'静态检查',device:'设备检查'};
-let state = {offset:0,total:0,runs:[],filter:'all',selected:null,busy:false};
+let state = {offset:0,total:0,runs:[],filter:'all',selected:null,latest:null,busy:false};
 function node(tag,text,className){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(className)n.className=className;return n;}
 function date(value){return value?new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—';}
 function duration(run){if(!run.finished_at)return '—';const s=Math.max(0,Math.round((new Date(run.finished_at)-new Date(run.started_at))/1000));return s<60?`${s} 秒`:`${Math.floor(s/60)} 分 ${s%60} 秒`;}
@@ -41,14 +41,26 @@ async function refresh(){
  if(state.busy)return;state.busy=true;$('refresh').disabled=true;render();
  try{const [status,list]=await Promise.all([api('/api/status'),api(`/api/runs?offset=${state.offset}&limit=30`)]);
  state.runs=list.runs;state.total=list.total;
- const services=Object.entries(status.services);const entry=services.find(([,s])=>s.available&&['active','activating','deactivating'].includes(s.ActiveState))||services.find(([,s])=>s.available&&s.ActiveState==='failed')||services.find(([,s])=>s.available)||['', {available:false}];const [unit,s]=entry;$('service').textContent=s.available?({active:'运行中',activating:'启动中',deactivating:'清理中',inactive:'空闲',failed:'服务失败'}[s.ActiveState]||s.ActiveState):'状态未知';
- $('service-detail').textContent=s.available?`${unit} · ${s.SubState} · PID ${s.MainPID}`:'无法读取用户级 systemd 服务';
+ const activity=status.activity;
+ $('service').textContent={running:'运行中',idle:'空闲',unknown:'状态未知'}[activity.state]||'状态未知';
+ $('service-detail').textContent=activity.units.length?activity.units.map(s=>`${s.unit} · ${s.SubState} · PID ${s.MainPID}`).join('；'):activity.state==='idle'?'当前没有正在执行的定时托管任务':'部分服务状态无法读取';
+ state.latest=status.latest_run;
+ $('latest-result').textContent=state.latest?(labels[state.latest.status]||state.latest.status):'暂无记录';
+ $('latest-detail').textContent=state.latest?`${modes[state.latest.mode]||'未知模式'} · ${date(state.latest.started_at)}${state.latest.finished_at?' · 耗时 '+duration(state.latest):''}`:'尚无托管运行记录';
+ $('latest-view').hidden=!state.latest;
+ const failures=status.service_failures;
+ const incomplete=Object.values(status.services).some(s=>!s.available);
+ $('service-failures').textContent=failures.length?`${failures.length} 个服务`:incomplete?'状态未知':'无';
+ $('failure-detail').replaceChildren();
+ for(const s of failures){$('failure-detail').append(node('div',`${s.unit} · ${s.Result} · 退出码 ${s.ExecMainStatus||'未知'}`),node('div',s.ExecMainExitTimestamp||'退出时间未知'));}
+ $('failure-detail').append(node('div',failures.length?'保留的上次失败状态；不代表当前仍在运行。':incomplete?'部分服务状态无法读取。':'systemd 未保留失败状态；历史运行记录见下方。'));
  const receipt=status.runtime.receipt;$('core').textContent=receipt?.core?.active_version||'暂无记录';$('runtime').textContent=receipt?`receipt：${receipt.status||'未知'} · ${date(receipt.checked_at)}`:'暂无 runtime receipt';
  $('connection').textContent=`● 数据已更新 · ${date(status.observed_at)}`;
  if(state.selected){const r=await api('/api/runs/'+encodeURIComponent(state.selected));if(r.run_id===state.selected)detail(r);}
  }catch(e){$('connection').textContent='连接失败 · 当前显示为上次快照，请检查面板服务。';}
  finally{state.busy=false;$('refresh').disabled=false;render();}
 }
+$('latest-view').addEventListener('click',()=>{if(state.latest)select(state.latest.run_id);});
 $('refresh').addEventListener('click',refresh);$('search').addEventListener('input',render);
 for(const b of document.querySelectorAll('[data-filter]'))b.addEventListener('click',()=>{state.filter=b.dataset.filter;for(const x of document.querySelectorAll('[data-filter]')){x.classList.toggle('selected',x===b);x.setAttribute('aria-pressed',String(x===b));}render();});
 $('prev').addEventListener('click',()=>{state.offset=Math.max(0,state.offset-30);refresh();});$('next').addEventListener('click',()=>{state.offset+=30;refresh();});
