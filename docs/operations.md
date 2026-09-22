@@ -264,3 +264,19 @@ journalctl --user -u zootd-dashboard.service -n 50
 `box-sync` 只读取绑定与干员练度；唯一官服角色自动选中，多官服角色必须显式指定 `--uid UID`。成功后仅打印数量、时间、内容哈希和路径，最小化的规范 Box 保存在 `var/state/operator-box.json`（0600）；含账号命名空间但不保存完整 player response。失败返回非零并保留旧文件，旧文件不代表这次同步成功。错误类别区分 authentication、permission、network、protocol、no_official_account、account_selection、account_mismatch、input 和 storage。
 
 真实验收时在本机查看该规范快照，对照游戏核对一个六星的精英化、等级、有专精的技能和已开启模组；记录核对是否通过即可，不上传凭据或完整原始响应。缺失字段 null 表示未知，不能当作 0 或满足作业条件。此命令仅做只读同步，不改变现有 runtime receipt 或能力账本。
+
+
+## PRTS 作业查询（experimental）
+
+独立只读实验命令，使用已安装 MAA 的关卡表；不启动游戏，不接入 daily、planner、timer 或恢复。无需森空岛登录。
+
+```bash
+./bin/zootd copilot-query 1-7 --limit 3
+./bin/zootd copilot-query main_01-07 --page 2 --limit 10
+# 仅获取用户选中的一个 ID，并重新校验所属关卡
+./bin/zootd copilot-get 102455 --stage 1-7
+```
+
+query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、评分和分页信息）；get 输出完整作业 JSON。示例 ID 来自 2026-09-23 的公开验收，远端可删除或修改，应使用当次查询的 ID。命令不会自动保存下载内容或执行作业；如需保存可重定向到 `var/` 下自行指定的文件。
+
+关卡 code 有歧义时使用 MAA canonical stageId；本机关卡表缺失或过旧时按正常 runtime 更新流程处理。`empty_result` 表示当前页为空，`stage_mismatch` / `schema_error` 表示协议或身份验证失败，均非可执行候选；错误 JSON 写入 stderr，退出码为 1。阶段记录见 [Phase 1](copilot/phase-1-prts-client.md)。
