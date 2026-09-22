@@ -298,7 +298,8 @@ Commands:
                         Clear a local proxy mark after re-recording it in game
   install-core          Install the first validated stable runtime
   update                Alias for the transactional stable runtime update
-  dashboard [--port N]  Serve the read-only local monitoring panel (default: 8765)
+  dashboard [--host IP] [--port N]
+                        Serve the read-only web panel (default: 0.0.0.0:8765)
   status                Show Waydroid and systemd timer status
   log-cleanup [--dry-run] Rotate logs and expire project history older than seven days
   logs                  Follow logs from the user service
