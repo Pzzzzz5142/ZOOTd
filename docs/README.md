@@ -4,7 +4,7 @@
 
 | 文档 | 内容 |
 |---|---|
-| [运维手册](operations.md) | 初始化、手动运行、systemd、更新回滚、排障与审计状态 |
+| [运维手册](operations.md) | 初始化、手动运行、systemd、更新回滚、Web 监控面板、排障与审计状态 |
 | [策略与配置](configuration.md) | 库存目标、材料等价换算、基建、周剿灭与代理隔离 |
 | [架构与执行契约](architecture.md) | 数据职责、完整链路、拒绝条件与 runtime 一致性 |
 | [开发指南](development.md) | 代码目录、测试、Git 约定与运行证据 |
