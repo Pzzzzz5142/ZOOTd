@@ -1564,9 +1564,11 @@ refresh_planner_sources_if_needed() {
 select_daily_drone_policy_from_snapshot() {
     local selected
 
-    drone_mode=_NotUse
+    # Unknown inventory still permits gold production; return failure so Depot
+    # scanning and failure evidence remain independent of this drone fallback.
+    drone_mode=PureGold
     if [[ ! -x "${planner}" ]]; then
-        info "drone policy fallback: planner unavailable; drones disabled"
+        info "drone policy fallback: planner unavailable; using all available drones for PureGold"
         return 1
     fi
     selected="$(timeout --signal=TERM --kill-after=2s 1m "${planner}" \
@@ -1579,7 +1581,7 @@ select_daily_drone_policy_from_snapshot() {
             drone_mode=Money
             ;;
         *)
-            info "drone policy fallback: fresh Pure Gold inventory is unavailable; drones disabled"
+            info "drone policy fallback: fresh Pure Gold inventory is unavailable; using all available drones for PureGold"
             return 1
             ;;
     esac
@@ -1614,13 +1616,13 @@ prepare_daily_drone_policy() {
     if ! scan_depot_inventory_once "${depot_log}"; then
         case "${depot_scan_outcome}" in
             scan-failed)
-                info "drone policy fallback: the combined startup and Depot task failed; drones disabled"
+                info "drone policy fallback: the combined startup and Depot task failed; using all available drones for PureGold"
                 ;;
             snapshot-invalid)
-                info "drone policy fallback: the run's inventory snapshot is invalid; drones disabled"
+                info "drone policy fallback: the run's inventory snapshot is invalid; using all available drones for PureGold"
                 ;;
             *)
-                info "drone policy fallback: inventory is unavailable; drones disabled"
+                info "drone policy fallback: inventory is unavailable; using all available drones for PureGold"
                 ;;
         esac
     elif ! select_daily_drone_policy_from_snapshot; then
