@@ -403,6 +403,52 @@ waydroid_session_is_running() {
         grep -Eq '^Session:[[:space:]]+RUNNING$'
 }
 
+# A socket pathname and RUNNING status can outlive a killed compositor.
+# Connect to the session's own display, never the caller's desktop display.
+waydroid_surface_is_alive() {
+    local display
+    display="$(timeout --signal=TERM --kill-after=2s 5s waydroid status 2>/dev/null |
+        awk -F ':[[:space:]]*' '/^Wayland display:/ { print $2; exit }')" || return 1
+    [[ -n "${display}" ]] || return 1
+    python3 - "${XDG_RUNTIME_DIR}" "${display}" <<'PYTHON'
+import os
+import socket
+import sys
+
+path = os.path.join(sys.argv[1], sys.argv[2])
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(2)
+        connection.connect(path)
+except OSError:
+    sys.exit(1)
+PYTHON
+}
+
+repair_stale_waydroid_session() {
+    if ! waydroid_session_is_running || waydroid_surface_is_alive; then
+        return 0
+    fi
+    info "Waydroid reports RUNNING but its display is unavailable; stopping the stale session"
+    # Own cleanup from this point, including failed/interrupted replacement.
+    session_started_by_launcher=true
+    timeout --signal=TERM --kill-after=5s 20s waydroid session stop ||
+        die "could not stop the stale Waydroid session"
+    if waydroid_session_is_running; then
+        die "Waydroid still reports RUNNING after stale session cleanup"
+    fi
+    # Do not remove socket files or kill another surface owner. Its lock must
+    # be released before the scaled launcher can create our replacement.
+    local attempt
+    for attempt in {1..20}; do
+        if flock -n "${project_root}/var/run/waydroid-scaled-ui.lock" true; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    die "the stale Waydroid surface owner has not released its lock"
+}
+
 cleanup() {
     local status=$?
     local attempt
@@ -617,6 +663,7 @@ prepare_waydroid_device() {
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
     runtime_dir="${XDG_RUNTIME_DIR}"
 
+    repair_stale_waydroid_session
     if ! waydroid_session_is_running; then
         session_started_by_launcher=true
     fi
