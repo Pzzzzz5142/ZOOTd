@@ -46,6 +46,15 @@
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+前端交互另有可选浏览器测试 `tests/test_dashboard_ui.py`，使用合成 API 响应，覆盖阶段计数、筛选、自动刷新、恢复时间线、缺失/异常记录、文本转义和手机布局。默认环境未安装 Playwright 时跳过这组测试；需要验证前端时，可在项目外的临时环境安装并执行，不增加运行时依赖：
+
+```bash
+python3 -m venv /tmp/zootd-ui-check
+/tmp/zootd-ui-check/bin/pip install playwright
+/tmp/zootd-ui-check/bin/python -m playwright install chromium
+PYTHONDONTWRITEBYTECODE=1 /tmp/zootd-ui-check/bin/python -m unittest discover -s tests -p test_dashboard_ui.py -v
+```
+
 这组测试完全在本地运行；更新器场景使用临时目录、假 Maa 和本地 Git 仓库，不启动 MaaCore、ADB、Waydroid 或游戏。真实设备 E2E 另用 `award-only.toml`，只在设备空闲时手工执行。
 
 ## 修改与运行历史
