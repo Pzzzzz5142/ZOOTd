@@ -25,7 +25,8 @@ reception_message_board = true
 reception_clue_exchange = true
 reception_send_clue = true
 # The launcher replaces this safe value only in an isolated per-run task copy:
-# Pure Gold item 3003 < 150 -> PureGold, otherwise -> Money. Keeping the
+# Valid Pure Gold item 3003 < 150 -> PureGold, otherwise -> Money.
+# Unavailable inventory -> PureGold. Keeping the
 # committed task at _NotUse makes direct or failed rendering disable drones.
 drones = "_NotUse"
 

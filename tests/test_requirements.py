@@ -627,6 +627,59 @@ class HighLevelRequirementTests(unittest.TestCase):
                     if accepted:
                         self.assertEqual(result.stdout.strip(), "PureGold")
 
+    def test_drone_inventory_failure_falls_back_to_pure_gold(self) -> None:
+        launcher = (ROOT / "scripts/run-daily.sh").read_text()
+        functions = launcher[
+            launcher.index("select_daily_drone_policy_from_snapshot() {"):
+            launcher.index("\nensure_farming_inventory_snapshot() {")
+        ]
+        cases = (
+            # Evening cache failures and unavailable planner need no scan.
+            (True, "", "", "ready", True, "PureGold:false:morning-snapshot-unavailable:0"),
+            (True, "", "", "ready", False, "PureGold:false:morning-snapshot-unavailable:0"),
+            (False, "", "", "scan-failed", True, "PureGold:false:scan-failed:1"),
+            (False, "", "", "snapshot-invalid", True, "PureGold:false:snapshot-invalid:1"),
+            (False, "", "", "ready", True, "PureGold:true:drone-target-unavailable:1"),
+            (False, "", "Money", "ready", True, "Money:true:ready:1"),
+            (False, "PureGold", "", "ready", True, "PureGold:true:reused:0"),
+            (True, "Money", "", "ready", True, "Money:true:reused:0"),
+        )
+        for evening, cached, scanned, outcome, available, expected in cases:
+            with self.subTest(evening=evening, cached=cached, outcome=outcome,
+                              scanned=scanned, available=available):
+                harness = """
+set -eu
+project_root=/unused
+farming_contracts_ready=true
+inventory_snapshot_ready=false
+depot_scan_outcome=not-attempted
+drone_mode=_NotUse
+drone_threshold=150
+scans=0
+info() { :; }
+timeout() {
+    if [[ "$scans" == 0 ]]; then printf '%s' "$CACHED";
+    else printf '%s' "$SCANNED"; fi
+}
+scan_depot_inventory_once() {
+    scans=$((scans + 1))
+    depot_scan_outcome="$SCAN_OUTCOME"
+    [[ "$SCAN_OUTCOME" == ready ]] || return 1
+    inventory_snapshot_ready=true
+}
+""" + functions + """
+prepare_daily_drone_policy
+printf '%s:%s:%s:%s' "$drone_mode" "$inventory_snapshot_ready" "$depot_scan_outcome" "$scans"
+"""
+                result = subprocess.run(
+                    ["bash", "-c", harness],
+                    env={**os.environ, "evening_slot": str(evening).lower(),
+                         "CACHED": cached, "SCANNED": scanned, "SCAN_OUTCOME": outcome,
+                         "planner": "/bin/true" if available else "/nonexistent/planner"},
+                    capture_output=True, text=True, check=True, timeout=10,
+                )
+                self.assertEqual(result.stdout, expected)
+
     def test_scheduled_inventory_reuses_cache_without_night_scans(self) -> None:
         launcher = (ROOT / "scripts/run-daily.sh").read_text()
         functions = launcher[
