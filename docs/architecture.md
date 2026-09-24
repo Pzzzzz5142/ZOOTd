@@ -92,4 +92,4 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 独立 `box-login` / `box-sync` 入口位于 `maa_planner/box_cli.py`；Skland 的认证、签名、官服绑定、字段校验和错误分类集中在 `skland.py`，下游只消费 `operator_box.py` 的 `BoxProvider → OperatorBox`。凭据和原始玩家响应不进入 HTTP 公共缓存、普通日志或受管任务审计；只有最小规范快照落入本地状态目录。失败不会写出空 Box 代替错误。
 
-技能使用 canonical ID，专精、模组等级和解锁状态保留未知值；名字、技能序号与模组类型需要后续静态数据映射。获取时间不意味着远端练度与客户端实时一致，静态匹配也不等于通关证明。Box 模块没有 matcher 或游戏执行能力；独立 `prts.py` / `prts_cli.py` 只提供显式 PRTS 候选查询与单份完整作业获取，以本机 MAA 关卡表进行两次身份复核。daily、planner、timer 与恢复 controller 均不调用这些实验模块。后续实验仍必须由用户显式触发，详见 [路线图](copilot/README.md)，登录与文件权限见[运维手册](operations.md#森空岛登录与-box-同步experimental)。
+技能使用 canonical ID，专精、模组等级和解锁状态保留未知值；名字、技能序号与模组编号由 matcher 调用方提供明确的静态数据映射。获取时间不意味着远端练度与客户端实时一致，静态匹配也不等于通关证明。Box 模块没有游戏执行能力；独立 `copilot_matcher.py` 接受 Box、候选和显式静态身份映射，离线完成全局位置分配、四档分类与稳定排序，缺少映射或数据时保留 unknown；独立 `prts.py` / `prts_cli.py` 只提供显式 PRTS 候选查询与单份完整作业获取，以本机 MAA 关卡表进行两次身份复核。daily、planner、timer 与恢复 controller 均不调用这些实验模块。后续实验仍必须由用户显式触发，详见 [路线图](copilot/README.md)，登录与文件权限见[运维手册](operations.md#森空岛登录与-box-同步experimental)。

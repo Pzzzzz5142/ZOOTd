@@ -2,7 +2,7 @@
 
 [总进度](README.md) · [文档索引](../README.md)
 
-本目录描述待实现的 experimental 功能，Phase 0 的 `box-login` / `box-sync` 与 Phase 1 的 `copilot-query` / `copilot-get` 已实现，其余命令尚不可用。外部端点和概念模型需在各阶段以当前协议验证。
+本目录描述待实现的 experimental 功能，Phase 0 的 `box-login` / `box-sync` 与 Phase 1 的 `copilot-query` / `copilot-get` 已实现；Phase 2 离线 matcher API 已实现，其余命令尚不可用。外部端点和概念模型需在各阶段以当前协议验证。
 
 ## 触发边界
 
@@ -199,15 +199,15 @@ incompatible
 
 ### support_one
 
-只缺一个可由 MAA 助战补齐的位置。
+仅一个位置已确认缺失或练度不足，其他位置确认满足，且可指定一个不重复的助战身份。静态分类不证明实际助战可用。
 
 ### unknown
 
-没有明确冲突，但是有 requirement 因数据不足无法确定。
+数据或映射不足，无法确认是否能完全满足或通过一次替换满足；不得升级为 exact/support_one。
 
 ### incompatible
 
-存在明确不满足。
+即使考虑未知数据和一次助战替换，仍无法为所有位置分配不同干员。
 
 ---
 
