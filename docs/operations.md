@@ -306,7 +306,7 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 ./bin/zootd copilot-run NL-8 --profile allow-support
 ```
 
-两种策略位于 `config/copilot.toml`，`default_profile` 决定省略 `--profile` 时的行为。命令授权普通难度单次战斗，可消耗该关卡理智；所有理智药和源石禁用，不执行第二候选或自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。支持常驻 SideStory 的关卡身份映射，由安装的关卡表和地图索引共同验证。PRTS 视频攻略不作为可执行候选。
+两种策略位于 `config/copilot.toml`，`default_profile` 决定省略 `--profile` 时的行为。命令授权普通难度单次战斗，可消耗该关卡理智；所有理智药和源石禁用，不执行第二候选或自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。当前只提供 `navigation.NL-8` 自动路线；其他未配置关卡在启动前拒绝。新版国服从终端经曲谱、乐章收录进入长夜临光地图，导航只读屏幕并点击/滑动，不开始战斗；各导航任务成功后才提交 Copilot。支持常驻 SideStory 的关卡身份映射，由安装的关卡表和地图索引共同验证。PRTS 视频攻略不作为可执行候选。
 
 允许助战只接纳 `support_one`，不执行 `unknown` 或多名缺失；固定每个 group 的已匹配成员后，由 MaaCore 补齐唯一缺失位置。静态匹配和作者省略的练度要求不保证实际可用或通关，助战实际可用性由设备执行决定。查询页内先 exact、再 support_one，各档按已有评分与 ID 稳定排序；不会扫描全站或人工挑选作业。
 
