@@ -149,7 +149,7 @@ def execute(root, run, address):
         try:
             child = subprocess.Popen([sys.executable, '-m', 'maa_planner.copilot_core',
                                       str(root), str(run), address],
-                                     env=env, stdout=output, stderr=subprocess.STDOUT)
+                                     cwd=run, env=env, stdout=output, stderr=subprocess.STDOUT)
             try:
                 return child.wait(timeout=1200)
             except subprocess.TimeoutExpired:

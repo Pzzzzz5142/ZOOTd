@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from maa_planner.copilot_core import terminal_result
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
-from maa_planner.copilot_run import (bind_formation, device_lock, experiment, load_policy,
+from maa_planner.copilot_run import (bind_formation, device_lock, execute, experiment, load_policy,
                                      select_candidate, ExperimentError)
 from maa_planner.copilot_static import build_catalog
 from maa_planner.operator_box import Operator, OperatorBox
@@ -103,6 +103,21 @@ class CopilotRunTests(unittest.TestCase):
                 with self.assertRaises(ExperimentError):
                     with device_lock(Path(tmp)):
                         self.fail('concurrent device access')
+
+    def test_worker_relative_artifacts_stay_inside_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / 'maa_planner'
+            package.mkdir()
+            (package / '__init__.py').touch()
+            (package / 'copilot_core.py').write_text(
+                "from pathlib import Path\nPath('debug').mkdir()\n"
+                "Path('debug/map.fixture').write_text('synthetic core output')\n")
+            run = root / 'attempt'
+            run.mkdir()
+            self.assertEqual(execute(root, run, 'fixture-device'), 0)
+            self.assertTrue((run / 'debug/map.fixture').exists())
+            self.assertFalse((root / 'debug').exists())
 
     def test_static_indices_not_box_or_array_order(self):
         catalog = build_catalog({'char_a': {'name': 'A', 'skills': [{'skillId': 's2'}, {'skillId': 's1'}]},
