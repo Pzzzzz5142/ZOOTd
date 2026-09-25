@@ -15,7 +15,7 @@
 
 ## 完成记录
 
-2026-09-25：P3-01–05 实现位于 `maa_planner/copilot_run.py`、`copilot_core.py`、`copilot_static.py` 和 `bin/zootd`。`config/copilot.toml` 提供禁止助战与允许一名助战两个 profile，默认禁止；允许时仍优先 exact。专项离线测试覆盖排序策略、全局编队约束、静态索引、常驻关卡映射、共享锁、缺失/乱序/异设备/历史终态和失败审计。P3-06 已以 NL-8 完成实机验证。完整离线回归 167 项通过（5 项可选环境测试跳过）。
+2026-09-25：P3-01–05 实现位于 `maa_planner/copilot_run.py`、`copilot_core.py`、`copilot_static.py` 和 `bin/zootd`。`config/copilot.toml` 提供禁止助战与允许一名助战两个 profile，默认禁止；允许时仍优先 exact。专项离线测试覆盖排序策略、全局编队约束、静态索引、常驻关卡映射、共享锁、缺失/乱序/异设备/历史终态和失败审计。P3-06 已以 NL-8 完成实机验证。完整离线回归 168 项通过（5 项可选环境测试跳过）。
 
 2026-09-25 NL-8 实机验收：用户明确指定 NL-8 并允许借干员，执行 `./bin/zootd copilot-run NL-8 --profile allow-support`。当次 run 为 `20260925-211557-6a40b3176411`，代码提交 `04a0412`，MaaCore v6.18.0；程序自动选择作业 78392，兼容结果为 exact，因此本次未借干员。地图 ID 为 `act13side_08_perm`，作业地图 ID 为经安装数据绑定的 `act13side_08`。五名干员自动编队完成，随后完整战斗执行成功。`result.json` 的 loaded、formation_completed、battle_completed、chain_completed、all_tasks_completed 全部为 true，task_id=4，exit_code=0，errors=[]；371 条当次结构化回调保存在私有运行目录，不提交原始日志或账号数据。整个执行未接入 daily、恢复或能力账本，也未自动尝试第二候选。最初缺少主页到活动入口的开发验收在导航阶段超时，未进入战斗；其失败记录保留，未改写为成功。
 
