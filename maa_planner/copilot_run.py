@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .box_cli import load_secret
 from .copilot_core import terminal_result
+from .copilot_navigation import archive_tasks
 from .copilot_matcher import match_candidate, rank_candidates
 from .copilot_static import fetch_catalog
 from .prts import CopilotCandidate, PrtsCopilotClient, StageCatalog, decode, operators
@@ -149,7 +150,11 @@ def execute(root, run, address):
             child = subprocess.Popen([sys.executable, '-m', 'maa_planner.copilot_core',
                                       str(root), str(run), address],
                                      env=env, stdout=output, stderr=subprocess.STDOUT)
-            return child.wait(timeout=1200)
+            try:
+                return child.wait(timeout=1200)
+            except subprocess.TimeoutExpired:
+                # Preserve/reduce this attempt's callbacks even on timeout.
+                return 124
         finally:
             stop_child(child)
 
@@ -179,6 +184,14 @@ def experiment(root: Path, stage: str, profile: str | None) -> dict:
             if len(codes) != 1:
                 raise ExperimentError('Ambiguous navigation code')
             code = next(iter(codes))
+            route = tomllib.loads((root / 'config/copilot.toml').read_text()).get('navigation', {}).get(code)
+            if (not isinstance(route, dict) or set(route) != {'activity', 'map_marker'}
+                    or any(not isinstance(v, str) or not v for v in route.values())):
+                raise ExperimentError('No verified automatic navigation route for this stage')
+            audit['navigation'] = route
+            overlay = run / 'navigation/resource/tasks'
+            overlay.mkdir(parents=True)
+            atomic_write_json(overlay / 'tasks.json', archive_tasks(route['activity'], route['map_marker']))
             phase = 'box'
             client = SklandClient()
             credentials = client.authenticate(**load_secret(root))

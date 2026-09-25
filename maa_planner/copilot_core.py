@@ -64,6 +64,7 @@ def worker(root: Path, run: Path, address: str) -> int:
 
     callback_failed = threading.Event()
     mutex = threading.Lock()
+    chains = []
     with (run / 'callbacks.jsonl').open('x') as output:
         @callback_type
         def callback(msg, raw, _):
@@ -72,6 +73,8 @@ def worker(root: Path, run: Path, address: str) -> int:
                 with mutex:
                     output.write(json.dumps({'message': msg, 'details': value}, ensure_ascii=False) + '\n')
                     output.flush()
+                    if msg in (0, 1, 10000, 10002, 10004):
+                        chains.append((msg, value.get('taskid')))
             except Exception:
                 callback_failed.set()
 
@@ -82,6 +85,7 @@ def worker(root: Path, run: Path, address: str) -> int:
         check(lib.AsstSetUserDir(str(run).encode()))
         for resource in ('var/data', 'var/data/MaaResource', 'var/data/cache'):
             check(lib.AsstLoadResource(str(root / resource).encode()))
+        check(lib.AsstLoadResource(str(run / 'navigation').encode()))
         handle = lib.AsstCreateEx(callback, None)
         check(handle)
         # Parent sends TERM on timeout/interruption; stop before releasing lock.
@@ -92,7 +96,21 @@ def worker(root: Path, run: Path, address: str) -> int:
             for key, value in ((2, b'maatouch'), (3, b'0'), (4, b'0'), (5, b'0')):
                 check(lib.AsstSetInstanceOption(handle, key, value))
             check(lib.AsstConnect(handle, b'/usr/bin/adb', address.encode(), b'General'))
-            check(lib.AsstAppendTask(handle, b'StartUp', b'{"client_type":"Official","start_game_enabled":true}'))
+            def run_task(kind, params):
+                task = lib.AsstAppendTask(handle, kind, params)
+                check(task)
+                check(lib.AsstStart(handle))
+                while lib.AsstRunning(handle):
+                    check(not callback_failed.is_set())
+                    time.sleep(0.2)
+                with mutex:
+                    check((10002, task) in chains and not any(m in (0, 1, 10000, 10004) for m, _ in chains))
+
+            # Separate task starts prevent a failed navigation from proceeding
+            # into Copilot. These tasks have no battle or refill actions.
+            run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":true}')
+            run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
+            run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
             params = (run / 'params.json').read_bytes()
             task_id = lib.AsstAppendTask(handle, b'Copilot', params)
             check(task_id)

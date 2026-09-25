@@ -2,6 +2,7 @@ import copy
 import json
 import tempfile
 import unittest
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,7 +18,7 @@ from tests.test_prts import Opener, page, row
 
 def candidate(id=1, names=('A',)):
     return CopilotCandidate(id, 'stage', 'test',
-                            [{'name': n, 'skill': 1, 'requirements': {}} for n in names], [], None, {})
+                            [{'name': n, 'skill': 1, 'role': None, 'requirements': {}} for n in names], [], None, {})
 
 
 def events():
@@ -143,6 +144,61 @@ class CopilotRunTests(unittest.TestCase):
             self.assertEqual(audit['status'], 'failed')
             self.assertTrue((Path(audit['run_dir']) / 'result.json').exists())
             device.assert_not_called()
+
+    def test_full_pipeline_binds_parameters_and_rejects_download_drift(self):
+        for drift in (False, True):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
+                root = Path(tmp)
+                (root / 'config').mkdir()
+                (root / 'config/copilot.toml').write_text(
+                    '[navigation.NL-8]\nactivity="长夜临光"\nmap_marker="NL-"\n')
+                for name, payload in (
+                    ('var/state/runtime/maa-resource.json', {}),
+                    ('var/data/resource/stages.json', [{'code': 'NL-8', 'stageId': 'stage'}]),
+                    ('var/data/resource/battle_data.json', {}),
+                ):
+                    p = root / name
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(json.dumps(payload))
+                def mock(name, **kw):
+                    return mocks.enter_context(patch('maa_planner.copilot_run.' + name, **kw))
+                mock('load_policy', return_value={'allow_support': True})
+                mock('command', side_effect=['', 'fixture-head'])
+                mock('validate_runtime_receipt', return_value='fixture')
+                mock('load_secret', return_value={})
+                mock('SklandClient')
+                mock('SklandBoxProvider').return_value.fetch_box.return_value = self.box
+                mock('fetch_catalog', return_value=(self.catalog, {}))
+                provider = mock('PrtsCopilotClient').return_value
+                provider.query.return_value = {'candidates': [candidate().to_dict()], 'page': 1}
+                provider.get.return_value = {'stage_name': 'stage', 'opers': candidate().operators,
+                                             'actions': [{'type': 'SkillDaemon'}]}
+                if drift:
+                    provider.get.return_value['opers'] = candidate(names=('B',)).operators
+                @contextmanager
+                def fake_device(*_):
+                    yield 'fixture-device'
+                dev = mock('device', side_effect=fake_device)
+                def fake_execute(root, run, address):
+                    params = json.loads((run / 'params.json').read_text())
+                    self.assertEqual(params['loop_times'], 1)
+                    self.assertFalse(params['use_sanity_potion'])
+                    self.assertFalse(params['ignore_requirements'])
+                    self.assertEqual(params['support_unit_usage'], 0)
+                    self.assertEqual(len(params['copilot_list']), 1)
+                    self.assertFalse(params['copilot_list'][0]['is_raid'])
+                    records = events()
+                    records[1]['details']['details']['file_name'] = str(run / 'execution.json')
+                    (run / 'callbacks.jsonl').write_text('\n'.join(json.dumps(e) for e in records))
+                    (run / 'task-id.json').write_text('7')
+                    return 0
+                mock('execute', side_effect=fake_execute)
+                audit = experiment(root, 'NL-8', None)
+                self.assertEqual(audit['status'], 'failed' if drift else 'success')
+                if drift:
+                    dev.assert_not_called()
+                    self.assertEqual(audit['failure_phase'], 'download_recheck')
+                self.assertNotIn('private', json.dumps(audit))
 
 
 if __name__ == '__main__':

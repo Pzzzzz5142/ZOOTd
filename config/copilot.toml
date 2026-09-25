@@ -6,3 +6,8 @@ allow_support = false
 
 [profiles.allow-support]
 allow_support = true
+
+# Phase 3's verified automatic archive route. Other stages fail before launch.
+[navigation.NL-8]
+activity = "长夜临光"
+map_marker = "NL-"
