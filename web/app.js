@@ -36,7 +36,10 @@ let state = {
   selected: null,
   latest: null,
   busy: false,
-  detailKey: null
+  detailKey: null,
+  view: null,
+  historyScroll: 0,
+  lastSelected: null
 };
 const expanded = new Map();
 
@@ -78,7 +81,7 @@ function render() {
   $('empty').hidden = visible.length > 0;
   $('empty').textContent = state.total === 0 ? '暂无运行记录。完成一次托管运行后，记录会显示在这里。' : '当前页没有符合筛选条件的记录。';
   for (const r of visible) {
-    const tr = node('tr', undefined, r.run_id === state.selected ? 'selected-run' : '');
+    const tr = node('tr', undefined, r.run_id === state.lastSelected ? 'selected-run' : '');
     const time = node('td', date(r.started_at));
     time.append(node('small', r.run_id));
     tr.append(time, node('td', modes[r.mode] || '未知'));
@@ -94,6 +97,7 @@ function render() {
     tr.append(progress, node('td', duration(r)));
     const action = node('td'),
       button = node('button', '查看详情 ↗', 'view');
+    button.dataset.runId = r.run_id;
     button.addEventListener('click', () => select(r.run_id));
     action.append(button);
     tr.append(action);
@@ -363,15 +367,65 @@ function detail(r) {
   journey.append(stagePane, timeline);
   content.append(journey, node('p', `代码版本 ${r.repository?.head?.slice(0,12)||'未知'} · 事件哈希链已校验（不代表重新校验证据文件内容）`, 'muted'));
 }
-async function select(id) {
+function select(id) {
+  location.hash = 'run/' + encodeURIComponent(id);
+}
+
+function route(initial = false) {
+  if (state.view === 'history') state.historyScroll = window.scrollY;
+  const match = location.hash.match(/^#run\/([0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8})$/);
+  const view = match ? 'detail' : location.hash === '#history' ? 'history' : 'overview';
+  state.view = view;
+  state.selected = match ? match[1] : null;
+  for (const id of ['overview', 'latest-panel', 'history', 'detail', 'breadcrumb']) {
+    $(id).hidden = (id === 'latest-panel' ? 'overview' : id === 'breadcrumb' ? 'detail' : id) !== view;
+  }
+  const titles = {overview:'运行概览', history:'历史记录', detail:'运行详情'};
+  $('page-title').textContent = titles[view];
+  document.title = titles[view] + ' · ZOOTd';
+  $('page-eyebrow').textContent = 'OPERATIONS / ' + {overview:'OVERVIEW',history:'HISTORY',detail:'RUN DETAIL'}[view];
+  $('page-description').textContent = {overview:'查看服务状态与最近一次运行。',history:'查询每轮任务的结果、阶段记录与执行证据。',detail:'查看本轮阶段结果，沿时间线追踪已记录的过程。'}[view];
+  for (const name of ['overview', 'history', 'detail']) {
+    const link = $('nav-' + name);
+    link.classList.toggle('active', name === view);
+    link.classList.toggle('parent-active', name === 'history' && view === 'detail');
+    if (name === view) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+  $('nav-detail').hidden = view !== 'detail';
+  if (match) $('nav-detail').href = location.hash;
+  if (view === 'detail') loadRun(match[1]);
+  if (!initial) {
+    window.scrollTo({top:view === 'history' ? state.historyScroll : 0, behavior:'instant'});
+    const previous = view === 'history' && state.lastSelected
+      ? document.querySelector(`[data-run-id="${state.lastSelected}"]`) : null;
+    (previous || $('page-title')).focus({preventScroll:true});
+  }
+}
+
+function renderLatest(r) {
+  const content = $('latest-summary');
+  content.replaceChildren();
+  if (!r) {content.append(node('p', '暂无运行记录。', 'muted')); return;}
+  const heading = node('div', undefined, 'run-heading');
+  heading.append(node('h3', modes[r.mode] || '运行记录'), badge(r.status));
+  content.append(heading, node('p', `${date(r.started_at)} · ${r.run_id}`, 'run-id'));
+  if (r.status !== 'invalid') {
+    const c = counts(r);
+    content.append(node('p', `已记录 ${c.recorded} / ${c.total} 个阶段 · 通过 ${c.passed} · 策略完成 ${c.policy} · 无需执行 ${c.skipped} · 异常 ${c.problem}`), segments(r));
+  } else content.append(node('p', '运行证据无法核验，请查看详情。', 'muted'));
+  const open = node('a', '查看本轮详情 →', 'button-link');
+  open.href = '#run/' + encodeURIComponent(r.run_id);
+  content.append(open);
+}
+
+async function loadRun(id) {
   state.selected = id;
+  state.lastSelected = id;
   state.detailKey = null;
   render();
   $('detail').hidden = false;
   $('detail-content').textContent = '正在读取阶段详情…';
-  $('detail').scrollIntoView({
-    block: 'start'
-  });
   try {
     const r = await api('/api/runs/' + encodeURIComponent(id));
     if (state.selected === id) detail(r);
@@ -396,6 +450,7 @@ async function refresh() {
     } [activity.state] || '状态未知';
     $('service-detail').textContent = activity.units.length ? activity.units.map(s => `${s.unit} · ${s.SubState} · PID ${s.MainPID}`).join('；') : activity.state === 'idle' ? '当前没有正在执行的定时托管任务' : '部分服务状态无法读取';
     state.latest = status.latest_run;
+    renderLatest(state.latest);
     $('latest-result').textContent = state.latest ? (labels[state.latest.status] || state.latest.status) : '暂无记录';
     $('latest-detail').textContent = state.latest ? `${modes[state.latest.mode]||'未知模式'} · ${date(state.latest.started_at)}${state.latest.finished_at?' · 耗时 '+duration(state.latest):''}` : '尚无托管运行记录';
     $('latest-view').hidden = !state.latest;
@@ -406,7 +461,7 @@ async function refresh() {
     for (const s of failures) {
       $('failure-detail').append(node('div', `${s.unit} · ${s.Result} · 退出码 ${s.ExecMainStatus||'未知'}`), node('div', s.ExecMainExitTimestamp || '退出时间未知'));
     }
-    $('failure-detail').append(node('div', failures.length ? '保留的上次失败状态；不代表当前仍在运行。' : incomplete ? '部分服务状态无法读取。' : 'systemd 未保留失败状态；历史运行记录见下方。'));
+    $('failure-detail').append(node('div', failures.length ? '保留的上次失败状态；不代表当前仍在运行。' : incomplete ? '部分服务状态无法读取。' : 'systemd 未保留失败状态；请在历史记录页查看运行结果。'));
     const receipt = status.runtime.receipt;
     $('core').textContent = receipt?.core?.active_version || '暂无记录';
     $('runtime').textContent = receipt ? `receipt：${receipt.status||'未知'} · ${date(receipt.checked_at)}` : '暂无 runtime receipt';
@@ -444,12 +499,10 @@ $('next').addEventListener('click', () => {
   state.offset += 30;
   refresh();
 });
-$('close').addEventListener('click', () => {
-  state.selected = null;
-  state.detailKey = null;
-  $('detail').hidden = true;
-  render();
-});
+$('close').addEventListener('click', () => { location.hash = 'history'; });
+window.addEventListener('hashchange', () => route());
+window.history.scrollRestoration = 'manual';
+route(true);
 refresh();
 setInterval(() => {
   if (!document.hidden) refresh();

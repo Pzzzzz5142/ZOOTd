@@ -2,11 +2,30 @@
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ZOOTd · 罗德岛运行监控</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
 <body>
-<aside><a class="brand" href="/">Z<span> / </span>ZOOTd</a><div class="workspace">RHODES ISLAND<br><strong>罗德岛 · 自主运营</strong></div><a class="nav active" href="#overview">◈ &nbsp; 运行概览</a><a class="nav" href="#history">≡ &nbsp; 历史记录</a><div class="aside-foot"><span class="dot"></span> 本地只读监控<br>MAA × WAYDROID</div></aside>
-<main><header><div class="eyebrow">OPERATIONS / OVERVIEW</div><div class="header-row"><div><h1>运行监控<span class="accent">.</span></h1><p class="muted">从每一个阶段，了解罗德岛的运行情况。</p></div><button id="refresh">↻ &nbsp;刷新数据</button></div><div id="connection" role="status" aria-live="polite">正在连接本地数据…</div></header>
+<aside aria-label="主导航">
+  <a class="brand" href="#overview">Z<span> / </span>ZOOTd</a>
+  <div class="workspace">RHODES ISLAND<br><strong>罗德岛 · 自主运营</strong></div>
+  <nav class="primary-nav" aria-label="监控页面">
+    <a id="nav-overview" class="nav" href="#overview"><span aria-hidden="true">◈</span>运行概览</a>
+    <a id="nav-history" class="nav" href="#history"><span aria-hidden="true">≡</span>历史记录</a>
+    <a id="nav-detail" class="nav nav-child" href="#history" hidden>运行详情</a>
+  </nav>
+  <div class="aside-foot"><span class="dot"></span> 本地只读监控<br>MAA × WAYDROID</div>
+</aside>
+<main>
+  <header class="page-header">
+    <div id="page-eyebrow" class="eyebrow">OPERATIONS / OVERVIEW</div>
+    <div class="header-row">
+      <div><h1 id="page-title" tabindex="-1">运行概览</h1><p id="page-description" class="muted">查看服务状态与最近一次运行。</p></div>
+      <button id="refresh">↻ &nbsp;刷新数据</button>
+    </div>
+    <div id="connection" role="status" aria-live="polite">正在连接本地数据…</div>
+  </header>
+  <nav id="breadcrumb" class="breadcrumb" aria-label="当前位置" hidden><a href="#history">历史记录</a><span aria-hidden="true">/</span><span aria-current="page">运行详情</span></nav>
 <section id="overview" class="stats" aria-label="状态概览"><article><span class="label">当前运行状态</span><h2 id="service">—</h2><small id="service-detail">等待数据</small></article><article><span class="label">最近运行结果</span><h2 id="latest-result">—</h2><small id="latest-detail">等待数据</small><button id="latest-view" class="view" hidden>查看详情 ↗</button></article><article><span class="label">服务历史失败</span><h2 id="service-failures">—</h2><small id="failure-detail">等待数据</small></article><article><span class="label">MAA CORE</span><h2 id="core">—</h2><small id="runtime">最近一次 runtime receipt</small></article></section>
-<section id="detail" class="panel" hidden><div class="panel-heading"><div><div class="eyebrow">RUN DETAIL</div><h2>运行执行详情</h2></div><button id="close">收起</button></div><div id="detail-content"></div></section>
-<section id="history" class="panel"><div class="panel-heading"><div><div class="eyebrow">RUN HISTORY</div><h2>历史运行记录</h2></div><span id="total" class="muted"></span></div><div class="toolbar"><div class="filters" role="group" aria-label="当前页状态筛选"><button data-filter="all" aria-pressed="true" class="selected">全部</button><button data-filter="success" aria-pressed="false">已通过</button><button data-filter="attention" aria-pressed="false">需关注</button></div><label class="search">⌕ <input id="search" type="search" aria-label="搜索当前页运行 ID" placeholder="搜索当前页运行 ID"></label></div><div class="table-scroll"><table><thead><tr><th>运行时间 / ID</th><th>运行模式</th><th>结果</th><th>阶段记录</th><th>耗时</th><th></th></tr></thead><tbody id="rows"></tbody></table></div><div id="empty" class="empty" hidden>暂无运行记录。完成一次托管运行后，记录会显示在这里。</div><div class="pagination"><small>当前页通过 <span id="success">—</span> · 需关注 <span id="attention">—</span><br>每页 30 条 · 筛选仅作用于当前页</small><div><button id="prev">← 上一页</button><span id="page">1</span><button id="next">下一页 →</button></div></div></section>
+<section id="latest-panel" class="panel"><div class="panel-heading"><div><div class="eyebrow">LATEST RUN</div><h2>最近一次执行</h2></div><a class="button-link" href="#history">全部历史 →</a></div><div id="latest-summary" class="latest-summary">正在读取运行记录…</div></section>
+<section id="detail" class="panel" hidden><div class="panel-heading"><div><div class="eyebrow">RUN DETAIL</div><h2>执行概况</h2></div><button id="close">← 返回历史记录</button></div><div id="detail-content"></div></section>
+<section id="history" class="panel" hidden><div class="panel-heading"><div><div class="eyebrow">RUN HISTORY</div><h2>全部运行</h2></div><span id="total" class="muted"></span></div><div class="toolbar"><div class="filters" role="group" aria-label="当前页状态筛选"><button data-filter="all" aria-pressed="true" class="selected">全部</button><button data-filter="success" aria-pressed="false">已通过</button><button data-filter="attention" aria-pressed="false">需关注</button></div><label class="search">⌕ <input id="search" type="search" aria-label="搜索当前页运行 ID" placeholder="搜索当前页运行 ID"></label></div><div class="table-scroll"><table><thead><tr><th>运行时间 / ID</th><th>运行模式</th><th>结果</th><th>阶段记录</th><th>耗时</th><th></th></tr></thead><tbody id="rows"></tbody></table></div><div id="empty" class="empty" hidden>暂无运行记录。完成一次托管运行后，记录会显示在这里。</div><div class="pagination"><small>当前页通过 <span id="success">—</span> · 需关注 <span id="attention">—</span><br>每页 30 条 · 筛选仅作用于当前页</small><div><button id="prev">← 上一页</button><span id="page">1</span><button id="next">下一页 →</button></div></div></section>
 
 <footer>只读展示本地审计记录 · 时间：Asia/Shanghai · 每 10 秒刷新<br>服务状态来自 systemd；未结束记录不代表进程仍在运行。历史保留期遵循项目清理策略。</footer></main>
 </body></html>

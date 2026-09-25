@@ -16,7 +16,7 @@ from pathlib import Path
 from maa_planner.dashboard import Handler
 
 try:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import sync_playwright, expect
 except ImportError:
     sync_playwright = None
 
@@ -66,6 +66,7 @@ class DashboardBrowserTests(unittest.TestCase):
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.route('**/api/**', self.respond)
         self.page.goto(f'http://127.0.0.1:{self.server.server_port}')
+        self.page.locator('#nav-history').click()
         self.page.locator('#rows .view').click()
         self.page.locator('.run-metrics').wait_for()
 
@@ -76,7 +77,8 @@ class DashboardBrowserTests(unittest.TestCase):
                            service_failures=[], services={}, runtime={'receipt': None},
                            observed_at='2026-09-24T10:22:00Z')
         elif path.startswith('runs?'):
-            payload = dict(runs=[self.run], total=1)
+            runs = getattr(self, 'history_runs', [self.run])
+            payload = dict(runs=runs, total=len(runs))
         else:
             payload = self.run
         route.fulfill(content_type='application/json', body=json.dumps(payload))
@@ -106,6 +108,74 @@ class DashboardBrowserTests(unittest.TestCase):
         times = self.page.locator('.timeline time').evaluate_all('(nodes) => nodes.map(n => n.dateTime)')
         self.assertEqual(times, sorted(times))
         self.assertIn('恢复已开始', self.page.locator('.timeline').inner_text())
+        self.assertEqual(self.errors, [])
+
+    def test_navigation_history_and_direct_detail(self):
+        self.assertEqual(self.page.locator('#page-title').inner_text(), '运行详情')
+        self.assertEqual(self.page.locator('.primary-nav [aria-current="page"]').get_attribute('id'), 'nav-detail')
+        self.assertFalse(self.page.locator('#history').is_visible())
+        self.assertFalse(self.page.locator('#overview').is_visible())
+        self.page.go_back()
+        self.page.wait_for_url('**/#history')
+        expect(self.page.locator('#history')).to_be_visible()
+        self.assertEqual(self.page.locator('#nav-history').get_attribute('aria-current'), 'page')
+        self.assertFalse(self.page.locator('#detail').is_visible())
+        self.page.go_forward()
+        self.page.wait_for_url('**/#run/**')
+        self.page.locator('.run-metrics').wait_for()
+        self.page.locator('#close').click()
+        self.page.locator('#search').fill('abcdef12')
+        self.page.get_by_role('button', name='需关注', exact=True).click()
+        self.page.locator('#rows .view').click()
+        self.page.locator('.run-metrics').wait_for()
+        self.page.locator('#close').click()
+        self.assertEqual(self.page.locator('#search').input_value(), 'abcdef12')
+        self.assertEqual(self.page.locator('[data-filter="attention"]').get_attribute('aria-pressed'), 'true')
+        self.page.locator('#nav-overview').click()
+        expect(self.page.locator('#overview')).to_be_visible()
+        self.assertFalse(self.page.locator('#history').is_visible())
+        self.assertEqual(self.page.locator('#nav-overview').get_attribute('aria-current'), 'page')
+        self.page.locator('#latest-summary .button-link').click()
+        self.page.locator('.run-metrics').wait_for()
+        self.page.reload()
+        self.page.locator('.run-metrics').wait_for()
+        self.assertEqual(self.page.locator('#page-title').inner_text(), '运行详情')
+        self.assertFalse(self.page.locator('#history').is_visible())
+        for width in (390, 768, 1280):
+            self.page.set_viewport_size({'width': width, 'height': 844})
+            self.assertTrue(self.page.locator('#nav-history').is_visible())
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'))
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.page.locator('#nav-history').click()
+        expect(self.page.locator('#history')).to_be_visible()
+        self.assertEqual(self.page.locator('.primary-nav [aria-current="page"]').count(), 1)
+        self.assertEqual(self.errors, [])
+
+    def test_return_restores_history_position_and_ignores_late_detail(self):
+        self.history_runs = [dict(self.run, run_id=f'20260924T100000.000000Z-{i:08x}')
+                             for i in range(19)] + [self.run]
+        self.page.locator('#close').click()
+        expect(self.page.locator('#history')).to_be_visible()
+        self.page.evaluate('refresh()')
+        button = self.page.locator('#rows .view').last
+        button.scroll_into_view_if_needed()
+        saved_scroll = self.page.evaluate('window.scrollY')
+        self.assertGreater(saved_scroll, 0)
+        button.click()
+        self.page.locator('.run-metrics').wait_for()
+        self.page.locator('#close').click()
+        expect(self.page.locator('#history')).to_be_visible()
+        self.page.wait_for_function('(y) => Math.abs(window.scrollY - y) < 2', arg=saved_scroll)
+        # A request completing after navigation must not reopen the detail page.
+        pending = []
+        self.page.route('**/api/runs/' + self.run['run_id'], lambda route: pending.append(route))
+        button.click()
+        self.page.wait_for_url('**/#run/**')
+        self.page.locator('#close').click()
+        expect(self.page.locator('#history')).to_be_visible()
+        self.assertTrue(pending)
+        pending[0].fulfill(content_type='application/json', body=json.dumps(self.run))
+        expect(self.page.locator('#detail')).to_be_hidden()
         self.assertEqual(self.errors, [])
 
     def test_unfinished_invalid_success_and_mobile(self):

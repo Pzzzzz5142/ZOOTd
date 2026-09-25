@@ -910,3 +910,170 @@ td strong {
   right: 15px;
   top: 14px;
 }
+
+/* One page shell and navigation hierarchy for overview, history and detail. */
+:root {
+  --nav-width: 218px;
+  --active-bg: #293423;
+}
+
+aside {
+  width: var(--nav-width);
+  height: 100dvh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  margin-left: var(--nav-width);
+  min-width: 0;
+}
+
+.aside-foot {
+  position: static;
+  margin-top: auto;
+  padding-top: 32px;
+}
+
+.primary-nav {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 32px;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  border: 1px solid transparent;
+}
+
+.nav:hover {
+  background: #202720;
+  color: var(--text);
+}
+
+.nav.active {
+  background: var(--active-bg);
+  color: var(--green);
+  border-color: #405532;
+}
+
+.nav.parent-active {
+  color: var(--text);
+}
+
+.nav-child {
+  margin-left: 25px;
+  padding: 9px 14px;
+  font-size: 12px;
+  border-left-color: var(--line);
+}
+
+.page-header {
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.header-row {
+  gap: 20px;
+}
+
+.header-row > div {
+  min-width: 0;
+}
+
+#refresh {
+  flex-shrink: 0;
+}
+
+#page-title:focus {
+  outline: none;
+}
+
+.breadcrumb {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  color: var(--muted);
+  margin: -4px 0 20px;
+  font-size: 12px;
+}
+
+.breadcrumb a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.breadcrumb a:hover {
+  color: var(--green);
+}
+
+.button-link {
+  display: inline-block;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 14px;
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.button-link:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.latest-summary {
+  padding: 0 24px 24px;
+  overflow-wrap: anywhere;
+}
+
+.latest-summary .button-link {
+  margin-top: 20px;
+}
+
+.stats {
+  margin-top: 0;
+}
+
+#detail .panel-heading {
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 24px;
+  gap: 16px;
+}
+
+@media(max-width:1150px) {
+  :root { --nav-width: 180px; }
+}
+
+@media(max-width:720px) {
+  aside {
+    width: auto;
+    height: auto;
+    padding: 16px;
+  }
+  .primary-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 16px 0 0;
+  }
+  .nav {
+    display: flex;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .nav-child {
+    margin-left: 0;
+  }
+  main { margin-left: 0; }
+  .page-header { margin-bottom: 20px; }
+  .header-row { align-items: flex-start; gap: 12px; }
+  #refresh { padding: 7px 9px; font-size: 12px; margin-top: 12px; }
+  .panel-heading { flex-wrap: wrap; gap: 12px; }
+  .latest-summary { padding: 0 16px 20px; }
+}
