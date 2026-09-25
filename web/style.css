@@ -1077,3 +1077,12 @@ main {
   .panel-heading { flex-wrap: wrap; gap: 12px; }
   .latest-summary { padding: 0 16px 20px; }
 }
+
+.upstream {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.upstream small { margin: 4px 0; }
+.upstream a { display: inline-block; margin-top: 8px; color: var(--green); text-decoration: none; }
+.upstream a:hover { text-decoration: underline; }

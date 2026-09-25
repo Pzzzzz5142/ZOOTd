@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import http.client
+import io
 import json
 import tempfile
 import threading
@@ -10,9 +11,56 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from maa_planner.dashboard import Handler, history, overview, read_run, service_status
+from maa_planner.dashboard import Handler, ReleaseCache, history, overview, read_run, service_status
 from maa_planner.supervisor import start_run, record_phase, finish_run
 from maa_planner.util import canonical_json, sha256_bytes
+
+
+class ReleaseCacheTests(unittest.TestCase):
+    def response(self, **updates):
+        return io.BytesIO(json.dumps(dict(tag_name='v6.18.0', draft=False, prerelease=False,
+                                         published_at='2026-09-23T21:29:00Z', **updates)).encode())
+
+    def test_cache_and_stale_failure(self):
+        cache = ReleaseCache()
+        with patch('maa_planner.dashboard.urlopen', return_value=self.response()) as fetch:
+            first = cache.read()
+            self.assertEqual(first['version'], 'v6.18.0')
+            self.assertEqual(first['state'], 'fresh')
+            self.assertEqual(cache.read(), first)
+            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(fetch.call_args.kwargs['timeout'], 5)
+        cache.expires = 0
+        with patch('maa_planner.dashboard.urlopen', side_effect=OSError) as fetch:
+            stale = cache.read()
+            self.assertEqual(stale['state'], 'stale')
+            self.assertEqual(stale['fetched_at'], first['fetched_at'])
+            self.assertEqual(stale['version'], first['version'])
+            cache.read()
+            self.assertEqual(fetch.call_count, 1)
+        cache.expires = 0
+        with patch('maa_planner.dashboard.urlopen', return_value=self.response()):
+            self.assertEqual(cache.read()['state'], 'fresh')
+
+    def test_unavailable_and_invalid_responses(self):
+        with patch('maa_planner.dashboard.urlopen', side_effect=TimeoutError):
+            result = ReleaseCache().read()
+            self.assertEqual(result['state'], 'unavailable')
+            self.assertNotIn('version', result)
+        for data in (b'[]', b'null', b'not-json', b'x' * (1024 * 1024 + 1),
+                     b'{"draft":false,"prerelease":true,"tag_name":"v6.19.0-beta.1"}',
+                     b'{"draft":false,"prerelease":false,"tag_name":"javascript:bad"}'):
+            with self.subTest(data=data[:100]), patch('maa_planner.dashboard.urlopen', return_value=io.BytesIO(data)):
+                self.assertEqual(ReleaseCache().read()['state'], 'unavailable')
+
+    def test_concurrent_readers_share_one_query(self):
+        from concurrent.futures import ThreadPoolExecutor
+        cache = ReleaseCache()
+        with patch('maa_planner.dashboard.urlopen', return_value=self.response()) as fetch:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                values = list(pool.map(lambda _: cache.read(), range(4)))
+            self.assertEqual(fetch.call_count, 1)
+            self.assertTrue(all(v['state'] == 'fresh' for v in values))
 
 
 class DashboardTests(unittest.TestCase):
@@ -125,6 +173,10 @@ class DashboardTests(unittest.TestCase):
             connection.request(method, path, headers=headers or {})
             response = connection.getresponse()
             return response.status, response.read()
+        with patch('maa_planner.dashboard.release_cache.read', return_value={'state': 'unavailable'}):
+            status, body = request('/api/maa-release')
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['state'], 'unavailable')
         self.assertEqual(request('/api/runs')[0], 200)
         self.assertEqual(request('/api/runs?limit=101')[0], 400)
         self.assertEqual(request('/api/runs?offset=-1')[0], 400)

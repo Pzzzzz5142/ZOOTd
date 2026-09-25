@@ -72,9 +72,11 @@ class DashboardBrowserTests(unittest.TestCase):
 
     def respond(self, route):
         path = route.request.url.split('/api/')[1]
-        if path == 'status':
+        if path == 'maa-release':
+            payload = getattr(self, 'release', dict(state='fresh', version='v6.18.0', fetched_at='2026-09-24T10:22:00Z'))
+        elif path == 'status':
             payload = dict(activity={'state': 'idle', 'units': []}, latest_run=self.run,
-                           service_failures=[], services={}, runtime={'receipt': None},
+                           service_failures=[], services={}, runtime={'receipt': {'core': {'active_version': 'v6.17.0'}}},
                            observed_at='2026-09-24T10:22:00Z')
         elif path.startswith('runs?'):
             runs = getattr(self, 'history_runs', [self.run])
@@ -135,7 +137,11 @@ class DashboardBrowserTests(unittest.TestCase):
         expect(self.page.locator('#overview')).to_be_visible()
         self.assertFalse(self.page.locator('#history').is_visible())
         self.assertEqual(self.page.locator('#nav-overview').get_attribute('aria-current'), 'page')
-        self.page.locator('#latest-summary .button-link').click()
+        self.page.locator('#latest-view').click()
+        self.assertTrue(self.page.url.endswith('#overview'))
+        expect(self.page.locator('#detail')).to_be_visible()
+        self.page.locator('#nav-history').click()
+        self.page.locator('#rows .view').click()
         self.page.locator('.run-metrics').wait_for()
         self.page.reload()
         self.page.locator('.run-metrics').wait_for()
@@ -176,6 +182,36 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertTrue(pending)
         pending[0].fulfill(content_type='application/json', body=json.dumps(self.run))
         expect(self.page.locator('#detail')).to_be_hidden()
+        self.assertEqual(self.errors, [])
+
+    def test_inline_latest_and_upstream_states(self):
+        self.page.locator('#nav-overview').click()
+        expect(self.page.locator('#overview')).to_be_visible()
+        expect(self.page.locator('.run-metrics')).to_be_visible()
+        self.assertEqual(self.page.locator('#detail-title').inner_text(), '最近一次执行')
+        self.assertTrue(self.page.locator('#close').is_hidden())
+        self.assertIn('有新的稳定版', self.page.locator('#upstream').inner_text())
+        self.page.locator('#stage-farming .stage-body summary').last.click()
+        self.page.evaluate('refresh()')
+        self.assertTrue(self.page.locator('#stage-farming .stage-body details').last.evaluate('(n) => n.open'))
+        self.release = dict(state='stale', version='v6.18.0', fetched_at='2026-09-24T10:22:00Z')
+        self.page.evaluate('refreshUpstream()')
+        self.assertIn('旧结果', self.page.locator('#upstream').inner_text())
+        self.assertNotIn('有新的稳定版', self.page.locator('#upstream').inner_text())
+        self.release = dict(state='unavailable')
+        self.page.evaluate('refreshUpstream()')
+        self.assertIn('查询失败', self.page.locator('#upstream').inner_text())
+        self.assertTrue(self.page.locator('.run-metrics').is_visible())
+        self.release = dict(state='fresh', version='v6.17.0', fetched_at='2026-09-24T10:22:00Z')
+        self.page.evaluate('refreshUpstream()')
+        self.assertIn('与上游稳定版一致', self.page.locator('#upstream').inner_text())
+        self.release['version'] = 'v6.9.0'
+        self.page.evaluate('refreshUpstream()')
+        self.assertIn('本地版本高于', self.page.locator('#upstream').inner_text())
+        self.page.evaluate("state.localVersion = 'v6.19.0-beta.1'; renderUpstream()")
+        self.assertIn('未作比较', self.page.locator('#upstream').inner_text())
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'))
         self.assertEqual(self.errors, [])
 
     def test_unfinished_invalid_success_and_mobile(self):

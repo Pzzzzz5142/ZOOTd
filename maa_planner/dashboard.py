@@ -5,15 +5,69 @@ import argparse
 import json
 import re
 import subprocess
+import threading
+import time
 from datetime import UTC, datetime
 from functools import partial
+from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request, urlopen
 
 from .supervisor import ACCEPTED_RESULTS, RUN_MODES, SupervisorError, load_run_events, runtime_snapshot
 
 RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
+
+
+MAA_RELEASES = "https://github.com/MaaAssistantArknights/MaaAssistantArknights/releases"
+MAA_RELEASE_API = "https://api.github.com/repos/MaaAssistantArknights/MaaAssistantArknights/releases/latest"
+
+
+class ReleaseCache:
+    """Bound public upstream queries independently of local monitoring requests."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.expires = 0.0
+        self.value = {"state": "unavailable", "release_url": MAA_RELEASES + "/latest"}
+
+    def read(self) -> dict:
+        with self.lock:
+            if time.monotonic() < self.expires:
+                return dict(self.value)
+            checked_at = datetime.now(UTC).isoformat()
+            try:
+                request = Request(MAA_RELEASE_API, headers={
+                    "Accept": "application/vnd.github+json", "User-Agent": "ZOOTd-dashboard"})
+                with urlopen(request, timeout=5) as response:
+                    raw = response.read(1024 * 1024 + 1)
+                if len(raw) > 1024 * 1024:
+                    raise ValueError("release response too large")
+                data = json.loads(raw)
+                version = data.get("tag_name")
+                if (data.get("draft") is not False or data.get("prerelease") is not False
+                        or not isinstance(version, str)
+                        or not re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+", version)):
+                    raise ValueError("not a stable release")
+                published = data.get("published_at")
+                if not isinstance(published, str):
+                    raise ValueError("missing release date")
+                datetime.fromisoformat(published.replace("Z", "+00:00"))
+                self.value = {"state": "fresh", "version": version,
+                              "published_at": published, "checked_at": checked_at,
+                              "fetched_at": checked_at,
+                              "release_url": MAA_RELEASES + "/tag/" + version}
+                ttl = 1800
+            except (OSError, HTTPException, ValueError, TypeError, AttributeError):
+                self.value = {**self.value, "state": "stale" if self.value.get("version") else "unavailable",
+                              "checked_at": checked_at}
+                ttl = 300
+            self.expires = time.monotonic() + ttl
+            return dict(self.value)
+
+
+release_cache = ReleaseCache()
 
 
 def read_run(root: Path, run_id: str) -> dict:
@@ -118,7 +172,9 @@ class Handler(BaseHTTPRequestHandler):
                 filename, mime = static[url.path]
                 self.send_body(200, (self.root / "web" / filename).read_bytes(), mime)
                 return
-            if url.path == "/api/status":
+            if url.path == "/api/maa-release":
+                data = release_cache.read()
+            elif url.path == "/api/status":
                 data = overview(self.root)
             elif url.path == "/api/runs":
                 query = parse_qs(url.query)

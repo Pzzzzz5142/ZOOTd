@@ -39,7 +39,10 @@ let state = {
   detailKey: null,
   view: null,
   historyScroll: 0,
-  lastSelected: null
+  lastSelected: null,
+  upstream: null,
+  localVersion: null,
+  upstreamBusy: false
 };
 const expanded = new Map();
 
@@ -377,8 +380,8 @@ function route(initial = false) {
   const view = match ? 'detail' : location.hash === '#history' ? 'history' : 'overview';
   state.view = view;
   state.selected = match ? match[1] : null;
-  for (const id of ['overview', 'latest-panel', 'history', 'detail', 'breadcrumb']) {
-    $(id).hidden = (id === 'latest-panel' ? 'overview' : id === 'breadcrumb' ? 'detail' : id) !== view;
+  for (const id of ['overview', 'history', 'detail', 'breadcrumb']) {
+    $(id).hidden = id === 'detail' ? !['overview', 'detail'].includes(view) : (id === 'breadcrumb' ? 'detail' : id) !== view;
   }
   const titles = {overview:'运行概览', history:'历史记录', detail:'运行详情'};
   $('page-title').textContent = titles[view];
@@ -394,7 +397,11 @@ function route(initial = false) {
   }
   $('nav-detail').hidden = view !== 'detail';
   if (match) $('nav-detail').href = location.hash;
+  $('detail-title').textContent = view === 'overview' ? '最近一次执行' : '执行概况';
+  $('close').hidden = view !== 'detail';
+  $('all-history').hidden = view !== 'overview';
   if (view === 'detail') loadRun(match[1]);
+  if (view === 'overview') renderLatest(state.latest);
   if (!initial) {
     window.scrollTo({top:view === 'history' ? state.historyScroll : 0, behavior:'instant'});
     const previous = view === 'history' && state.lastSelected
@@ -404,19 +411,42 @@ function route(initial = false) {
 }
 
 function renderLatest(r) {
-  const content = $('latest-summary');
-  content.replaceChildren();
-  if (!r) {content.append(node('p', '暂无运行记录。', 'muted')); return;}
-  const heading = node('div', undefined, 'run-heading');
-  heading.append(node('h3', modes[r.mode] || '运行记录'), badge(r.status));
-  content.append(heading, node('p', `${date(r.started_at)} · ${r.run_id}`, 'run-id'));
-  if (r.status !== 'invalid') {
-    const c = counts(r);
-    content.append(node('p', `已记录 ${c.recorded} / ${c.total} 个阶段 · 通过 ${c.passed} · 策略完成 ${c.policy} · 无需执行 ${c.skipped} · 异常 ${c.problem}`), segments(r));
-  } else content.append(node('p', '运行证据无法核验，请查看详情。', 'muted'));
-  const open = node('a', '查看本轮详情 →', 'button-link');
-  open.href = '#run/' + encodeURIComponent(r.run_id);
-  content.append(open);
+  if (state.view !== 'overview') return;
+  if (r) detail(r);
+  else {
+    state.detailKey = null;
+    $('detail-content').replaceChildren(node('p', '暂无运行记录。', 'muted'));
+  }
+}
+
+function renderUpstream() {
+  const box = $('upstream'), r = state.upstream;
+  box.replaceChildren();
+  if (!r) { box.append(node('small', '正在查询上游稳定版…')); return; }
+  box.append(node('small', r.version ? `${r.state === 'stale' ? '上次查询' : '上游稳定版'}：${r.version}` : '上游版本查询失败'));
+  if (r.state === 'fresh') {
+    const local = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(state.localVersion || '');
+    const upstream = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(r.version || '');
+    let message = '本地版本未知或非稳定版，未作比较';
+    if (local && upstream) {
+      const diff = [1, 2, 3].map(i => Number(local[i]) - Number(upstream[i])).find(n => n !== 0) || 0;
+      message = diff < 0 ? '有新的稳定版' : diff === 0 ? '与上游稳定版一致' : '本地版本高于上游稳定版';
+    }
+    box.append(node('small', message), node('small', `查询于 ${date(r.fetched_at)}`));
+  } else box.append(node('small', r.version ? `查询失败，保留 ${date(r.fetched_at)} 的旧结果` : '暂时无法连接上游，请稍后再试'));
+  const link = node('a', '查看上游发布说明 ↗', 'view');
+  // Use a fixed official destination; remote data is displayed only as text.
+  link.href = 'https://github.com/MaaAssistantArknights/MaaAssistantArknights/releases/latest';
+  link.target = '_blank'; link.rel = 'noopener noreferrer';
+  box.append(link);
+}
+
+async function refreshUpstream() {
+  if (state.upstreamBusy) return;
+  state.upstreamBusy = true;
+  try { state.upstream = await api('/api/maa-release'); }
+  catch (e) { state.upstream = {...state.upstream, state:state.upstream?.version ? 'stale' : 'unavailable'}; }
+  finally { state.upstreamBusy = false; renderUpstream(); }
 }
 
 async function loadRun(id) {
@@ -463,6 +493,8 @@ async function refresh() {
     }
     $('failure-detail').append(node('div', failures.length ? '保留的上次失败状态；不代表当前仍在运行。' : incomplete ? '部分服务状态无法读取。' : 'systemd 未保留失败状态；请在历史记录页查看运行结果。'));
     const receipt = status.runtime.receipt;
+    state.localVersion = receipt?.core?.active_version || null;
+    renderUpstream();
     $('core').textContent = receipt?.core?.active_version || '暂无记录';
     $('runtime').textContent = receipt ? `receipt：${receipt.status||'未知'} · ${date(receipt.checked_at)}` : '暂无 runtime receipt';
     $('connection').textContent = `● 数据已更新 · ${date(status.observed_at)}`;
@@ -479,9 +511,9 @@ async function refresh() {
   }
 }
 $('latest-view').addEventListener('click', () => {
-  if (state.latest) select(state.latest.run_id);
+  if (state.latest) $('detail').scrollIntoView({block:'start'});
 });
-$('refresh').addEventListener('click', refresh);
+$('refresh').addEventListener('click', () => { refresh(); refreshUpstream(); });
 $('search').addEventListener('input', render);
 for (const b of document.querySelectorAll('[data-filter]')) b.addEventListener('click', () => {
   state.filter = b.dataset.filter;
@@ -504,6 +536,7 @@ window.addEventListener('hashchange', () => route());
 window.history.scrollRestoration = 'manual';
 route(true);
 refresh();
+refreshUpstream();
 setInterval(() => {
-  if (!document.hidden) refresh();
+  if (!document.hidden) { refresh(); refreshUpstream(); }
 }, 10000);
