@@ -46,7 +46,7 @@
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-前端交互另有可选浏览器测试 `tests/test_dashboard_ui.py`，使用合成 API 响应，覆盖阶段计数、筛选、自动刷新、恢复时间线、缺失/异常记录、文本转义和手机布局。默认环境未安装 Playwright 时跳过这组测试；需要验证前端时，可在项目外的临时环境安装并执行，不增加运行时依赖：
+前端交互另有可选浏览器测试 `tests/test_dashboard_ui.py`，使用合成 API 响应，覆盖阶段计数、筛选、自动刷新、恢复时间线、缺失/异常记录、文本转义、手机布局及侧栏导航/浏览器前进后退/详情直达。默认环境未安装 Playwright 时跳过这组测试；需要验证前端时，可在项目外的临时环境安装并执行，不增加运行时依赖：
 
 ```bash
 python3 -m venv /tmp/zootd-ui-check
