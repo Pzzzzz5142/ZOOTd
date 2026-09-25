@@ -1,0 +1,8 @@
+# Explicit experiments only. Neither profile is read by daily or recovery.
+default_profile = "no-support"
+
+[profiles.no-support]
+allow_support = false
+
+[profiles.allow-support]
+allow_support = true
