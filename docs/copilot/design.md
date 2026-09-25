@@ -2,7 +2,7 @@
 
 [总进度](README.md) · [文档索引](../README.md)
 
-本目录描述待实现的 experimental 功能，Phase 0 的 `box-login` / `box-sync` 与 Phase 1 的 `copilot-query` / `copilot-get` 已实现；Phase 2 离线 matcher API 已实现，Phase 3 显式 `copilot-run` 已实现，实机验收状态见阶段记录。外部端点和概念模型需在各阶段以当前协议验证。
+本目录描述待实现的 experimental 功能，Phase 0 的 `box-login` / `box-sync` 与 Phase 1 的 `copilot-query` / `copilot-get` 已实现；Phase 2 离线 matcher API 已实现，Phase 3 显式 `copilot-run` 已完成 NL-8 实机验收，详情见阶段记录。外部端点和概念模型需在各阶段以当前协议验证。
 
 ## 触发边界
 
