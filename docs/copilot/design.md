@@ -2,11 +2,11 @@
 
 [总进度](README.md) · [文档索引](../README.md)
 
-本目录描述待实现的 experimental 功能，Phase 0 的 `box-login` / `box-sync` 与 Phase 1 的 `copilot-query` / `copilot-get` 已实现；Phase 2 离线 matcher API 已实现，其余命令尚不可用。外部端点和概念模型需在各阶段以当前协议验证。
+本目录描述待实现的 experimental 功能，Phase 0 的 `box-login` / `box-sync` 与 Phase 1 的 `copilot-query` / `copilot-get` 已实现；Phase 2 离线 matcher API 已实现，Phase 3 显式 `copilot-run` 已完成 NL-8 实机验收，详情见阶段记录。外部端点和概念模型需在各阶段以当前协议验证。
 
 ## 触发边界
 
-Phase 1 的独立只读查询/获取由用户显式调用。未来用户显式运行 `./bin/zootd copilot-run <stage>` 才能启动搜索、匹配和执行链路；这是拟议命令，不接入 daily、planner、timer 或自动恢复。缺少代理能力不能自动触发实验。有限重试仅在这次命令的授权内。协议或证据失败时保存审计并退出，不自动启动完整 daily 恢复。
+Phase 1 的独立只读查询/获取由用户显式调用。用户显式运行 `./bin/zootd copilot-run <stage>` 才能启动搜索、匹配和执行链路；不接入 daily、planner、timer 或自动恢复。缺少代理能力不能自动触发实验。有限重试仅在这次命令的授权内。协议或证据失败时保存审计并退出，不自动启动完整 daily 恢复。
 
 LLM 不参与正常选择和成功判定。Phase 0 先验证真实玩家数据，Phase 3 完成后暂停评估，Phase 6 是独立命令的运行保障，Phase 7 后续可选。
 

@@ -288,6 +288,8 @@ Commands:
                         Experimental: query lightweight PRTS candidates
   copilot-get ID --stage STAGE
                         Experimental: retrieve one full PRTS copilot (no game launch)
+  copilot-run STAGE [--profile no-support|allow-support]
+                        Experimental: one real battle, no medicine or stones
   box-sync [--uid UID]   Experimental: read-only operator Box sync (no game launch)
   doctor                Check dependencies and the promoted runtime receipt
   advisor-check         Run and archive one bounded real-model connectivity probe
@@ -323,6 +325,11 @@ case "${command_name}" in
     raw-run)
         shift
         run_raw_task "$@"
+        ;;
+    copilot-run)
+        shift
+        export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec python3 -m maa_planner.copilot_run --project-root "${project_root}" "$@"
         ;;
     copilot-query|copilot-get)
         shift

@@ -52,6 +52,7 @@ class StageCatalog:
     def __init__(self, rows: list):
         require(isinstance(rows, list) and bool(rows), "Invalid MAA stage catalog.")
         self.aliases: dict[str, set[str]] = {}
+        self.query_ids: dict[str, str] = {}
         for row in rows:
             require(isinstance(row, dict) and text(row.get("stageId")) and text(row.get("code")),
                     "Invalid MAA stage identity.")
@@ -64,7 +65,28 @@ class StageCatalog:
     @classmethod
     def load(cls, path: Path) -> StageCatalog:
         try:
-            return cls(decode(path.read_bytes()))
+            rows = decode(path.read_bytes())
+            catalog = cls(rows)
+            overview = path.parent / 'Arknights-Tile-Pos/overview.json'
+            if overview.exists():
+                tiles = decode(overview.read_bytes())
+                require(isinstance(tiles, dict), 'Invalid tile catalog.')
+                # Permanent side stories use old battle IDs in PRTS. Bind the
+                # alias only when both installed catalogs agree on code and ID.
+                for row in rows:
+                    stage = row['stageId']
+                    if not stage.endswith('_perm'):
+                        continue
+                    matches = [t for t in tiles.values() if isinstance(t, dict)
+                               and t.get('stageId') == stage[:-5]
+                               and t.get('code') == row['code']]
+                    if len(matches) == 1:
+                        tile = matches[0]
+                        for key in ('stageId', 'levelId'):
+                            if text(tile.get(key)):
+                                catalog.aliases.setdefault(tile[key].casefold(), set()).add(stage)
+                        catalog.query_ids[stage] = tile['stageId']
+            return catalog
         except OSError:
             raise PrtsError("stage_identity", "Cannot read installed MAA stages.json.") from None
 
@@ -186,7 +208,7 @@ class PrtsCopilotClient:
         canonical = self.catalog.resolve(stage)
         if type(page) is not int or page < 1 or type(limit) is not int or not 1 <= limit <= 50:
             raise PrtsError("input", "page must be positive; limit must be 1..50.")
-        params = urllib.parse.urlencode({"level_keyword": canonical, "page": page, "limit": limit,
+        params = urllib.parse.urlencode({"level_keyword": self.catalog.query_ids.get(canonical, canonical), "page": page, "limit": limit,
                                          "order_by": "id", "desc": "true"})
         data = self._request("/copilot/query?" + params)
         require(type(data.get("page")) is int and data["page"] == page
@@ -197,7 +219,10 @@ class PrtsCopilotClient:
         require(isinstance(rows, list) and len(rows) <= limit, "Invalid candidate page.")
         if not rows:
             raise PrtsError("empty_result", "No candidates on requested page.")
-        candidates = [self._parse(row, canonical)[0] for row in rows]
+        # PRTS search also returns video guides, which are not executable JSON.
+        candidates = [self._parse(row, canonical)[0] for row in rows
+                      if not (isinstance(row, dict) and
+                              row.get('type') == 'VIDEO')]
         require(len({c.id for c in candidates}) == len(candidates), "Duplicate copilot IDs.")
         return {"stage": canonical, "page": page, "has_next": data["has_next"],
                 "total": data["total"], "candidates": [c.to_dict() for c in candidates]}

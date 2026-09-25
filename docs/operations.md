@@ -253,7 +253,7 @@ journalctl --user -u zootd-dashboard.service -n 50
 
 ## 森空岛登录与 Box 同步（experimental）
 
-这是用户单独调用的实验功能；不接入 `run`、daily、定时器或自动恢复，不启动 Waydroid、MAA 或游戏。未来查找并执行 Copilot 也只允许显式实验命令触发，进度见 [Copilot 路线图](copilot/README.md)。目前尚未实现 `copilot-run`。
+这是用户单独调用的实验功能；不接入 `run`、daily、定时器或自动恢复，不启动 Waydroid、MAA 或游戏。未来查找并执行 Copilot 也只允许显式实验命令触发，进度见 [Copilot 路线图](copilot/README.md)。`copilot-run` 为单次真实战斗实验，见下文。
 
 在自己的交互终端、项目根目录运行：
 
@@ -295,3 +295,19 @@ journalctl --user -u zootd-dashboard.service -n 50
 query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、评分和分页信息）；get 输出完整作业 JSON。示例 ID 来自 2026-09-23 的公开验收，远端可删除或修改，应使用当次查询的 ID。命令不会自动保存下载内容或执行作业；如需保存可重定向到 `var/` 下自行指定的文件。
 
 关卡 code 有歧义时使用 MAA canonical stageId；本机关卡表缺失或过旧时按正常 runtime 更新流程处理。`empty_result` 表示当前页为空，`stage_mismatch` / `schema_error` 表示协议或身份验证失败，均非可执行候选；错误 JSON 写入 stderr，退出码为 1。阶段记录见 [Phase 1](copilot/phase-1-prts-client.md)。
+
+
+### 单次 Copilot 通关实验（Phase 3）
+
+```bash
+# 禁止借干员（默认配置）
+./bin/zootd copilot-run NL-8 --profile no-support
+# 允许缺少一名干员时借助战，仍然优先 exact 自有阵容
+./bin/zootd copilot-run NL-8 --profile allow-support
+```
+
+两种策略位于 `config/copilot.toml`，`default_profile` 决定省略 `--profile` 时的行为。命令授权普通难度单次战斗，可消耗该关卡理智；所有理智药和源石禁用，不执行第二候选或自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。当前只提供 `navigation.NL-8` 自动路线；其他未配置关卡在启动前拒绝。新版国服从终端经曲谱、乐章收录进入长夜临光地图，导航只读屏幕并点击/滑动，不开始战斗；各导航任务成功后才提交 Copilot。支持常驻 SideStory 的关卡身份映射，由安装的关卡表和地图索引共同验证。PRTS 视频攻略不作为可执行候选。
+
+允许助战只接纳 `support_one`，不执行 `unknown` 或多名缺失；固定每个 group 的已匹配成员后，由 MaaCore 补齐唯一缺失位置。静态匹配和作者省略的练度要求不保证实际可用或通关，助战实际可用性由设备执行决定。查询页内先 exact、再 support_one，各档按已有评分与 ID 稳定排序；不会扫描全站或人工挑选作业。
+
+每次运行在 `var/state/copilot/<run-id>/` 保存 `selection.json`、原始/固定编队后的作业、任务参数、`callbacks.jsonl` 和 `result.json`；目录私有，不提交。结果记录 Box 哈希和时间而非完整账号数据，保留作业、静态数据、回调哈希。`success` 要求当次相同任务和设备的加载、编队、战斗、任务链及全部任务完成回调，加上正常进程退出；仅代表 Phase 3 执行终态，不写代理能力账本。失败查看 `failure_phase`、`error` 和该目录日志。设备和 runtime 更新共用独占锁，执行上限 20 分钟；只关闭本命令启动的 Waydroid surface。此功能不接入 daily、timer、planner 或恢复 controller。
