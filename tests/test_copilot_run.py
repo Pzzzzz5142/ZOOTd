@@ -1,6 +1,7 @@
 import copy
 import json
 import tempfile
+import time
 import unittest
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -202,7 +203,10 @@ class CopilotRunTests(unittest.TestCase):
                     self.assertEqual(params['support_unit_usage'], 0)
                     self.assertEqual(len(params['copilot_list']), 1)
                     self.assertFalse(params['copilot_list'][0]['is_raid'])
-                    records = events()
+                    from tests.test_copilot_proof import observations
+                    records = observations()
+                    for record in records:
+                        record.update(run_id=run.name, recorded_ns=time.monotonic_ns())
                     records[1]['details']['details']['file_name'] = str(run / 'execution.json')
                     (run / 'callbacks.jsonl').write_text('\n'.join(json.dumps(e) for e in records))
                     (run / 'task-id.json').write_text('7')
@@ -213,6 +217,10 @@ class CopilotRunTests(unittest.TestCase):
                 if drift:
                     dev.assert_not_called()
                     self.assertEqual(audit['failure_phase'], 'download_recheck')
+                else:
+                    self.assertTrue(audit['battle_proof']['three_star'])
+                    self.assertFalse(audit['battle_proof']['ledger_recorded'])
+                    self.assertFalse((root / 'var/state/planner/capabilities.json').exists())
                 self.assertNotIn('private', json.dumps(audit))
 
 

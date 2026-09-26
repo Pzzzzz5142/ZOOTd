@@ -65,13 +65,18 @@ def worker(root: Path, run: Path, address: str) -> int:
     callback_failed = threading.Event()
     mutex = threading.Lock()
     chains = []
+    sequence = 0
     with (run / 'callbacks.jsonl').open('x') as output:
         @callback_type
         def callback(msg, raw, _):
+            nonlocal sequence
             try:
                 value = json.loads(raw)
                 with mutex:
-                    output.write(json.dumps({'message': msg, 'details': value}, ensure_ascii=False) + '\n')
+                    output.write(json.dumps({'run_id': run.name, 'sequence': sequence,
+                                             'recorded_ns': time.monotonic_ns(),
+                                             'message': msg, 'details': value}, ensure_ascii=False) + '\n')
+                    sequence += 1
                     output.flush()
                     if msg in (0, 1, 10000, 10002, 10004):
                         chains.append((msg, value.get('taskid')))
