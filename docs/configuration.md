@@ -128,4 +128,4 @@ schema 1 中旧的“一次非三星就自动隔离”迁移为失败计数 1；
 
 `config/copilot.toml` 只由显式 `copilot-run` 读取。`profiles.no-support.allow_support = false` 禁止助战，`profiles.allow-support.allow_support = true` 允许补齐一名已知缺失/练度不足的位置；两者均优先选择 `exact`，不执行 `unknown`。`default_profile` 默认为 `no-support`，调用时可通过 `--profile` 选择另一种策略。
 
-`navigation` 是经过验收的自动导航路线，当前仅提供 NL-8 的长夜临光入口和地图标识。缺少路线会在启动设备前拒绝；不要仅凭关卡名猜测界面路径。执行命令、单次授权、审计文件及限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
+`navigation` 是经过验收的自动导航路线，当前仅提供 NL-8 的长夜临光入口和地图标识。缺少路线会在启动设备前拒绝；不要仅凭关卡名猜测界面路径。执行命令、单次/有限重试授权、审计文件及限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
