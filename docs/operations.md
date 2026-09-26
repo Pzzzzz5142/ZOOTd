@@ -310,4 +310,4 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 
 允许助战只接纳 `support_one`，不执行 `unknown` 或多名缺失；固定每个 group 的已匹配成员后，由 MaaCore 补齐唯一缺失位置。静态匹配和作者省略的练度要求不保证实际可用或通关，助战实际可用性由设备执行决定。查询页内先 exact、再 support_one，各档按已有评分与 ID 稳定排序；不会扫描全站或人工挑选作业。
 
-每次运行在 `var/state/copilot/<run-id>/` 保存 `selection.json`、原始/固定编队后的作业、任务参数、`callbacks.jsonl` 和 `result.json`；目录私有，不提交。结果记录 Box 哈希和时间而非完整账号数据，保留作业、静态数据、回调哈希。`success` 要求当次相同任务和设备的加载、编队、战斗、任务链及全部任务完成回调，加上正常进程退出；仅代表 Phase 3 执行终态，不写代理能力账本。失败查看 `failure_phase`、`error` 和该目录日志。设备和 runtime 更新共用独占锁，执行上限 20 分钟；只关闭本命令启动的 Waydroid surface。此功能不接入 daily、timer、planner 或恢复 controller。
+每次运行在 `var/state/copilot/<run-id>/` 保存 `selection.json`、原始/固定编队后的作业、任务参数、`callbacks.jsonl` 和 `result.json`；目录私有，不提交。结果记录 Box 哈希和时间而非完整账号数据，保留作业、静态数据、回调哈希。`success` 要求当次相同任务和设备的加载、编队、战斗、任务链及全部任务完成回调，加上正常进程退出；仅代表 Phase 3 执行终态，不写代理能力账本。失败查看 `failure_phase`、`error` 和该目录日志。Phase 5 新增 `battle_proof`：`observed` 表示当次三星模板观察，`unproven` 表示缺少有效新鲜证据；两者都不证明账号绑定、首次通关或已保存代理，也不写账本。新回调带 run ID、连续序号及单调时钟，旧回调不补写或追认。阶段进度见 [Phase 5](copilot/phase-5-proof.md)。设备和 runtime 更新共用独占锁，执行上限 20 分钟；只关闭本命令启动的 Waydroid surface。此功能不接入 daily、timer、planner 或恢复 controller。

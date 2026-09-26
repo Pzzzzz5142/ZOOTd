@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .box_cli import load_secret
 from .copilot_core import terminal_result
+from .copilot_proof import battle_proof
 from .copilot_navigation import archive_tasks
 from .copilot_matcher import match_candidate, rank_candidates
 from .copilot_static import fetch_catalog
@@ -244,13 +245,22 @@ def experiment(root: Path, stage: str, profile: str | None) -> dict:
             phase = 'device'
             with device(root, run) as address:
                 phase = 'execution'
+                started_ns = time.monotonic_ns()
                 status = execute(root, run, address)
+                finished_ns = time.monotonic_ns()
             phase = 'terminal'
             events = [decode(line) for line in (run / 'callbacks.jsonl').read_bytes().splitlines()]
             task_id = decode((run / 'task-id.json').read_bytes())
             result = terminal_result(events, task_id=task_id, stage=content['stage_name'], filename=str(filename))
             result['exit_code'] = status
             audit['execution'] = result
+            audit['battle_proof'] = battle_proof(
+                events, run_id=run.name, task_id=task_id, stage=content['stage_name'],
+                filename=str(filename), copilot_id=candidate.id,
+                copilot_sha256=audit['copilot_sha256'],
+                execution_sha256=audit['execution_sha256'],
+                started_ns=started_ns, finished_ns=finished_ns, exit_code=status,
+                support_used=checked.support_needed)
             audit['callbacks_sha256'] = sha256_bytes((run / 'callbacks.jsonl').read_bytes())
             if status != 0 or result['status'] != 'success':
                 raise ExperimentError('MaaCore did not produce a complete successful Copilot terminal')

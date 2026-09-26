@@ -20,7 +20,7 @@
 | 2 | [matcher](phase-2-matcher.md) | done（5/5，2026-09-24） | Phase 1 |
 | 3 | [technical-mvp](phase-3-technical-mvp.md) | done | Phase 2 |
 | 4 | [retry](phase-4-retry.md) | todo | Phase 3 |
-| 5 | [proof](phase-5-proof.md) | todo | Phase 4 |
+| 5 | [proof](phase-5-proof.md) | in_progress（1/5，三星证据层） | Phase 4（本次先实现单次证据层） |
 | 6 | [experimental-operations](phase-6-experimental-operations.md) | todo | Phase 5 |
 | 7 | [reliability](phase-7-reliability.md) | todo | Phase 6 |
 
@@ -28,4 +28,4 @@
 
 Technical MVP：Phase 3 完成后评估一次。Experimental Operational MVP：Phase 6 完成；仍不启用日常自动触发。Phase 7 仅作为后续增强。
 
-Phase 0：Skland Box 与交互式登录已完成，真实同步与人工核对通过。Phase 1：PRTS 轻量查询、指定 ID 完整获取、关卡身份复核和真实只读验收已完成。Phase 2：离线 matcher、全局位置分配、四档分类与稳定排序已完成。Phase 3 technical MVP 已完成，NL-8 单次实机执行终态成功；按路线图在此暂停评估，不继续实现 Phase 4。Phase 0–2 不启动游戏；Phase 3 起真实战斗另需用户明确指定关卡和授权。
+Phase 0：Skland Box 与交互式登录已完成，真实同步与人工核对通过。Phase 1：PRTS 轻量查询、指定 ID 完整获取、关卡身份复核和真实只读验收已完成。Phase 2：离线 matcher、全局位置分配、四档分类与稳定排序已完成。Phase 3 technical MVP 已完成，NL-8 单次实机执行终态成功；Phase 4 重试仍未开始。2026-09-26 按用户要求先开始 Phase 5，已接入新鲜三星观察与拒绝测试；账号/活动/代理证明及账本登记仍待完成。Phase 0–2 不启动游戏；Phase 3 起真实战斗另需用户明确指定关卡和授权。
