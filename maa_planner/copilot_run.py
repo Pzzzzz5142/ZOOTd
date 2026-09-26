@@ -170,6 +170,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
     audit = {'status': 'failed', 'copilot_id': candidate.id, 'run_dir': str(run),
              'snapshot_sha256': snapshot_sha256}
     phase = 'download_recheck'
+    reservation = None
     try:
         content = prts.get(candidate.id, stage=canonical)
         full = full_candidate(content, candidate)
@@ -202,6 +203,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         if not budget.reserve_battle():
             audit['failure'] = failure('budget_exhausted')
             raise ExperimentError('Battle count or sanity budget exhausted')
+        reservation = budget.battle_reservations
         audit['budget'] = budget.as_dict()
         atomic_write_json(run / 'selection.json', audit, mode=0o600)
         phase = 'device'
@@ -256,6 +258,11 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
                             'unknown_execution_failure' if phase == 'terminal' else 'runtime_failure')
                 audit['failure'] = failure(category)
     finally:
+        if reservation is not None:
+            outcome = audit.get('failure', {}).get('sanity_outcome', 'charged_or_unknown')
+            released = budget.settle(reservation, zero_cost=outcome in {'not_spent', 'refunded'})
+            audit['sanity_settlement'] = {'reservation': reservation, 'outcome': outcome,
+                                          'released': released}
         audit['budget'] = budget.as_dict()
         atomic_write_json(run / 'result.json', audit, mode=0o600)
     return audit
