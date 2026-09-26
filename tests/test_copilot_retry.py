@@ -44,12 +44,17 @@ def failed_events(kind='missing'):
         records.append(event(20000, subtask='BattleFormationTask'))
     elif kind == 'formation':
         records.append(event(20000, subtask='BattleFormationTask'))
-    elif kind in ('battle', 'battle_unknown'):
+    elif kind in ('battle', 'two_star', 'battle_unknown'):
         records += [event(20002, subtask='BattleFormationTask'), event(20001, subtask='BattleProcessTask')]
         if kind == 'battle':
             records.append(event(20002, subtask='ProcessTask', first=['Copilot@WaitUntilEndOfAction'],
                                  details={'task': 'FightMissionFailed', 'algorithm': 'OcrDetect',
                                           'action': 'ClickSelf', 'result': {'text': '任务失败', 'score': 0.98}}))
+        if kind == 'two_star':
+            records.append(event(20002, subtask='ProcessTask', first=['Copilot@WaitUntilEndOfAction'],
+                                 details={'task': 'StageDrops-Stars-2', 'algorithm': 'MatchTemplate',
+                                          'action': 'DoNothing', 'result': {
+                                              'template': 'StageDrops-Stars-2.png', 'score': 0.98}}))
         records.append(event(20000, subtask='BattleProcessTask'))
     elif kind == 'navigation':
         records.pop()
@@ -150,6 +155,35 @@ class RetryClassificationTests(unittest.TestCase):
             self.assertEqual(payload, {'run_id': 'attempt-A', 'phase': 'adb', 'exit_code': 1})
 
 
+    def test_only_proven_zero_cost_failure_releases_sanity(self):
+        for kind, outcome in [('missing', 'not_spent'), ('requirement', 'not_spent'),
+                              ('schema', 'not_spent'), ('battle', 'refunded'),
+                              ('two_star', 'charged_or_unknown'),
+                              ('battle_unknown', 'charged_or_unknown')]:
+            self.assertEqual(classify(failed_events(kind))['sanity_outcome'], outcome)
+        self.assertEqual(classify(failed_events('battle'), exit_code=124)['sanity_outcome'],
+                         'charged_or_unknown')
+        records = failed_events('battle')
+        records.insert(-2, failed_events('two_star')[5])
+        self.assertEqual(classify(stamp(records))['sanity_outcome'], 'charged_or_unknown')
+        records = stamp(failed_events('battle')+[event(20003, what='GameOffline')])
+        self.assertEqual(classify(records)['sanity_outcome'], 'charged_or_unknown')
+
+    def test_settlement_is_once_per_dispatch_and_does_not_restore_attempt_count(self):
+        budget = RetryBudget(RetryLimits(3, 2, 18), 18)
+        self.assertTrue(budget.reserve_battle())
+        self.assertEqual(budget.settle(1, zero_cost=True), 18)
+        self.assertEqual(budget.sanity_reserved, 0)
+        self.assertTrue(budget.reserve_battle())
+        self.assertEqual(budget.settle(2, zero_cost=True), 18)
+        self.assertEqual(budget.sanity_released, 36)
+        self.assertFalse(budget.reserve_battle())
+        for reservation in (0, 1, 2, 3, True):
+            with self.assertRaises(ValueError):
+                budget.settle(reservation, zero_cost=True)
+        self.assertEqual(budget.sanity_reserved, 0)
+
+
     def test_bounds_and_reservations(self):
         for values in [dict(max_candidates=6), dict(max_candidates=True), dict(max_battles=4),
                        dict(max_battles=2), dict(sanity_budget=-1), dict(sanity_budget=True)]:
@@ -216,7 +250,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertFalse(params['use_sanity_potion'])
         self.assertFalse(params['ignore_requirements'])
         selection = json.loads((run / 'selection.json').read_text())
-        self.assertGreaterEqual(selection['budget']['sanity_reserved'], len(self.paths)*18)
+        self.assertGreaterEqual(selection['budget']['sanity_reserved'], 18)
+        self.assertLessEqual(selection['budget']['sanity_reserved'], selection['budget']['sanity_limit'])
         kind = self.outcomes.pop(0)
         if kind == 'interrupt':
             raise KeyboardInterrupt
@@ -241,7 +276,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertEqual([a['copilot_id'] for a in result['attempts']], [1, 2])
         self.assertEqual(result['attempts'][0]['failure']['category'], 'formation_missing_operator')
         self.assertTrue(result['attempts'][1]['battle_proof']['three_star'])
-        self.assertEqual(result['budget']['sanity_reserved'], 36)
+        self.assertEqual(result['budget']['sanity_reserved'], 18)
+        self.assertEqual(result['budget']['sanity_released'], 18)
         self.box_fetch.assert_called_once()
         self.provider.query.assert_called_once()
         self.catalog_fetch.assert_called_once()
@@ -254,6 +290,34 @@ class RetryIntegrationTests(unittest.TestCase):
             self.assertEqual(json.loads((path / 'result.json').read_text()), result['attempts'][i])
         self.assertNotIn('private', json.dumps(result))
         self.assertFalse((self.root / 'var/state/planner/capabilities.json').exists())
+
+    def test_failed_battle_then_success_needs_only_one_clear_sanity_budget(self):
+        self.outcomes = ['battle', 'success']
+        result = self.run_experiment(sanity_budget=18)
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(len(result['attempts']), 2)
+        self.assertEqual(result['budget']['battle_reservations'], 2)
+        self.assertEqual(result['budget']['sanity_reserved'], 18)
+        self.assertEqual(result['budget']['sanity_released'], 18)
+        self.assertEqual(result['attempts'][0]['sanity_settlement'],
+                         {'reservation': 1, 'outcome': 'refunded', 'released': 18})
+        self.assertEqual(result['attempts'][1]['sanity_settlement']['released'], 0)
+
+    def test_formation_failure_then_success_also_fits_one_clear(self):
+        result = self.run_experiment(sanity_budget=18)
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(result['attempts'][0]['sanity_settlement']['outcome'], 'not_spent')
+        self.assertEqual(result['budget']['sanity_reserved'], 18)
+
+    def test_unknown_or_interrupted_battle_keeps_full_reservation(self):
+        for kind in ('offline', 'timeout', 'old', 'interrupt', 'battle_unknown'):
+            self.outcomes = [kind]
+            self.paths = []
+            result = self.run_experiment(sanity_budget=18)
+            self.assertEqual(result['status'], 'failed')
+            self.assertEqual(result['budget']['sanity_reserved'], 18)
+            self.assertEqual(result['budget']['sanity_released'], 0)
+
 
     def test_system_timeout_old_evidence_and_interrupt_never_try_B(self):
         for kind in ('offline', 'timeout', 'old', 'interrupt', 'battle_unknown', 'navigation'):
@@ -268,7 +332,7 @@ class RetryIntegrationTests(unittest.TestCase):
     def test_budget_prevents_second_worker(self):
         for limits in ({'max_candidates': 1}, {'max_battles': 1}, {'sanity_budget': 35}):
             with self.subTest(limits=limits):
-                self.outcomes = ['missing', 'success']
+                self.outcomes = ['two_star', 'success']
                 self.paths = []
                 result = self.run_experiment(**limits)
                 self.assertEqual(result['status'], 'failed')
@@ -332,7 +396,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertEqual(result['status'], 'failed')
         self.assertEqual(len(result['attempts']), 3)
         self.assertTrue(all(a['status'] == 'failed' for a in result['attempts']))
-        self.assertEqual(result['budget']['sanity_reserved'], 54)
+        self.assertEqual(result['budget']['sanity_reserved'], 0)
+        self.assertEqual(result['budget']['sanity_released'], 54)
 
 
     def test_no_resume_and_no_reuse_of_previous_attempt_artifacts(self):

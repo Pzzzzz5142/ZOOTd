@@ -1,7 +1,7 @@
 """Bounded candidate retries, with fail-closed structured failure evidence."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 
 from .copilot_core import callbacks_are_fresh
@@ -32,6 +32,8 @@ class RetryBudget:
     candidates: int = 0
     battle_reservations: int = 0
     sanity_reserved: int = 0
+    sanity_released: int = 0
+    _settled: set[int] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self):
         if type(self.stage_cost) is not int or not 1 <= self.stage_cost <= 999:
@@ -49,7 +51,7 @@ class RetryBudget:
 
     def reserve_battle(self):
         # A worker may start a battle before callbacks are durable. Reserve the
-        # entire cost before dispatch and never infer refunds from missing logs.
+        # entire cost before dispatch; only proven zero-cost outcomes release it.
         if (self.battle_reservations >= self.limits.max_battles
                 or self.sanity_reserved + self.stage_cost > self.sanity_limit):
             return False
@@ -57,15 +59,28 @@ class RetryBudget:
         self.sanity_reserved += self.stage_cost
         return True
 
+    def settle(self, reservation: int, *, zero_cost: bool):
+        """Settle each dispatch once, without restoring its execution allowance."""
+        if (type(reservation) is not int or not 1 <= reservation <= self.battle_reservations
+                or reservation in self._settled or type(zero_cost) is not bool):
+            raise ValueError('Invalid or already settled battle reservation')
+        self._settled.add(reservation)
+        released = self.stage_cost if zero_cost else 0
+        self.sanity_reserved -= released
+        self.sanity_released += released
+        return released
+
     def as_dict(self):
         return {'candidates_considered': self.candidates,
                 'battle_reservations': self.battle_reservations,
-                'sanity_reserved': self.sanity_reserved, 'sanity_limit': self.sanity_limit,
+                'sanity_reserved': self.sanity_reserved, 'sanity_released': self.sanity_released,
+                'sanity_limit': self.sanity_limit,
                 'stage_cost': self.stage_cost}
 
 
-def failure(category, *, retryable=False, evidence=None):
-    return {'category': category, 'retryable': retryable, 'evidence': evidence or []}
+def failure(category, *, retryable=False, evidence=None, sanity_outcome='charged_or_unknown'):
+    return {'category': category, 'retryable': retryable, 'evidence': evidence or [],
+            'sanity_outcome': sanity_outcome}
 
 
 def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
@@ -103,6 +118,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     missing = None
     requirements = []
     battle_failed = schema_failed = formation_error = unexpected = False
+    mission_failed = cleared = False
     evidence = []
     for event in events:
         msg, value = event['message'], event['details']
@@ -162,6 +178,8 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
         if msg == 20002 and subtask == 'ProcessTask' and battling:
             task = detail.get('task', '').removeprefix('Copilot@') if isinstance(detail.get('task'), str) else ''
             result = detail.get('result', {})
+            if task in {'StageDrops-Stars-2', 'StageDrops-Stars-3', 'StageDrops-Stars-Adverse'}:
+                cleared = True
             if (value.get('first') == ['Copilot@WaitUntilEndOfAction']
                     and isinstance(result, dict)
                     and type(result.get('score')) in (float, int)
@@ -171,6 +189,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                          or (task == 'StageDrops-Stars-2' and detail.get('algorithm') == 'MatchTemplate'
                              and result.get('template') == 'StageDrops-Stars-2.png'))):
                 battle_failed = True
+                mission_failed |= task == 'FightMissionFailed'
                 evidence.append({'sequence': event['sequence'], 'task': task})
         if msg == 20000 and subtask == 'ProcessTask' and not battle_failed:
             unexpected = True
@@ -179,10 +198,14 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     if not loaded or not chain_failed or not all_done or unexpected:
         return failure('unknown_execution_failure')
     if formed and battling and battle_failed:
-        return failure('battle_failed', retryable=True, evidence=evidence)
+        # Official CN has refunded failed/abandoned normal operations since
+        # 2025-08-02. A two-star CLEAR still costs sanity. Never infer a refund
+        # from generic worker/task failure or absence of a successful terminal.
+        return failure('battle_failed', retryable=True, evidence=evidence,
+                       sanity_outcome='refunded' if mission_failed and not cleared else 'charged_or_unknown')
     if forming and not formed and not battling:
         if schema_failed:
-            return failure('copilot_schema_failure', retryable=True)
+            return failure('copilot_schema_failure', retryable=True, sanity_outcome='not_spent')
         if missing is not None:
             if any(row['reason'] == 'Unavailable' for row in missing):
                 # Inconclusive Unchecked rows or untyped requirements never
@@ -190,8 +213,10 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 unavailable = {r['name'] for r in missing if r['reason'] == 'Unavailable'}
                 if not unavailable <= {r['oper_name'] for r in requirements}:
                     return failure('formation_other_failure')
-                return failure('formation_requirement_unsatisfied', retryable=True, evidence=requirements)
-            return failure('formation_missing_operator', retryable=True, evidence=missing)
+                return failure('formation_requirement_unsatisfied', retryable=True, evidence=requirements,
+                               sanity_outcome='not_spent')
+            return failure('formation_missing_operator', retryable=True, evidence=missing,
+                           sanity_outcome='not_spent')
         if formation_error:
             return failure('formation_other_failure')
     if not forming:
