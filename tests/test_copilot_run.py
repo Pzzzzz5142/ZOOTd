@@ -170,7 +170,7 @@ class CopilotRunTests(unittest.TestCase):
                     '[navigation.NL-8]\nactivity="长夜临光"\nmap_marker="NL-"\n')
                 for name, payload in (
                     ('var/state/runtime/maa-resource.json', {}),
-                    ('var/data/resource/stages.json', [{'code': 'NL-8', 'stageId': 'stage'}]),
+                    ('var/data/resource/stages.json', [{'code': 'NL-8', 'stageId': 'stage', 'apCost': 18}]),
                     ('var/data/resource/battle_data.json', {}),
                 ):
                     p = root / name
@@ -216,10 +216,10 @@ class CopilotRunTests(unittest.TestCase):
                 self.assertEqual(audit['status'], 'failed' if drift else 'success')
                 if drift:
                     dev.assert_not_called()
-                    self.assertEqual(audit['failure_phase'], 'download_recheck')
+                    self.assertEqual(audit['attempts'][0]['failure_phase'], 'download_recheck')
                 else:
-                    self.assertTrue(audit['battle_proof']['three_star'])
-                    self.assertFalse(audit['battle_proof']['ledger_recorded'])
+                    self.assertTrue(audit['attempts'][0]['battle_proof']['three_star'])
+                    self.assertFalse(audit['attempts'][0]['battle_proof']['ledger_recorded'])
                     self.assertFalse((root / 'var/state/planner/capabilities.json').exists())
                 self.assertNotIn('private', json.dumps(audit))
 

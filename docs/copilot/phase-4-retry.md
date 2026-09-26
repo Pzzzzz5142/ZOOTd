@@ -2,19 +2,25 @@
 
 [总进度](README.md) · [共同设计](design.md) · [文档索引](../README.md)
 
-状态：todo。依赖：Phase 3 验收完成。
+状态：in_progress（4/5，待真实设备重试验收）。依赖：Phase 3 验收完成。
 
 ## 进度
 
-- [ ] P4-01 — todo：候选失败与系统失败分类。
-- [ ] P4-02 — todo：单轮复用 Box 和候选快照。
-- [ ] P4-03 — todo：候选数、真实战斗数及理智预算限制。
-- [ ] P4-04 — todo：离线验证 A 失败 B 成功与系统故障立即停止。
+- [x] P4-01 — done：候选失败与系统失败分类。
+- [x] P4-02 — done：单轮复用 Box 和候选快照。
+- [x] P4-03 — done：候选数、真实战斗数及理智预算限制。
+- [x] P4-04 — done：离线验证 A 失败 B 成功与系统故障立即停止。
 - [ ] P4-05 — todo：授权后的真实设备重试验收。
 
 ## 完成记录
 
-尚未完成。每项 done 需记录实现文件、测试/验收证据和日期；整个阶段只有全部验收通过才标 done。
+2026-09-26：P4-01–04 已实现。`maa_planner/copilot_retry.py` 提供严格预算和新鲜回调失败分类，`copilot_run.py` 复用单轮 Box/静态身份/候选快照，按原排序逐个重新核对并执行，`copilot_core.py` 输出安全的 worker 阶段收据。每次尝试有唯一 ID 和独立文件，Phase 5 三星观察仍逐尝试校验，不写能力账本。
+
+协议核对使用 MaaCore v6.18.0 的 [BattleFormationTask](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/Miscellaneous/BattleFormationTask.cpp) 与 [Assistant](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Assistant.cpp)：`BattleFormationOperUnavailable` 只是信息回调，必须与未完成编队的 `OperatorMissing` 及失败链终态组合后才作为重试依据；缺失报告中的 `Unchecked` 不算确定缺失。MaaCore 失败任务同样可能产生 `AllTasksCompleted`，不能据此覆盖 `TaskChainError`。运行时异常、掉线和 ADB 故障优先于候选失败。
+
+`tests/test_copilot_retry.py` 离线构造 A 编队失败 B 成功、候选内容变更后跳过、候选耗尽、三种预算限制、失败不退款、系统故障/超时/中断/旧证据停止、跨尝试身份拒绝、实际 OCR/模板要求、重启失败和原始失败记录保留。与既有运行、三星证明测试共 40 项通过；完整离线回归 193 项通过（5 项可选环境测试跳过）。`git diff --check` 与修改文档相对链接通过。未运行游戏或调用账号接口。
+
+默认仍只执行一个候选。显式参数的范围、理智预扣方式和审计路径集中维护在[运维手册](../operations.md#有限候选重试phase-4)。当前真实路线仍仅 NL-8；P4-05 必须在用户授权关卡及预算后验证。一次候选直接成功不冒充“A 失败 B 成功”的真实重试验收，未完成前整个 Phase 4 不标 done。
 
 ## 目标
 

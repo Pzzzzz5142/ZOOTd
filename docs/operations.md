@@ -306,8 +306,25 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 ./bin/zootd copilot-run NL-8 --profile allow-support
 ```
 
-两种策略位于 `config/copilot.toml`，`default_profile` 决定省略 `--profile` 时的行为。命令授权普通难度单次战斗，可消耗该关卡理智；所有理智药和源石禁用，不执行第二候选或自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。当前只提供 `navigation.NL-8` 自动路线；其他未配置关卡在启动前拒绝。新版国服从终端经曲谱、乐章收录进入长夜临光地图，导航只读屏幕并点击/滑动，不开始战斗；各导航任务成功后才提交 Copilot。支持常驻 SideStory 的关卡身份映射，由安装的关卡表和地图索引共同验证。PRTS 视频攻略不作为可执行候选。
+两种策略位于 `config/copilot.toml`，`default_profile` 决定省略 `--profile` 时的行为。命令授权普通难度单次战斗，可消耗该关卡理智；所有理智药和源石禁用；默认不执行第二候选，显式重试参数见下文，不调用自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。当前只提供 `navigation.NL-8` 自动路线；其他未配置关卡在启动前拒绝。新版国服从终端经曲谱、乐章收录进入长夜临光地图，导航只读屏幕并点击/滑动，不开始战斗；各导航任务成功后才提交 Copilot。支持常驻 SideStory 的关卡身份映射，由安装的关卡表和地图索引共同验证。PRTS 视频攻略不作为可执行候选。
 
 允许助战只接纳 `support_one`，不执行 `unknown` 或多名缺失；固定每个 group 的已匹配成员后，由 MaaCore 补齐唯一缺失位置。静态匹配和作者省略的练度要求不保证实际可用或通关，助战实际可用性由设备执行决定。查询页内先 exact、再 support_one，各档按已有评分与 ID 稳定排序；不会扫描全站或人工挑选作业。
 
-每次运行在 `var/state/copilot/<run-id>/` 保存 `selection.json`、原始/固定编队后的作业、任务参数、`callbacks.jsonl` 和 `result.json`；目录私有，不提交。结果记录 Box 哈希和时间而非完整账号数据，保留作业、静态数据、回调哈希。`success` 要求当次相同任务和设备的加载、编队、战斗、任务链及全部任务完成回调，加上正常进程退出；仅代表 Phase 3 执行终态，不写代理能力账本。失败查看 `failure_phase`、`error` 和该目录日志。Phase 5 新增 `battle_proof`：`observed` 表示当次三星模板观察，`unproven` 表示缺少有效新鲜证据；两者都不证明账号绑定、首次通关或已保存代理，也不写账本。新回调带 run ID、连续序号及单调时钟，旧回调不补写或追认。阶段进度见 [Phase 5](copilot/phase-5-proof.md)。设备和 runtime 更新共用独占锁，执行上限 20 分钟；只关闭本命令启动的 Waydroid surface。此功能不接入 daily、timer、planner 或恢复 controller。
+每次运行在 `var/state/copilot/<run-id>/` 保存一次 `snapshot.json`（候选页、排序、Box 哈希及静态来源）和整轮 `result.json`。每个候选在 `attempts/<run-id>-NN/` 独立保存 `selection.json`、原始/固定编队后的作业、任务参数、`callbacks.jsonl`、`worker-result.json` 和 `result.json`；失败文件不覆盖。目录私有，不提交。结果记录 Box 哈希和时间而非完整账号数据，保留作业、静态数据、回调哈希。
+
+整轮 `success` 要求至少一个候选产生当次相同任务和设备的加载、编队、战斗、任务链及全部任务完成回调，加上正常进程退出；仅代表执行终态，不写代理能力账本。整轮结果中的 `attempts` 保留所有失败及成功，`stop_reason` 解释停止原因；每次尝试的 `failure.category`、`failure.retryable`、`failure_phase` 与日志用于诊断。不能把失败链发出的 `AllTasksCompleted` 当成功。
+
+Phase 5 的 `battle_proof` 位于各尝试结果：`observed` 表示当次三星模板观察，`unproven` 表示缺少有效新鲜证据；两者都不证明账号绑定、首次通关或已保存代理，也不写账本。新回调带唯一尝试 ID、连续序号及单调时钟，旧回调不补写或追认。阶段进度见 [Phase 5](copilot/phase-5-proof.md)。设备和 runtime 更新整轮共用独占锁，每个 worker 上限 20 分钟；只关闭本命令启动的 Waydroid surface。此功能不接入 daily、timer、planner 或恢复 controller。
+
+#### 有限候选重试（Phase 4）
+
+```bash
+# 显式授权：最多考察 3 个候选、进入设备执行 2 次、总理智上限 36
+./bin/zootd copilot-run NL-8 --profile allow-support --max-candidates 3 --max-battles 2 --sanity-budget 36
+```
+
+候选数范围 1–5、战斗执行次数范围 1–3，默认均为 1。允许两次及以上执行时必须显式给出 `--sanity-budget`（0–999）；省略时预算为安装关卡表的单场 `apCost`。缺失或歧义费用会在 Box/设备启动前拒绝。每次设备执行前按完整关卡费用预扣一场；即使失败发生在导航或编队，或客户端退款，也不归还预算，因此记录的 `battle_reservations` / `sanity_reserved` 是保守上限，不是实际消耗。候选内容变更、删除等在设备执行前被排除时只占候选名额。
+
+整轮只刷新一次 Box、静态身份和候选页，各候选完整作业只下载一次，并重新核对轻量快照和匹配结果。只有可信的编队缺失/练度失败、作业编队解析失败或明确已结算战斗失败才允许自动尝试下一候选；泛化编队错误、BattleProcess 错误、网络/协议/关卡身份错误、导航失败、ADB 故障、掉线、超时、证据缺失或中断均立即停止。未知原因不会换候选。失败分类依据及进度见 [Phase 4](copilot/phase-4-retry.md)。
+
+前一个 worker 正常退出且明确可重试后，下一次设备执行会通过 ADB 关闭国服客户端，由新的隔离 Core 重新启动、导航和编队，避免沿用失败页面。整轮持有设备锁；预算耗尽时不会启动后续 worker。中断后不会续用历史快照或预算；重新调用是一次新授权和新运行。

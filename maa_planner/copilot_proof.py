@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 
-from .copilot_core import terminal_result
+from .copilot_core import callbacks_are_fresh, terminal_result
 from .util import canonical_json, sha256_bytes
 
 
@@ -42,17 +42,8 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
         return reject('worker_failed')
     if not isinstance(events, list) or not events:
         return reject('missing_callbacks')
-    previous_ns = started_ns
-    for sequence, event in enumerate(events):
-        if (not isinstance(event, dict) or event.get('run_id') != run_id
-                or type(event.get('sequence')) is not int or event['sequence'] != sequence
-                or type(event.get('recorded_ns')) is not int
-                or not previous_ns <= event['recorded_ns'] <= finished_ns
-                or type(event.get('message')) is not int
-                or not isinstance(event.get('details'), dict)
-                or not isinstance(event['details'].get('details', {}), dict)):
-            return reject('stale_or_malformed_callbacks')
-        previous_ns = event['recorded_ns']
+    if not callbacks_are_fresh(events, run_id=run_id, started_ns=started_ns, finished_ns=finished_ns):
+        return reject('stale_or_malformed_callbacks')
     try:
         terminal = terminal_result(events, task_id=task_id, stage=stage, filename=filename)
     except (TypeError, ValueError, KeyError):
