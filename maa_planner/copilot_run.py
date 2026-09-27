@@ -165,8 +165,28 @@ class CandidateRejected(ExperimentError):
     """A validated candidate is unusable; no device action has happened."""
 
 
+def acceptance_formation_failure(content, box, catalog, battle):
+    """Explicit hardware test: an impossible low-rarity level, never fake callbacks."""
+    changed = copy.deepcopy(content)
+    members = changed.get('opers', []) + [o for g in changed.get('groups', []) for o in g['opers']]
+    for member in members:
+        identity = catalog.resolve(member['name'])
+        if identity is None or identity.id not in box.operators:
+            continue
+        rarity = battle['chars'].get(identity.id, {}).get('rarity')
+        # Installed MAA rarity is 1..6. Five-star and lower units cannot reach
+        # E2 level 90, even if remote progression was stale. Never use six-stars.
+        if type(rarity) is int and 1 <= rarity <= 5:
+            before = copy.deepcopy(member.get('requirements', {}))
+            member['requirements'] = dict(before, elite=2, level=90)
+            return changed, {'kind': 'impossible_formation_level', 'oper_name': member['name'],
+                             'rarity': rarity, 'original_requirements': before,
+                             'injected_requirements': member['requirements']}
+    raise ExperimentError('Acceptance check needs an owned five-star-or-lower assigned operator')
+
+
 def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
-            code, route, budget, get_address, restart, snapshot_sha256):
+            code, route, budget, get_address, restart, snapshot_sha256, acceptance_failure=False):
     audit = {'status': 'failed', 'copilot_id': candidate.id, 'run_dir': str(run),
              'snapshot_sha256': snapshot_sha256}
     phase = 'download_recheck'
@@ -183,6 +203,12 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         audit['copilot_sha256'] = sha256_bytes(canonical_json(content))
         atomic_write_json(run / 'source.json', content, mode=0o600)
         content = bind_formation(content, checked, catalog)
+        if acceptance_failure:
+            phase = 'acceptance_fixture'
+            if checked.status != 'exact':
+                raise ExperimentError('Acceptance failure injection requires an exact candidate without support')
+            content, audit['acceptance_injection'] = acceptance_formation_failure(
+                content, box, catalog, decode((root / 'var/data/resource/battle_data.json').read_bytes()))
         audit['execution_sha256'] = sha256_bytes(canonical_json(content))
         filename = run / 'execution.json'
         atomic_write_json(filename, content, mode=0o600)
@@ -268,9 +294,13 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
     return audit
 
 
-def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None) -> dict:
+def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None,
+               acceptance_failure: bool = False) -> dict:
     limits = limits or RetryLimits()
     policy = load_policy(root, profile)
+    if acceptance_failure and (limits.max_candidates != 2 or limits.max_battles != 2
+                               or limits.sanity_budget != 18):
+        raise ExperimentError('Acceptance check requires exactly 2 candidates, 2 executions, 18 sanity')
     directory = root / 'var/state/copilot'
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     run = directory / (time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:12])
@@ -279,6 +309,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
              'policy': policy, 'run_dir': str(run), 'status': 'failed', 'attempts': [],
              'authorization': {'max_candidates': limits.max_candidates, 'max_battles': limits.max_battles,
                                'sanity_budget': limits.sanity_budget, 'medicine': 0, 'stone': 0, 'raid': False}}
+    if acceptance_failure:
+        audit['acceptance_check'] = 'injected_formation_failure_then_unmodified_candidate'
     phase = 'readiness'
     budget = None
     try:
@@ -296,6 +328,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             if len(codes) != 1:
                 raise ExperimentError('Ambiguous navigation code')
             code = next(iter(codes))
+            if acceptance_failure and code != 'NL-8':
+                raise ExperimentError('Acceptance check is restricted to NL-8')
             route = tomllib.loads((root / 'config/copilot.toml').read_text()).get('navigation', {}).get(code)
             if (not isinstance(route, dict) or set(route) != {'activity', 'map_marker'}
                     or any(not isinstance(v, str) or not v for v in route.values())):
@@ -331,6 +365,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                         'stage_catalog_sha256': audit['stage_catalog_sha256'],
                         'query': page, 'ranking': audit['ranking'], 'box': audit['box'],
                         'static_sources': audit['static_sources']}
+            if acceptance_failure:
+                snapshot['acceptance_check'] = audit['acceptance_check']
             atomic_write_json(run / 'snapshot.json', snapshot, mode=0o600)
             audit['snapshot_sha256'] = sha256_bytes(canonical_json(snapshot))
             if selected is None:
@@ -338,6 +374,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
 
             choices = [r for r in ranked if r.status == 'exact' or
                        (policy['allow_support'] and r.status == 'support_one')]
+            if acceptance_failure and (len(choices) < 2 or choices[0].status != 'exact'):
+                raise ExperimentError('Acceptance check needs two candidates, with an exact first candidate')
             phase = 'attempts'
             with ExitStack() as stack:
                 address = None
@@ -357,7 +395,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                     outcome = attempt(root, attempt_dir, candidate=candidate, selected=chosen,
                                       box=box, catalog=catalog, prts=prts, canonical=canonical,
                                       code=code, route=route, budget=budget, get_address=get_address,
-                                      restart=dispatched, snapshot_sha256=audit['snapshot_sha256'])
+                                      restart=dispatched, snapshot_sha256=audit['snapshot_sha256'],
+                                      acceptance_failure=acceptance_failure and budget.candidates == 1)
                     dispatched |= 'worker_exit_code' in outcome
                     audit['attempts'].append(outcome)
                     audit['copilot_id'] = candidate.id
@@ -373,6 +412,17 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             if audit['status'] != 'success':
                 audit['failure_phase'] = 'attempts'
                 audit['error'] = audit['stop_reason']
+            if acceptance_failure:
+                attempts = audit['attempts']
+                audit['acceptance_passed'] = (
+                    len(attempts) == 2 and attempts[0].get('acceptance_injection') is not None
+                    and attempts[0].get('failure', {}).get('category') == 'formation_requirement_unsatisfied'
+                    and attempts[0].get('sanity_settlement', {}).get('outcome') == 'not_spent'
+                    and attempts[1]['status'] == 'success'
+                    and 'acceptance_injection' not in attempts[1])
+                if not audit['acceptance_passed']:
+                    audit.update(status='failed', stop_reason='acceptance_not_proven',
+                                 failure_phase='acceptance', error='Acceptance retry chain was not proven')
     except (Exception, KeyboardInterrupt) as exc:
         audit['status'] = 'failed'
         audit['failure_phase'] = phase
@@ -392,6 +442,8 @@ def main(argv=None):
     parser.add_argument('--max-candidates', type=int, default=1)
     parser.add_argument('--max-battles', type=int, default=1)
     parser.add_argument('--sanity-budget', type=int)
+    parser.add_argument('--acceptance-formation-failure', action='store_true',
+                        help='NL-8 hardware test only: inject an impossible formation level into candidate A')
     args = parser.parse_args(argv)
     try:
         limits = RetryLimits(args.max_candidates, args.max_battles, args.sanity_budget)
@@ -402,7 +454,8 @@ def main(argv=None):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, cancelled)
     try:
-        result = experiment(args.project_root.resolve(), args.stage, args.profile, limits=limits)
+        result = experiment(args.project_root.resolve(), args.stage, args.profile, limits=limits,
+                            acceptance_failure=args.acceptance_formation_failure)
         print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'failure_phase', 'error')
                           if k in result}, ensure_ascii=False))
         return 0 if result['status'] == 'success' else 1

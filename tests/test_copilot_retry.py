@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from maa_planner.copilot_core import worker
 from maa_planner.copilot_retry import RetryLimits, RetryBudget, classify_failure
-from maa_planner.copilot_run import experiment
+from maa_planner.copilot_run import experiment, acceptance_formation_failure, ExperimentError
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity
 from maa_planner.operator_box import OperatorBox, Operator
 from maa_planner.prts import PrtsError
@@ -269,6 +269,54 @@ class RetryIntegrationTests(unittest.TestCase):
     def run_experiment(self, **kw):
         return experiment(self.root, 'NL-8', None, limits=RetryLimits(**dict(
             {'max_candidates': 3, 'max_battles': 2, 'sanity_budget': 36}, **kw)))
+
+    def test_acceptance_injects_only_A_preserves_sources_and_uses_real_retry_path(self):
+        (self.root / 'var/data/resource/battle_data.json').write_text(json.dumps({'chars': {'A': {'rarity': 4}}}))
+        self.outcomes = ['requirement', 'success']
+        result = experiment(self.root, 'NL-8', None, limits=RetryLimits(2, 2, 18), acceptance_failure=True)
+        self.assertTrue(result['acceptance_passed'], result)
+        self.assertEqual(result['status'], 'success')
+        first, second = result['attempts']
+        self.assertEqual(first['acceptance_injection']['oper_name'], 'A')
+        self.assertNotIn('acceptance_injection', second)
+        self.assertEqual(first['sanity_settlement']['outcome'], 'not_spent')
+        self.assertEqual(result['budget']['sanity_reserved'], 18)
+        a, b = self.paths
+        self.assertEqual(json.loads((a / 'source.json').read_text()), self.content)
+        self.assertEqual(json.loads((b / 'execution.json').read_text()), self.content)
+        self.assertEqual(json.loads((a / 'execution.json').read_text())['opers'][0]['requirements'],
+                         {'elite': 2, 'level': 90})
+        self.box_fetch.assert_called_once()
+        self.provider.query.assert_called_once()
+
+    def test_acceptance_never_labels_direct_success_as_retry_acceptance(self):
+        (self.root / 'var/data/resource/battle_data.json').write_text(json.dumps({'chars': {'A': {'rarity': 4}}}))
+        self.outcomes = ['success']
+        result = experiment(self.root, 'NL-8', None, limits=RetryLimits(2, 2, 18), acceptance_failure=True)
+        self.assertEqual(result['status'], 'failed')
+        self.assertFalse(result['acceptance_passed'])
+        self.assertEqual(len(result['attempts']), 1)
+
+    def test_acceptance_rejects_wrong_budget_and_no_safe_injection_before_device(self):
+        with self.assertRaises(ExperimentError):
+            experiment(self.root, 'NL-8', None, limits=RetryLimits(2, 2, 36), acceptance_failure=True)
+        (self.root / 'var/data/resource/battle_data.json').write_text(json.dumps({'chars': {'A': {'rarity': 6}}}))
+        result = experiment(self.root, 'NL-8', None, limits=RetryLimits(2, 2, 18), acceptance_failure=True)
+        self.assertEqual(result['status'], 'failed')
+        self.dev.assert_not_called()
+        self.execute.assert_not_called()
+
+    def test_acceptance_does_not_mutate_input_and_skips_unknown_rarity(self):
+        original = copy.deepcopy(self.content)
+        box = self.box_fetch.return_value
+        catalog = self.catalog_fetch.return_value[0]
+        for rarity in (6, None, True, 0, 7):
+            with self.assertRaises(ExperimentError):
+                acceptance_formation_failure(original, box, catalog, {'chars': {'A': {'rarity': rarity}}})
+        changed, evidence = acceptance_formation_failure(original, box, catalog, {'chars': {'A': {'rarity': 4}}})
+        self.assertEqual(original, self.content)
+        self.assertNotEqual(changed, original)
+        self.assertEqual(evidence['original_requirements'], {})
 
     def test_candidate_A_fails_B_succeeds_with_one_snapshot(self):
         result = self.run_experiment()
