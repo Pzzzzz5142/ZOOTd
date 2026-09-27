@@ -10,6 +10,17 @@ import time
 from pathlib import Path
 
 
+def map_recognized(message, value):
+    """A completed scan is not proof that the archive map was reached."""
+    details = value.get('details', {})
+    result = details.get('result', {})
+    return (message == 20002 and value.get('taskchain') == 'Custom'
+            and value.get('subtask') == 'ProcessTask'
+            and details.get('task') == 'ZootdCopilotMap'
+            and details.get('algorithm') == 'OcrDetect'
+            and isinstance(result.get('text'), str) and 'NL-' in result['text'])
+
+
 def callbacks_are_fresh(events, *, run_id, started_ns, finished_ns):
     if (not isinstance(events, list) or not events or not isinstance(run_id, str) or not run_id
             or type(started_ns) is not int or type(finished_ns) is not int
@@ -85,6 +96,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
     mutex = threading.Lock()
     chains = []
     sequence = 0
+    map_observed = threading.Event()
     with (run / 'callbacks.jsonl').open('x') as output:
         @callback_type
         def callback(msg, raw, _):
@@ -97,6 +109,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                                              'message': msg, 'details': value}, ensure_ascii=False) + '\n')
                     sequence += 1
                     output.flush()
+                    if map_recognized(msg, value):
+                        map_observed.set()
                     if msg in (0, 1, 10000, 10002, 10004):
                         chains.append((msg, value.get('taskid')))
             except Exception:
@@ -137,6 +151,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":true}')
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
             run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
+            check(map_observed.is_set())
             progress['phase'] = 'execution'
             params = (run / 'params.json').read_bytes()
             task_id = lib.AsstAppendTask(handle, b'Copilot', params)

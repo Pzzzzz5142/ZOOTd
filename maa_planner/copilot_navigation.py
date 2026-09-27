@@ -21,8 +21,8 @@ def archive_tasks(activity: str, marker: str) -> dict:
         'ZootdCopilotActivity': ocr(activity, [45, 90, 1140, 590], ['ZootdCopilotEnter']),
         'ZootdCopilotScan': {
             'algorithm': 'JustReturn', 'action': 'Swipe',
-            'specificRect': [1110, 600, 20, 20], 'rectMove': [1110, 200, 20, 20],
-            'specialParams': [500], 'postDelay': 500, 'maxTimes': 20,
+            'specificRect': [1110, 600, 20, 20], 'rectMove': [1110, 400, 20, 20],
+            'specialParams': [800], 'postDelay': 800, 'maxTimes': 40,
             'next': ['ZootdCopilotActivity', 'ZootdCopilotScan'], 'exceededNext': []},
         'ZootdCopilotEnter': ocr('进入活动', [990, 550, 285, 130], ['ZootdCopilotMap']),
         'ZootdCopilotMap': ocr(marker, [0, 60, 1280, 560], [], 'DoNothing'),

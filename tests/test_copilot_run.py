@@ -7,7 +7,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from maa_planner.copilot_core import terminal_result
+from maa_planner.copilot_core import terminal_result, map_recognized
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
 from maa_planner.copilot_run import (bind_formation, device_lock, execute, experiment, load_policy,
                                      select_candidate, ExperimentError)
@@ -36,6 +36,19 @@ def result(records):
 
 
 class CopilotRunTests(unittest.TestCase):
+    def test_archive_scan_completion_does_not_prove_map(self):
+        event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',
+                 'details': {'task': 'ZootdCopilotMap', 'algorithm': 'OcrDetect',
+                             'result': {'text': 'NL-8'}}}
+        self.assertTrue(map_recognized(20002, event))
+        self.assertFalse(map_recognized(10002, event))
+        self.assertFalse(map_recognized(20001, event))
+        for task, text in [('ZootdCopilotScan', 'NL-8'), ('ZootdCopilotMap', '默认进度')]:
+            changed = copy.deepcopy(event)
+            changed['details']['task'] = task
+            changed['details']['result']['text'] = text
+            self.assertFalse(map_recognized(20002, changed))
+
     def setUp(self):
         self.catalog = OperatorCatalog([OperatorIdentity(n, n, {1: 's' + n}) for n in ('A', 'B', 'C')])
         self.box = OperatorBox('fixture', 'now', 'private',
