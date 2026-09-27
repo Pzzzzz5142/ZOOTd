@@ -175,7 +175,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             progress['phase'] = 'navigation'
             launch_game(address)
             run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":false}')
-            run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons#next"]}')
+            run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
             check(home_observed.is_set())
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
             run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
