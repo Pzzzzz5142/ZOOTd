@@ -4,10 +4,23 @@ from __future__ import annotations
 import ctypes as C
 import json
 import signal
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+
+
+def launch_game(address):
+    """Wait for Android's actual launch result; am may exit zero on errors."""
+    result = subprocess.run(
+        ['/usr/bin/adb', '-s', address, 'shell', 'am', 'start', '-W', '-n',
+         'com.hypergryph.arknights/com.u8.sdk.U8UnityContext'],
+        capture_output=True, text=True, timeout=60, check=True)
+    lines = result.stdout.splitlines()
+    if 'Status: ok' not in lines or 'Complete' not in lines or any(
+            line.startswith('Error') for line in lines):
+        raise RuntimeError('Android did not confirm game launch')
 
 
 def map_recognized(message, value):
@@ -148,7 +161,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             # Separate task starts prevent a failed navigation from proceeding
             # into Copilot. These tasks have no battle or refill actions.
             progress['phase'] = 'navigation'
-            run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":true}')
+            launch_game(address)
+            run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":false}')
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
             run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
             check(map_observed.is_set())
