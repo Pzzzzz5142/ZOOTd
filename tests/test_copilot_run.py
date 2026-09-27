@@ -8,7 +8,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from maa_planner.copilot_core import terminal_result, map_recognized, launch_game
+from maa_planner.copilot_core import terminal_result, map_recognized, home_recognized, launch_game
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
 from maa_planner.copilot_run import (bind_formation, device, device_lock, execute, experiment, load_policy,
                                      select_candidate, ExperimentError)
@@ -75,6 +75,17 @@ class CopilotRunTests(unittest.TestCase):
                    side_effect=subprocess.TimeoutExpired('adb', 60)):
             with self.assertRaises(subprocess.TimeoutExpired):
                 launch_game('device:5555')
+
+    def test_home_requires_template_evidence_not_startup_completion(self):
+        event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',
+                 'details': {'task': 'Home', 'algorithm': 'MatchTemplate',
+                             'result': {'template': 'SwitchTheme@ToggleSettingsMenu.png'}}}
+        self.assertTrue(home_recognized(20002, event))
+        self.assertFalse(home_recognized(10002, event))
+        for key, value in [('task', 'ReturnButton'), ('algorithm', 'JustReturn'), ('result', {})]:
+            changed = copy.deepcopy(event)
+            changed['details'][key] = value
+            self.assertFalse(home_recognized(20002, changed))
 
     def test_archive_scan_completion_does_not_prove_map(self):
         event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',
