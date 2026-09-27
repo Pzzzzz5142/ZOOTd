@@ -370,7 +370,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.dev.assert_called_once()
         self.assertEqual(self.provider.get.call_count, 2)
         resets = [c for c in self.commands.call_args_list if 'force-stop' in c.args[0]]
-        self.assertEqual(len(resets), 1)
+        self.assertEqual(len(resets), 0)
+        self.assertEqual(result['attempts'][1]['reset_strategy'], 'fresh_core_startup_navigation')
         self.assertNotEqual(self.paths[0].name, self.paths[1].name)
         for i, path in enumerate(self.paths):
             self.assertEqual(json.loads((path / 'result.json').read_text()), result['attempts'][i])
@@ -458,16 +459,13 @@ class RetryIntegrationTests(unittest.TestCase):
         self.box_fetch.assert_not_called()
         self.dev.assert_not_called()
 
-    def test_reset_failure_stops_without_second_worker(self):
-        def command(args):
-            if 'force-stop' in args:
-                raise RuntimeError('reset failed')
-            return '' if 'status' in args else 'head'
-        self.commands.side_effect = command
-        result = self.run_experiment()
-        self.assertEqual(result['stop_reason'], 'adb_failure')
-        self.assertEqual(len(self.paths), 1)
-        self.assertEqual(result['attempts'][1]['failure_phase'], 'reset')
+    def test_retry_navigation_failure_stops_without_third_worker(self):
+        self.outcomes = ['missing', 'navigation', 'success']
+        result = self.run_experiment(max_candidates=3, max_battles=3)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(len(self.paths), 2)
+        self.assertFalse(result['attempts'][1]['failure']['retryable'])
+        self.assertEqual(result['attempts'][1]['reset_strategy'], 'fresh_core_startup_navigation')
 
     def test_default_still_runs_only_one_candidate(self):
         result = experiment(self.root, 'NL-8', None)

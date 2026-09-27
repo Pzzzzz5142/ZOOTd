@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from maa_planner.copilot_core import terminal_result, map_recognized, launch_game
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
-from maa_planner.copilot_run import (bind_formation, device_lock, execute, experiment, load_policy,
+from maa_planner.copilot_run import (bind_formation, device, device_lock, execute, experiment, load_policy,
                                      select_candidate, ExperimentError)
 from maa_planner.copilot_static import build_catalog
 from maa_planner.operator_box import Operator, OperatorBox
@@ -37,6 +37,26 @@ def result(records):
 
 
 class CopilotRunTests(unittest.TestCase):
+    def test_device_waits_for_android_boot_after_adb_connects(self):
+        boots = iter(['', '1'])
+        def command(args):
+            if args == ['waydroid', 'status']:
+                return 'Session: RUNNING\nIP address: 192.168.1.2'
+            if args == ['adb', 'devices']:
+                return '192.168.1.2:5555 device'
+            if 'getprop' in args:
+                return next(boots)
+            if 'pm' in args:
+                return 'package:/data/app/game.apk'
+            return 'Override size: 1280x720'
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch('maa_planner.copilot_run.command', side_effect=command), \
+                patch('maa_planner.copilot_run.subprocess.run'), \
+                patch('maa_planner.copilot_run.time.sleep') as sleep:
+            with device(Path(tmp), Path(tmp)) as address:
+                self.assertEqual(address, '192.168.1.2:5555')
+            sleep.assert_called_once_with(1)
+
     def test_android_launch_requires_explicit_success_even_with_zero_exit(self):
         for output, accepted in [('Status: ok\nComplete\n', True),
                                  ('Starting: Intent {}\nError type 3\n', False),
