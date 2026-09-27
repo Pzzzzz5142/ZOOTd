@@ -81,6 +81,29 @@ class RetryClassificationTests(unittest.TestCase):
         self.assertEqual(classify(failed_events('requirement'))['evidence'],
                          [{'oper_name': 'A', 'requirement_type': 'module'}])
 
+    def test_optional_prts_probe_before_proven_formation_failure(self):
+        probe = event(20000, subtask='ProcessTask', first=['NotUsePrts'],
+                      pre_task='', details={}, **{'class': 'asst::ProcessTask'})
+        records = failed_events('missing')
+        records.insert(2, probe)
+        self.assertEqual(classify(stamp(records))['category'], 'formation_missing_operator')
+        for changes in [{'first': ['Other']}, {'pre_task': 'Other'},
+                        {'details': {'error': 'failure'}}, {'why': 'error'},
+                        {'class': 'Other'}]:
+            changed = copy.deepcopy(records)
+            changed[2]['details'].update(changes)
+            self.assertFalse(classify(stamp(changed))['retryable'])
+        for index in (0, 4):
+            changed = failed_events('missing')
+            changed.insert(index, probe)
+            self.assertFalse(classify(stamp(changed))['retryable'])
+        records.insert(2, copy.deepcopy(probe))
+        self.assertFalse(classify(stamp(records))['retryable'])
+        # Probe alone or followed by an unrelated navigation error cannot retry.
+        records = failed_events('navigation')
+        records.insert(2, probe)
+        self.assertFalse(classify(stamp(records))['retryable'])
+
     def test_unknown_navigation_and_generic_failures_stop(self):
         for kind, category in [('unchecked', 'formation_other_failure'),
                                ('formation', 'formation_other_failure'),
@@ -288,6 +311,21 @@ class RetryIntegrationTests(unittest.TestCase):
                          {'elite': 2, 'level': 90})
         self.box_fetch.assert_called_once()
         self.provider.query.assert_called_once()
+
+    def test_acceptance_missing_must_identify_injected_operator(self):
+        (self.root / 'var/data/resource/battle_data.json').write_text(json.dumps({'chars': {'A': {'rarity': 4}}}))
+        for injected_name, accepted in [('A', True), ('B', False)]:
+            with self.subTest(injected_name=injected_name):
+                self.outcomes = ['missing', 'success']
+                from maa_planner.copilot_run import acceptance_formation_failure as inject
+                def renamed(*args):
+                    content, evidence = inject(*args)
+                    evidence['oper_name'] = injected_name
+                    return content, evidence
+                with patch('maa_planner.copilot_run.acceptance_formation_failure', side_effect=renamed):
+                    result = experiment(self.root, 'NL-8', None,
+                                        limits=RetryLimits(2, 2, 18), acceptance_failure=True)
+                self.assertEqual(result['acceptance_passed'], accepted, result)
 
     def test_acceptance_never_labels_direct_success_as_retry_acceptance(self):
         (self.root / 'var/data/resource/battle_data.json').write_text(json.dumps({'chars': {'A': {'rarity': 4}}}))

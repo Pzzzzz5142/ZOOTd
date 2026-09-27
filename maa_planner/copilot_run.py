@@ -416,7 +416,11 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                 attempts = audit['attempts']
                 audit['acceptance_passed'] = (
                     len(attempts) == 2 and attempts[0].get('acceptance_injection') is not None
-                    and attempts[0].get('failure', {}).get('category') == 'formation_requirement_unsatisfied'
+                    and attempts[0].get('failure', {}).get('category') in (
+                        'formation_requirement_unsatisfied', 'formation_missing_operator')
+                    and any(e.get('oper_name', e.get('name')) ==
+                            attempts[0]['acceptance_injection']['oper_name']
+                            for e in attempts[0].get('failure', {}).get('evidence', []))
                     and attempts[0].get('sanity_settlement', {}).get('outcome') == 'not_spent'
                     and attempts[1]['status'] == 'success'
                     and 'acceptance_injection' not in attempts[1])
