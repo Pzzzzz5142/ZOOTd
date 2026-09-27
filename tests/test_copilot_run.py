@@ -78,14 +78,14 @@ class CopilotRunTests(unittest.TestCase):
 
     def test_home_requires_template_evidence_not_startup_completion(self):
         event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',
-                 'details': {'task': 'Home', 'algorithm': 'MatchTemplate',
+                 'details': {'task': 'Home', 'action': 'Stop', 'algorithm': 'MatchTemplate',
                              'result': {'template': 'SwitchTheme@ToggleSettingsMenu.png'}}}
-        self.assertTrue(home_recognized(20002, event))
+        self.assertTrue(home_recognized(20001, event))
         self.assertFalse(home_recognized(10002, event))
         for key, value in [('task', 'ReturnButton'), ('algorithm', 'JustReturn'), ('result', {})]:
             changed = copy.deepcopy(event)
             changed['details'][key] = value
-            self.assertFalse(home_recognized(20002, changed))
+            self.assertFalse(home_recognized(20001, changed))
 
     def test_archive_scan_completion_does_not_prove_map(self):
         event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',

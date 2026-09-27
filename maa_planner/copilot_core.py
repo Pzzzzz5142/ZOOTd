@@ -25,9 +25,9 @@ def launch_game(address):
 
 def home_recognized(message, value):
     details = value.get('details', {})
-    return (message == 20002 and value.get('taskchain') == 'Custom'
+    return (message == 20001 and value.get('taskchain') == 'Custom'
             and value.get('subtask') == 'ProcessTask'
-            and details.get('task') == 'Home'
+            and details.get('task') == 'Home' and details.get('action') == 'Stop'
             and details.get('algorithm') == 'MatchTemplate'
             and details.get('result', {}).get('template') == 'SwitchTheme@ToggleSettingsMenu.png')
 
