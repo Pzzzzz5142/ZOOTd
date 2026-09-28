@@ -226,8 +226,8 @@ class CopilotRunTests(unittest.TestCase):
             device.assert_not_called()
 
     def test_full_pipeline_binds_parameters_and_rejects_download_drift(self):
-        for drift in (False, True):
-            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
+        for drift, proof_mode in ((False, False), (True, False), (False, True)):
+            with self.subTest(drift=drift, proof_mode=proof_mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
                 root = Path(tmp)
                 (root / 'config').mkdir()
                 (root / 'config/copilot.toml').write_text(
@@ -242,7 +242,14 @@ class CopilotRunTests(unittest.TestCase):
                     p.write_text(json.dumps(payload))
                 def mock(name, **kw):
                     return mocks.enter_context(patch('maa_planner.copilot_run.' + name, **kw))
-                mock('load_policy', return_value={'allow_support': True})
+                mock('load_policy', return_value={'allow_support': not proof_mode})
+                if proof_mode:
+                    from tests.test_copilot_capability import fixture
+                    _, _, proof_context = fixture()
+                    mock('copilot_capability.prepare', return_value=proof_context)
+                    mock('copilot_capability.scope', return_value=proof_context['activity_instance'])
+                    mock('copilot_capability.load_config', return_value=type('Config', (), {
+                        'client_type': 'Official', 'account': proof_context['account']})())
                 mock('command', side_effect=['', 'fixture-head'])
                 mock('validate_runtime_receipt', return_value='fixture')
                 mock('load_secret', return_value={})
@@ -268,23 +275,25 @@ class CopilotRunTests(unittest.TestCase):
                     self.assertEqual(len(params['copilot_list']), 1)
                     self.assertFalse(params['copilot_list'][0]['is_raid'])
                     from tests.test_copilot_proof import observations
-                    records = observations()
+                    records = fixture()[0] if proof_mode else observations()
                     for record in records:
                         record.update(run_id=run.name, recorded_ns=time.monotonic_ns())
-                    records[1]['details']['details']['file_name'] = str(run / 'execution.json')
+                    for record in records:
+                        if record['details'].get('what') == 'CopilotListLoadTaskFileSuccess':
+                            record['details']['details']['file_name'] = str(run / 'execution.json')
                     (run / 'callbacks.jsonl').write_text('\n'.join(json.dumps(e) for e in records))
                     (run / 'task-id.json').write_text('7')
                     return 0
                 mock('execute', side_effect=fake_execute)
-                audit = experiment(root, 'NL-8', None)
+                audit = experiment(root, 'NL-8', None, prove_capability=proof_mode, bind_account=proof_mode)
                 self.assertEqual(audit['status'], 'failed' if drift else 'success')
                 if drift:
                     dev.assert_not_called()
                     self.assertEqual(audit['attempts'][0]['failure_phase'], 'download_recheck')
                 else:
                     self.assertTrue(audit['attempts'][0]['battle_proof']['three_star'])
-                    self.assertFalse(audit['attempts'][0]['battle_proof']['ledger_recorded'])
-                    self.assertFalse((root / 'var/state/planner/capabilities.json').exists())
+                    self.assertEqual(audit['attempts'][0]['battle_proof']['ledger_recorded'], proof_mode)
+                    self.assertEqual((root / 'var/state/planner/capabilities.json').exists(), proof_mode)
                 self.assertNotIn('private', json.dumps(audit))
 
 

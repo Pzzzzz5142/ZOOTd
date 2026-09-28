@@ -55,11 +55,27 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
     phase = 0
     stars = None
     all_done = False
+    start_sequence = end_sequence = None
+    forming = ignored_probe = False
     for event in events:
         msg, value = event['message'], event['details']
+        if msg == 20001 and value.get('subtask') == 'BattleFormationTask':
+            forming = True
         if msg in (20000, 20004) or value.get('what') == 'GameOffline':
-            return reject('callback_failure')
+            optional_probe = (msg == 20000 and phase == 1 and not forming and not ignored_probe
+                              and value.get('taskchain') == 'Copilot'
+                              and active == (value.get('uuid'), value.get('taskid'))
+                              and type(value.get('taskid')) is int
+                              and value.get('subtask') == 'ProcessTask'
+                              and value.get('class') == 'asst::ProcessTask'
+                              and value.get('first') == ['NotUsePrts']
+                              and value.get('pre_task') == '' and value.get('details', {}) == {}
+                              and not value.get('why') and not value.get('what'))
+            if not optional_probe:
+                return reject('callback_failure')
+            ignored_probe = True
         if msg == 10001 and value.get('taskchain') == 'Copilot':
+            start_sequence = event['sequence']
             active = (value.get('uuid'), value.get('taskid'))
             if not isinstance(active[0], str) or not active[0]:
                 return reject('invalid_device')
@@ -71,6 +87,7 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
                     or any(type(t) is not int for t in value['finished_tasks'])):
                 return reject('invalid_all_tasks_completion')
             all_done = True
+            end_sequence = event['sequence']
             continue
         if value.get('taskchain') != 'Copilot':
             continue
@@ -123,4 +140,5 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
                 copilot_id=copilot_id, copilot_sha256=copilot_sha256,
                 execution_sha256=execution_sha256, star_sequence=stars,
                 started_ns=started_ns, finished_ns=finished_ns,
+                start_sequence=start_sequence, end_sequence=end_sequence,
                 callbacks_canonical_sha256=sha256_bytes(canonical_json(events)))

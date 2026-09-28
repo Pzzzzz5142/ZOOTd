@@ -19,6 +19,7 @@ from pathlib import Path
 from .box_cli import load_secret
 from .copilot_core import callbacks_are_fresh, terminal_result
 from .copilot_proof import battle_proof
+from . import copilot_capability
 from .copilot_retry import RetryLimits, RetryBudget, classify_failure, failure
 from .copilot_navigation import archive_tasks
 from .copilot_matcher import match_candidate, rank_candidates
@@ -188,7 +189,7 @@ def acceptance_formation_failure(content, box, catalog, battle):
 
 
 def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
-            code, route, budget, get_address, restart, snapshot_sha256, acceptance_failure=False):
+            code, route, budget, get_address, restart, snapshot_sha256, acceptance_failure=False, proof_context=None):
     audit = {'status': 'failed', 'copilot_id': candidate.id, 'run_dir': str(run),
              'snapshot_sha256': snapshot_sha256}
     phase = 'download_recheck'
@@ -226,7 +227,11 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         atomic_write_json(run / 'params.json', params, mode=0o600)
         overlay = run / 'navigation/resource/tasks'
         overlay.mkdir(parents=True)
-        atomic_write_json(overlay / 'tasks.json', archive_tasks(route['activity'], route['map_marker']))
+        tasks = archive_tasks(route['activity'], route['map_marker'])
+        if proof_context:
+            tasks.update(copilot_capability.proof_tasks(code))
+            atomic_write_json(run / 'proof-context.json', proof_context, mode=0o600)
+        atomic_write_json(overlay / 'tasks.json', tasks)
         phase = 'budget'
         if not budget.reserve_battle():
             audit['failure'] = failure('budget_exhausted')
@@ -258,12 +263,21 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             if worker.get('run_id') == run.name and worker.get('exit_code') == status:
                 worker_phase = worker.get('phase')
         fresh = callbacks_are_fresh(events, run_id=run.name, started_ns=started_ns, finished_ns=finished_ns)
-        result = (terminal_result(events, task_id=task_id, stage=content['stage_name'], filename=str(filename))
+        # The battle reducer ends at its own AllTasksCompleted. Later Custom
+        # tasks have independent terminals and are checked by the strong proof.
+        battle_events = events
+        if proof_context:
+            for i, event in enumerate(events):
+                v = event['details']
+                if event['message'] == 3 and task_id in v.get('finished_tasks', []):
+                    battle_events = events[:i + 1]
+                    break
+        result = (terminal_result(battle_events, task_id=task_id, stage=content['stage_name'], filename=str(filename))
                   if fresh and type(task_id) is int else {'status': 'failed', 'errors': ['invalid_callback_evidence']})
         result['exit_code'] = status
         audit['execution'] = result
         audit['battle_proof'] = battle_proof(
-            events, run_id=run.name, task_id=task_id, stage=content['stage_name'],
+            battle_events, run_id=run.name, task_id=task_id, stage=content['stage_name'],
             filename=str(filename), copilot_id=candidate.id,
             copilot_sha256=audit['copilot_sha256'], execution_sha256=audit['execution_sha256'],
             started_ns=started_ns, finished_ns=finished_ns, exit_code=status,
@@ -274,6 +288,15 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
                 task_id=task_id, stage=content['stage_name'], filename=str(filename),
                 exit_code=status, worker_phase=worker_phase)
             raise ExperimentError('MaaCore did not produce a complete successful Copilot terminal')
+        if proof_context:
+            phase = 'capability_proof'
+            proof = copilot_capability.complete_proof(
+                events, audit['battle_proof'], proof_context,
+                started_ns=started_ns, finished_ns=finished_ns)
+            audit['battle_proof'] = proof
+            if proof['status'] != 'verified':
+                raise ExperimentError('Account-bound saved proxy proof incomplete: ' + proof['reason'])
+            proof['ledger_recorded'] = copilot_capability.record(root, proof_context, proof)
         audit['status'] = 'success'
     except (Exception, KeyboardInterrupt) as exc:
         audit['failure_phase'] = phase
@@ -297,9 +320,14 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
 
 
 def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None,
-               acceptance_failure: bool = False) -> dict:
+               acceptance_failure: bool = False, prove_capability: bool = False,
+               bind_account: bool = False) -> dict:
     limits = limits or RetryLimits()
     policy = load_policy(root, profile)
+    if bind_account and not prove_capability:
+        raise ExperimentError('--bind-account requires --prove-capability')
+    if prove_capability and (policy['allow_support'] or acceptance_failure):
+        raise ExperimentError('Capability proof requires no-support and no failure injection')
     if acceptance_failure and (limits.max_candidates != 2 or limits.max_battles != 2
                                or limits.sanity_budget != 18):
         raise ExperimentError('Acceptance check requires exactly 2 candidates, 2 executions, 18 sanity')
@@ -309,6 +337,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
     run.mkdir(mode=0o700)
     audit = {'schema': 2, 'experimental': True, 'requested_stage': stage,
              'policy': policy, 'run_dir': str(run), 'status': 'failed', 'attempts': [],
+             'proof_requested': prove_capability, 'account_enrollment_requested': bind_account,
              'authorization': {'max_candidates': limits.max_candidates, 'max_battles': limits.max_battles,
                                'sanity_budget': limits.sanity_budget, 'medicine': 0, 'stone': 0, 'raid': False}}
     if acceptance_failure:
@@ -350,6 +379,9 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             payload = box.to_dict()
             atomic_write_json(root / 'var/state/operator-box.json', payload, mode=0o600)
             audit['box'] = {'sha256': sha256_bytes(canonical_json(payload)), 'fetched_at': box.fetched_at}
+            phase = 'proof_context'
+            proof_context = (copilot_capability.prepare(root, box, canonical, code, enroll=bind_account)
+                             if prove_capability else None)
             phase = 'static_catalog'
             catalog, audit['static_sources'] = fetch_catalog(decode((root / 'var/data/resource/battle_data.json').read_bytes()))
             phase = 'query_match'
@@ -398,7 +430,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                                       box=box, catalog=catalog, prts=prts, canonical=canonical,
                                       code=code, route=route, budget=budget, get_address=get_address,
                                       restart=dispatched, snapshot_sha256=audit['snapshot_sha256'],
-                                      acceptance_failure=acceptance_failure and budget.candidates == 1)
+                                      acceptance_failure=acceptance_failure and budget.candidates == 1,
+                                      proof_context=proof_context)
                     dispatched |= 'worker_exit_code' in outcome
                     audit['attempts'].append(outcome)
                     audit['copilot_id'] = candidate.id
@@ -450,6 +483,10 @@ def main(argv=None):
     parser.add_argument('--sanity-budget', type=int)
     parser.add_argument('--acceptance-formation-failure', action='store_true',
                         help='NL-8 hardware test only: inject an impossible formation level into candidate A')
+    parser.add_argument('--prove-capability', action='store_true',
+                        help='Require account UID and post-battle zero-sanity saved proxy proof')
+    parser.add_argument('--bind-account', action='store_true',
+                        help='Enroll configured account alias against the freshly observed Box UID')
     args = parser.parse_args(argv)
     try:
         limits = RetryLimits(args.max_candidates, args.max_battles, args.sanity_budget)
@@ -461,7 +498,8 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, cancelled)
     try:
         result = experiment(args.project_root.resolve(), args.stage, args.profile, limits=limits,
-                            acceptance_failure=args.acceptance_formation_failure)
+                            acceptance_failure=args.acceptance_formation_failure,
+                            prove_capability=args.prove_capability, bind_account=args.bind_account)
         print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'failure_phase', 'error')
                           if k in result}, ensure_ascii=False))
         return 0 if result['status'] == 'success' else 1
