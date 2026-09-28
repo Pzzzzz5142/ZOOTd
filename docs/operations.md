@@ -306,7 +306,23 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 ./bin/zootd copilot-run NL-8 --profile allow-support
 ```
 
-两种策略位于 `config/copilot.toml`，`default_profile` 决定省略 `--profile` 时的行为。命令授权普通难度单次战斗，可消耗该关卡理智；所有理智药和源石禁用；默认不执行第二候选，显式重试参数见下文，不调用自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。当前只提供 `navigation.NL-8` 自动路线；其他未配置关卡在启动前拒绝。新版国服从终端经曲谱、乐章收录进入长夜临光地图，导航只读屏幕并点击/滑动，不开始战斗；各导航任务成功且收到本次 `ZootdCopilotMap` 的 NL- 地图 OCR 完成证据后才提交 Copilot；活动扫描耗尽不算到达地图。支持常驻 SideStory 的关卡身份映射，由安装的关卡表和地图索引共同验证。PRTS 视频攻略不作为可执行候选。
+两种助战策略内置，默认 `no-support`，本机可通过忽略的 `var/config/copilot.toml` 设置 `default_profile` 和 `profiles`（见[配置说明](configuration.md)）。命令授权普通难度战斗，可消耗该关卡理智；所有理智药和源石禁用；默认不执行第二候选，显式重试参数见下文，不调用自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。PRTS 视频攻略不作为可执行候选。
+
+导航不再读取逐关白名单。游戏关卡、分区、活动及常驻活动数据从同一上游 Git revision 获取，保存到 `var/cache/copilot-navigation/catalog.json`，缓存最多使用 6 小时；过期刷新失败则停止，不回退到旧活动窗口。关卡代码支持大小写、空格和连字符的无歧义别名，例如 `nl 9`、`ds1`、`mn ex 7`。普通难度与突袭身份分开；当前命令不授权突袭。当期活动和分区必须处于开放窗口；常驻活动从其自己的分区数据生成路线，EX 不沿用普通区。`stages.json` 只用于兼容现有刷图身份，不再决定关卡是否存在；执行作业仍要求安装的 Tile 地图与关卡身份一致。
+
+可单独验证导航，不查询作业、不编队、不开战：
+
+```bash
+./bin/zootd navigate 'nl 9' --plan       # 只解析并保存路线，不启动设备
+./bin/zootd navigate DS-1 --plan --refresh
+./bin/zootd navigate NL-9
+./bin/zootd navigate DS-1
+./bin/zootd navigate MN-EX-7
+```
+
+`navigate` 与托管、更新、Copilot 共用设备锁。每次计划、任务 overlay、回调和结果保存在 `var/state/navigation/<run>/`；零战斗模式屏蔽开始战斗和用药入口。导航必须收到本次目标关卡详情页的精确 OCR 证据及任务成功结果，扫描结束或地图前缀不算成功。作业执行复用相同导航，在进入战斗前完成目标核对。特殊活动的首次进入费用可能与 `apCost` 不同，预算采用游戏数据中的较高费用。
+
+元数据可覆盖新关卡，页面识别仍受游戏布局、活动解锁及分区可达性影响；有界扫描无法确认目标时停止并保留失败证据，不声称已经到达。
 
 允许助战只接纳 `support_one`，不执行 `unknown` 或多名缺失；固定每个 group 的已匹配成员后，由 MaaCore 补齐唯一缺失位置。静态匹配和作者省略的练度要求不保证实际可用或通关，助战实际可用性由设备执行决定。查询页内先 exact、再 support_one，各档按已有评分与 ID 稳定排序；不会扫描全站或人工挑选作业。
 

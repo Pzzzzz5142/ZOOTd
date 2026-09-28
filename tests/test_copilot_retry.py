@@ -219,7 +219,10 @@ class RetryClassificationTests(unittest.TestCase):
         for _ in range(3):
             self.assertTrue(budget.take_candidate())
         self.assertFalse(budget.take_candidate())
-        for cost in (None, 0, -1, True):
+        free = RetryBudget(RetryLimits(), 0)
+        self.assertTrue(free.reserve_battle())
+        self.assertFalse(free.reserve_battle())
+        for cost in (None, -1, True):
             with self.assertRaises(ValueError):
                 RetryBudget(RetryLimits(), cost)
 
@@ -246,6 +249,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.mock = mock
         mock('load_policy', return_value={'allow_support': False})
         self.commands = mock('command', side_effect=lambda args: '' if 'status' in args else 'fixture-head')
+        from tests.test_navigation import pipeline_catalog
+        mock('load_navigation', side_effect=pipeline_catalog)
         mock('validate_runtime_receipt', return_value='fixture')
         mock('load_secret', return_value={})
         mock('SklandClient')

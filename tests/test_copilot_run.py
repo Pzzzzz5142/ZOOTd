@@ -89,16 +89,16 @@ class CopilotRunTests(unittest.TestCase):
 
     def test_archive_scan_completion_does_not_prove_map(self):
         event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',
-                 'details': {'task': 'ZootdCopilotMap', 'algorithm': 'OcrDetect',
+                 'details': {'task': 'ZootdStageConfirmed', 'algorithm': 'OcrDetect', 'action': 'DoNothing',
                              'result': {'text': 'NL-8'}}}
-        self.assertTrue(map_recognized(20002, event))
-        self.assertFalse(map_recognized(10002, event))
-        self.assertFalse(map_recognized(20001, event))
-        for task, text in [('ZootdCopilotScan', 'NL-8'), ('ZootdCopilotMap', '默认进度')]:
+        self.assertTrue(map_recognized(20002, event, 'NL-8'))
+        self.assertFalse(map_recognized(10002, event, 'NL-8'))
+        self.assertFalse(map_recognized(20001, event, 'NL-8'))
+        for task, text in [('ZootdCopilotScan', 'NL-8'), ('ZootdStageConfirmed', '默认进度')]:
             changed = copy.deepcopy(event)
             changed['details']['task'] = task
             changed['details']['result']['text'] = text
-            self.assertFalse(map_recognized(20002, changed))
+            self.assertFalse(map_recognized(20002, changed, 'NL-8'))
 
     def setUp(self):
         self.catalog = OperatorCatalog([OperatorIdentity(n, n, {1: 's' + n}) for n in ('A', 'B', 'C')])
@@ -251,6 +251,8 @@ class CopilotRunTests(unittest.TestCase):
                     mock('copilot_capability.load_config', return_value=type('Config', (), {
                         'client_type': 'Official', 'account': proof_context['account']})())
                 mock('command', side_effect=['', 'fixture-head'])
+                from tests.test_navigation import pipeline_catalog
+                mock('load_navigation', side_effect=pipeline_catalog)
                 mock('validate_runtime_receipt', return_value='fixture')
                 mock('load_secret', return_value={})
                 mock('SklandClient')

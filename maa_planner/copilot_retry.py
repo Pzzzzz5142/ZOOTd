@@ -36,7 +36,7 @@ class RetryBudget:
     _settled: set[int] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self):
-        if type(self.stage_cost) is not int or not 1 <= self.stage_cost <= 999:
+        if type(self.stage_cost) is not int or not 0 <= self.stage_cost <= 999:
             raise ValueError('Unknown or invalid installed stage sanity cost')
 
     @property

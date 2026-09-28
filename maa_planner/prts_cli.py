@@ -4,7 +4,8 @@ import json
 import sys
 from pathlib import Path
 
-from .prts import PrtsCopilotClient, PrtsError, StageCatalog
+from .prts import PrtsCopilotClient, PrtsError
+from .navigation_catalog import load_navigation
 
 
 def main(argv=None) -> int:
@@ -20,7 +21,7 @@ def main(argv=None) -> int:
     get.add_argument("--stage", required=True)
     args = parser.parse_args(argv)
     try:
-        catalog = StageCatalog.load(args.project_root / "var/data/MaaResource/resource/stages.json")
+        catalog = load_navigation(args.project_root)
         client = PrtsCopilotClient(catalog)
         if args.command == "copilot-query":
             output = client.query(args.stage, page=args.page, limit=args.limit)

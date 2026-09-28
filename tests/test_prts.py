@@ -146,14 +146,14 @@ class PrtsTests(unittest.TestCase):
         self.assertFalse(self.opener.calls)
 
     def test_cli_dispatch_and_failure(self):
-        with patch('maa_planner.prts_cli.StageCatalog.load', return_value=StageCatalog(STAGES)), \
+        with patch('maa_planner.prts_cli.load_navigation', return_value=StageCatalog(STAGES)), \
              patch('maa_planner.prts_cli.PrtsCopilotClient') as factory, \
              patch('sys.stdout', new_callable=io.StringIO) as output:
             factory.return_value.query.return_value = {'candidates': []}
             self.assertEqual(main(['--project-root', '/unused', 'copilot-query', '1-7', '--limit', '3']), 0)
             factory.return_value.query.assert_called_once_with('1-7', page=1, limit=3)
             self.assertEqual(json.loads(output.getvalue()), {'candidates': []})
-        with patch('maa_planner.prts_cli.StageCatalog.load', side_effect=PrtsError('stage_identity', 'missing')), \
+        with patch('maa_planner.prts_cli.load_navigation', side_effect=PrtsError('stage_identity', 'missing')), \
              patch('sys.stderr', new_callable=io.StringIO) as output:
             self.assertEqual(main(['--project-root', '/unused', 'copilot-get', '12', '--stage', '1-7']), 1)
             self.assertEqual(json.loads(output.getvalue())['category'], 'stage_identity')

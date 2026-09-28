@@ -32,15 +32,16 @@ def home_recognized(message, value):
             and details.get('result', {}).get('template') == 'SwitchTheme@ToggleSettingsMenu.png')
 
 
-def map_recognized(message, value):
-    """A completed scan is not proof that the archive map was reached."""
+def map_recognized(message, value, code):
+    """Require the requested stage in the detail panel, not a map prefix."""
     details = value.get('details', {})
     result = details.get('result', {})
     return (message == 20002 and value.get('taskchain') == 'Custom'
             and value.get('subtask') == 'ProcessTask'
-            and details.get('task') == 'ZootdCopilotMap'
+            and details.get('task') == 'ZootdStageConfirmed'
             and details.get('algorithm') == 'OcrDetect'
-            and isinstance(result.get('text'), str) and 'NL-' in result['text'])
+            and details.get('action') == 'DoNothing'
+            and result.get('text') in (code, code.replace('-', '')))
 
 
 def callbacks_are_fresh(events, *, run_id, started_ns, finished_ns):
@@ -114,6 +115,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
         fn = getattr(lib, name)
         fn.argtypes, fn.restype = args, result
 
+    route = json.loads((run / 'navigation.json').read_bytes())
     proof_context = None
     if (run / 'proof-context.json').exists():
         proof_context = json.loads((run / 'proof-context.json').read_bytes())
@@ -142,7 +144,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                             uid_observed.set()
                     if home_recognized(msg, value):
                         home_observed.set()
-                    if map_recognized(msg, value):
+                    if map_recognized(msg, value, route['code']):
                         map_observed.set()
                     if msg in (0, 1, 10000, 10002, 10004):
                         chains.append((msg, value.get('taskid')))
@@ -190,8 +192,11 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 run_task(b'Custom', b'{"task_names":["ZootdCopilotUID"]}')
                 check(uid_observed.is_set())
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
-            run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
+            run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
             check(map_observed.is_set())
+            if route.get('navigation_only'):
+                progress['phase'] = 'navigation_complete'
+                return 0
             progress['phase'] = 'execution'
             params = (run / 'params.json').read_bytes()
             task_id = lib.AsstAppendTask(handle, b'Copilot', params)
@@ -219,7 +224,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 run_task(b'Custom', b'{"task_names":["ZootdCopilotUID"]}')
                 check(uid_observed.is_set())
                 run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
-                run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
+                run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
                 check(map_observed.is_set())
                 run_task(b'Custom', b'{"task_names":["ZootdCopilotProofStage"]}')
                 run_task(b'Custom', b'{"task_names":["StageQueue@CheckPrts"]}')
