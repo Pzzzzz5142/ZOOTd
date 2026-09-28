@@ -116,6 +116,36 @@ class NavigationTests(unittest.TestCase):
         event['details']['task'] = 'ZootdMapScan'
         self.assertFalse(map_recognized(20002, event, 'MN-EX-7'))
 
+    def test_native_maa_tasks_are_reused_without_battle_actions(self):
+        route = self.catalog().route('NL-9')
+        tasks = navigation_tasks(route)
+        for name, base in [('ZootdStage', 'ClickStageName'),
+                           ('ZootdStagePanel', 'ClickedCorrectStageOrSwipe'),
+                           ('ZootdMapReset', 'FullStageNavigation'),
+                           ('ZootdMapScan', 'StageNavigationSlowlySwipeLeft')]:
+            self.assertEqual(tasks[name]['baseTask'], base)
+        self.assertEqual(tasks['ZootdStagePanel']['action'], 'DoNothing')
+        self.assertEqual(tasks['ZootdMapScan']['exceededNext'], [])
+        route.update(kind='main', chapter=16, select_normal=True)
+        self.assertEqual(navigation_tasks(route)['ZootdEntry']['sub'],
+                         ['Episode16', 'ChapterDifficultyNormal'])
+        route.update(kind='supplies')
+        self.assertEqual(navigation_tasks(route)['ZootdEntry']['baseTask'], 'ResourceStages')
+
+    def test_event_lock_texts_follow_game_prerequisite_graph(self):
+        tables, installed, tiles = fixture()
+        tables['stage_table']['stages']['act1dp_s01']['unlockCondition'] = [{'stageId': 'previous'}]
+        extra = tables['activity_table']['activity']['EXAMPLE']['dp']
+        extra['stageUnlockToastMap'] = {
+            'act1dp_s01': {'unlockToast': '通关DP-4解锁'},
+            'previous': {'unlockToast': '通关DP-1解锁'}}
+        route = NavigationCatalog(tables, installed, tiles, now=150).route('DS-1')
+        self.assertEqual(route['locked_texts'], ['通关DP-4解锁', '通关DP-1解锁'])
+        tasks = navigation_tasks(route)
+        self.assertEqual(tasks['ZootdNavigationLocked']['action'], 'DoNothing')
+        self.assertEqual(tasks['ZootdNavigationLocked']['next'], [])
+        self.assertEqual(tasks['ZootdZone']['next'].count('ZootdNavigationLocked'), 1)
+
     def test_snapshot_ttl_integrity_and_single_revision_download(self):
         tables, _, _ = fixture()
         revision = 'a' * 40

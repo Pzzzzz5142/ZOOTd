@@ -74,6 +74,6 @@ def navigation_tasks(route: dict) -> dict:
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)
         for task in tasks.values():
             following = task.get('next', [])
-            if 'ZootdStage' in following:
+            if 'ZootdStage' in following and 'ZootdNavigationLocked' not in following:
                 following.insert(following.index('ZootdStage') + 1, 'ZootdNavigationLocked')
     return tasks

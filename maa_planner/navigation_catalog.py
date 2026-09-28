@@ -116,8 +116,8 @@ class NavigationCatalog(StageCatalog):
                 continue
             code = stage['code']
             chapter_match = re.search(r'(?:main_|EPISODE\s*)(\d+)',
-                                      zone_id + ' ' + str(zone.get('zoneNameThird', '')))
-            if kind in ('MAINLINE', 'MAINLINE_ACTIVITY') or (rid and act.get('type') == 'MAINLINE'):
+                                      str(zone.get('zoneNameThird', '')) + ' ' + zone_id)
+            if kind in ('MAINLINE', 'MAINLINE_ACTIVITY', 'MAINLINE_RETRO') or (rid and act.get('type') == 'MAINLINE'):
                 route_kind = 'main'
             # Use existing farm identity only with an exact ID/code binding.
             ids = installed_ids.get(code, set()) & {sid, sid + '_perm'}
