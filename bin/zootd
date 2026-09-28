@@ -291,7 +291,7 @@ Commands:
   copilot-run STAGE [--profile no-support|allow-support]
                         Experimental: defaults to one battle; no medicine or stones
                         Retry: --max-candidates N --max-battles N --sanity-budget N
-                        Proof: --prove-capability [--bind-account] (no-support only)
+                        Proof: --prove-capability (no-support only)
   box-sync [--uid UID]   Experimental: read-only operator Box sync (no game launch)
   doctor                Check dependencies and the promoted runtime receipt
   advisor-check         Run and archive one bounded real-model connectivity probe
