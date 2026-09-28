@@ -42,6 +42,17 @@ def navigation_tasks(route: dict) -> dict:
         'ZootdMapScan': {'baseTask': 'StageNavigationSlowlySwipeLeft',
                          'next': ['ZootdMapReset'], 'maxTimes': 20, 'exceededNext': []},
     }
+    # Keep native return recognition first. Some event panels texture the
+    # button background: reuse the same MAA arrow template, masking its dark
+    # background instead of lowering the native confidence threshold.
+    for prefix, following in [('StartUp', ['StartUpBegin']), ('Home', ['Home', 'Home@ReturnButtons'])]:
+        fallback = 'Zootd' + prefix + 'TexturedReturn'
+        tasks[prefix + '@ReturnButtons'] = {
+            'next': [prefix + '@' + name for name in ('ReturnButton', 'FromStageSN', 'FromAnnihilation')] + [fallback]}
+        tasks[fallback] = {'algorithm': 'MatchTemplate', 'template': 'Return.png',
+                           'maskRange': [65, 255], 'templThreshold': 0.7,
+                           'roi': [0, 0, 180, 80], 'action': 'ClickSelf',
+                           'postDelay': 700, 'next': following, 'maxTimes': 6, 'exceededNext': []}
     if route['kind'] == 'archive':
         tasks.update({
             'ZootdEntry': {'baseTask': 'StageTheme', 'template': 'StageTheme.png',
