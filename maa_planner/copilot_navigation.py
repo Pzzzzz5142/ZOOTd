@@ -19,19 +19,26 @@ def navigation_tasks(route: dict) -> dict:
     scan = ['ZootdStage', 'ZootdMapScan']
     tasks = {
         'ZootdNavigate': {'algorithm': 'JustReturn', 'next': ['ZootdEntry']},
-        'ZootdStage': {**ocr([code], ['ZootdStagePanel']), 'isAscii': True,
-                      'ocrReplace': [[' ', '']], 'maxTimes': 4, 'exceededNext': []},
-        'ZootdStagePanel': {'algorithm': 'MatchTemplate', 'template': 'StartButton1.png',
-                            'action': 'DoNothing', 'next': ['ZootdStageConfirmed']},
+        # Mirror StageNavigationTask::swipe_and_find_stage using installed
+        # MAA base tasks: retain its OCR corrections, button detection and
+        # swipe geometry. Override only target text, edges and finite limits.
+        'ZootdStage': {'baseTask': 'ClickStageName', 'text': [code],
+                      'next': ['ZootdStagePanel', 'ZootdStage'],
+                      'maxTimes': 6, 'exceededNext': []},
+        'ZootdStagePanel': {'baseTask': 'ClickedCorrectStageOrSwipe',
+                            'action': 'DoNothing', 'sub': [], 'reduceOtherTimes': [],
+                            'next': ['ZootdStageConfirmed', 'ZootdMapReset']},
         'ZootdStageConfirmed': {
             'baseTask': 'ClickedCorrectStage', 'text': [code, code.replace('-', '')],
             'action': 'DoNothing', 'next': [], 'sub': [], 'onErrorNext': [],
             'exceededNext': [], 'fullMatch': True},
         'ZootdZone': {**ocr(route['zone_names'], find), 'maxTimes': 2,
                      'exceededNext': ['ZootdStage', 'ZootdMapReset']},
-        'ZootdMapReset': swipe([250, 120, 20, 20], [1050, 120, 20, 20],
-                               ['ZootdStage', 'ZootdMapReset'], 10, scan),
-        'ZootdMapScan': swipe([1050, 120, 20, 20], [450, 120, 20, 20], scan, 24, []),
+        'ZootdMapReset': {'baseTask': 'FullStageNavigation',
+                          'next': ['ZootdMapReset'], 'maxTimes': 10,
+                          'exceededNext': scan},
+        'ZootdMapScan': {'baseTask': 'StageNavigationSlowlySwipeLeft',
+                         'next': ['ZootdMapReset'], 'maxTimes': 20, 'exceededNext': []},
     }
     if route['kind'] in ('archive', 'main'):
         tasks.update({
