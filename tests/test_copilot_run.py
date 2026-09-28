@@ -1,17 +1,18 @@
 import copy
+import io
 import json
 import subprocess
 import tempfile
 import time
 import unittest
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 from maa_planner.copilot_core import terminal_result, map_recognized, home_recognized, launch_game
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
 from maa_planner.copilot_run import (bind_formation, device, device_lock, execute, experiment, load_policy,
-                                     select_candidate, ExperimentError)
+                                     select_candidate, ExperimentError, main, failure_message, ACCOUNT_NOTICE)
 from maa_planner.copilot_static import build_catalog
 from maa_planner.operator_box import Operator, OperatorBox
 from maa_planner.prts import CopilotCandidate, StageCatalog, PrtsCopilotClient
@@ -225,6 +226,27 @@ class CopilotRunTests(unittest.TestCase):
             self.assertTrue((Path(audit['run_dir']) / 'result.json').exists())
             device.assert_not_called()
 
+    def test_cli_reports_stage_failure_without_echoing_private_worker_text(self):
+        failure = {'status': 'failed', 'failure_phase': 'attempts', 'run_dir': '/fixture/run',
+                   'error': 'navigation_failure', 'attempts': [
+                       {'failure_phase': 'terminal', 'worker_phase': 'navigation',
+                        'worker_exit_code': 1, 'failure': {'category': 'navigation_failure'},
+                        'error': 'private-worker-message'}]}
+        out, err = io.StringIO(), io.StringIO()
+        with patch('maa_planner.copilot_run.experiment', return_value=failure), \
+             patch('maa_planner.copilot_run.signal.signal'), \
+             patch('maa_planner.copilot_run.os.umask'), redirect_stdout(out), redirect_stderr(err):
+            self.assertEqual(main(['--project-root', '/fixture', 'NL-8']), 1)
+        self.assertIn('游戏启动或关卡导航失败', err.getvalue())
+        self.assertNotIn('private-worker-message', err.getvalue() + out.getvalue())
+        self.assertEqual(json.loads(out.getvalue())['status'], 'failed')
+
+    def test_failure_notices_distinguish_box_formation_and_proxy(self):
+        self.assertIn('Box 同步失败', failure_message({'failure_phase': 'box'}))
+        self.assertIn('编队不满足', failure_message({'failure': {'category': 'formation_missing_operator'}}))
+        self.assertIn('代理', failure_message({'worker_phase': 'proxy_proof'}))
+        self.assertIn('超时', failure_message({'worker_exit_code': 124}))
+
     def test_full_pipeline_binds_parameters_and_rejects_download_drift(self):
         for drift, proof_mode in ((False, False), (True, False), (False, True)):
             with self.subTest(drift=drift, proof_mode=proof_mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
@@ -285,7 +307,10 @@ class CopilotRunTests(unittest.TestCase):
                     (run / 'task-id.json').write_text('7')
                     return 0
                 mock('execute', side_effect=fake_execute)
-                audit = experiment(root, 'NL-8', None, prove_capability=proof_mode, bind_account=proof_mode)
+                notice = io.StringIO()
+                with redirect_stderr(notice), patch('builtins.input', side_effect=AssertionError('No confirmation prompt')):
+                    audit = experiment(root, 'NL-8', None, prove_capability=proof_mode)
+                self.assertEqual(notice.getvalue().strip(), ACCOUNT_NOTICE)
                 self.assertEqual(audit['status'], 'failed' if drift else 'success')
                 if drift:
                     dev.assert_not_called()
@@ -294,6 +319,9 @@ class CopilotRunTests(unittest.TestCase):
                     self.assertTrue(audit['attempts'][0]['battle_proof']['three_star'])
                     self.assertEqual(audit['attempts'][0]['battle_proof']['ledger_recorded'], proof_mode)
                     self.assertEqual((root / 'var/state/planner/capabilities.json').exists(), proof_mode)
+                    if proof_mode:
+                        self.assertEqual(audit['attempts'][0]['battle_proof']['account_binding'], 'user_managed')
+                    self.assertFalse((root / 'var/state/copilot-account-binding.json').exists())
                 self.assertNotIn('private', json.dumps(audit))
 
 

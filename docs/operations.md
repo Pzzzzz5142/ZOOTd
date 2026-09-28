@@ -314,13 +314,15 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 
 整轮 `success` 要求至少一个候选产生当次相同任务和设备的加载、编队、战斗、任务链及全部任务完成回调，加上正常进程退出；仅代表执行终态，不写代理能力账本。整轮结果中的 `attempts` 保留所有失败及成功，`stop_reason` 解释停止原因；每次尝试的 `failure.category`、`failure.retryable`、`failure_phase` 与日志用于诊断。不能把失败链发出的 `AllTasksCompleted` 当成功。
 
-Phase 5 的 `battle_proof` 位于各尝试结果：默认 `observed` 只表示当次三星模板观察，`unproven` 表示证据不足，不登记账本。显式证明模式如下（首次需 `--bind-account` 授权本地 account 别名与当前 Box/游戏 UID 绑定，后续省略）：
+Phase 5 的 `battle_proof` 位于各尝试结果：默认 `observed` 只表示当次三星模板观察，`unproven` 表示证据不足，不登记账本。显式证明模式如下：
 
 ```bash
-./bin/zootd copilot-run NL-8 --profile no-support --prove-capability --bind-account
+./bin/zootd copilot-run NL-8 --profile no-support --prove-capability
 ```
 
-此模式仍只授权一次战斗、最多 18 理智，药石禁用；仅允许 no-support。战前战后游戏 UID 必须匹配 Box 和固定账号绑定，三星、活动作用域、当次零理智关卡/已保存代理检查齐全才记为 `verified` 并写入现有账本；首次通关保持未知，人工隔离不自动解除。账号绑定存在私有 `var/state/copilot-account-binding.json`，冲突时拒绝，不自动重绑。原始 UID 与回调只留私有尝试目录。证明失败停止，不追加战斗。新的 UID OCR/战后代理路线尚待实机验收，详情见 [Phase 5](copilot/phase-5-proof.md)。后续普通 Fight 仍须通过既有零理智 preflight。
+此模式默认只授权一次战斗、最多 18 理智，药石禁用；仅允许 no-support。每次运行前提示用户确保森空岛 Box 与游戏当前登录的是同一国服官服账号，不等待确认、不识别或比对游戏 UID。能力记录归入 `config/farming.toml` 的本地 account 别名；`account_binding=user_managed` 表示账号归属由用户维护。已移除 `--bind-account`，旧账号绑定文件不再读取或写入。
+
+三星、活动作用域、当次零理智关卡/已保存代理检查齐全才记为 `verified` 并写入现有账本；首次通关保持未知，人工隔离不自动解除。Box 同步、启动导航、编队、战斗、代理证明或登记失败会显示对应中文提醒、返回非零退出码，并在结果 JSON 的 `message` 保存提醒，结合 `failure_phase`、`error` 与 `run_dir` 排查。程序不声称能够自动发现游戏账号不一致。证明失败停止，不追加战斗。战后代理路线仍待实机验收，详情见 [Phase 5](copilot/phase-5-proof.md)。后续普通 Fight 仍须通过既有零理智 preflight。
 
 新回调带唯一尝试 ID、连续序号及单调时钟，旧回调不补写或追认。设备和 runtime 更新整轮共用独占锁，每个 worker 上限 20 分钟；只关闭本命令启动的 Waydroid surface。此功能不接入 daily、timer、planner 或恢复 controller。
 

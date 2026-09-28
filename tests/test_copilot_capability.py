@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 from maa_planner.copilot_capability import complete_proof, record, prepare, safe_proxy_tasks, scope
 from maa_planner.capability import CapabilityLedger, CapabilityKey
-from maa_planner.util import sha256_bytes
 from tests.test_copilot_proof import observations, prove, stamp
 
 
@@ -21,17 +20,14 @@ def custom(taskid, task, result, *, first=None, algorithm='OcrDetect', action='D
 
 
 def fixture():
-    pre = custom(1, 'ZootdCopilotUID', {'text': 'UID:12345678'})
     battle = observations()
-    post = custom(8, 'ZootdCopilotUID', {'text': 'UID:12345678'})
-    post += custom(9, 'ZootdCopilotProofStage', {'text': 'NL-8'}, action='ClickSelf')
+    post = custom(9, 'ZootdCopilotProofStage', {'text': 'NL-8'}, action='ClickSelf')
     post += custom(10, 'UsePrtsSuccessCheck', {'template': 'UsePrtsSuccess.png'},
                    first='StageQueue@CheckPrts', algorithm='MatchTemplate')
-    events = stamp(pre + battle + post)
-    proof = prove(events[:len(pre) + len(battle)])
-    context = {'client': 'Official', 'account': 'fixture-account', 'expected_uid': '12345678',
-               'uid_sha256': sha256_bytes(b'Official:12345678'), 'battle_stages': ['stage'],
-               'stage': 'stage', 'stage_code': 'NL-8', 'activity_instance': 'a' * 24, 'enroll': True}
+    events = stamp(battle + post)
+    proof = prove(events[:len(battle)])
+    context = {'client': 'Official', 'account': 'fixture-account', 'account_binding': 'user_managed', 'battle_stages': ['stage'],
+               'stage': 'stage', 'stage_code': 'NL-8', 'activity_instance': 'a' * 24}
     return events, proof, context
 
 
@@ -40,35 +36,35 @@ def complete(events, proof, context):
 
 
 class CapabilityProofTests(unittest.TestCase):
-    def test_complete_account_battle_proxy_chain(self):
+    def test_battle_and_proxy_proof_without_account_ocr(self):
         events, battle, context = fixture()
         result = complete(events, battle, context)
         self.assertEqual(result['status'], 'verified', result)
-        self.assertEqual(result['account_binding'], 'verified')
+        self.assertEqual(result['account_binding'], 'user_managed')
         self.assertEqual(result['saved_proxy'], 'verified')
         self.assertEqual(result['first_clear'], 'unknown')
         self.assertFalse(result['ledger_recorded'])
 
-    def test_each_account_and_proxy_event_required(self):
+    def test_each_proxy_event_required(self):
         events, battle, context = fixture()
-        for i in list(range(4)) + list(range(11, len(events))):
+        for i in range(7, len(events)):
             changed = copy.deepcopy(events)
             del changed[i]
             # Retain recorder numbering; missing evidence cannot be replayed.
             self.assertNotEqual(complete(changed, battle, context)['status'], 'verified', i)
-        for index in (1, 12, 16, 20):
+        for index in (8, 12):
             changed = copy.deepcopy(events)
             changed[index]['details']['details']['result'] = {'text': 'wrong', 'template': 'wrong'}
             self.assertNotEqual(complete(changed, battle, context)['status'], 'verified', index)
 
-    def test_wrong_scope_account_support_and_stale_evidence(self):
+    def test_wrong_scope_support_and_stale_evidence(self):
         events, battle, context = fixture()
-        for key, value in [('expected_uid', '99999999'), ('client', 'Bilibili'),
+        for key, value in [('client', 'Bilibili'),
                            ('battle_stages', ['other-stage'])]:
             changed = dict(context, **{key: value})
             self.assertNotEqual(complete(events, battle, changed)['status'], 'verified')
         self.assertNotEqual(complete(events, dict(battle, support_used=True), context)['status'], 'verified')
-        for index in (0, 11, 15, 19):
+        for index in (7, 11):
             changed = copy.deepcopy(events)
             changed[index]['details']['uuid'] = 'other-device'
             self.assertNotEqual(complete(changed, battle, context)['status'], 'verified')
@@ -78,7 +74,7 @@ class CapabilityProofTests(unittest.TestCase):
 
     def test_chain_completion_without_all_tasks_is_not_proof(self):
         events, battle, context = fixture()
-        for i in (3, 14, 18, 22):
+        for i in (10, 14):
             changed = copy.deepcopy(events)
             changed[i]['message'] = 20003
             self.assertNotEqual(complete(changed, battle, context)['status'], 'verified', i)
@@ -86,7 +82,7 @@ class CapabilityProofTests(unittest.TestCase):
         changed[-1]['details']['finished_tasks'] = [9]
         self.assertNotEqual(complete(changed, battle, context)['status'], 'verified')
 
-    def test_shared_ledger_enrollment_idempotency_and_manual_quarantine(self):
+    def test_shared_ledger_without_binding_keeps_idempotency_and_manual_quarantine(self):
         events, battle, context = fixture()
         proof = complete(events, battle, context)
         with tempfile.TemporaryDirectory() as tmp:
@@ -102,35 +98,36 @@ class CapabilityProofTests(unittest.TestCase):
                 self.assertTrue(ledger.is_verified(key))
                 self.assertEqual(ledger.query(key).success_count, 1)
                 binding = root / 'var/state/copilot-account-binding.json'
-                self.assertNotIn('12345678', binding.read_text())
-                self.assertEqual(binding.stat().st_mode & 0o777, 0o600)
+                self.assertFalse(binding.exists())
+                self.assertEqual(ledger.query(key).evidence['account_binding'], 'user_managed')
                 ledger.mark_quarantined(key, 'manual operator decision')
                 ledger.save(path)
                 with self.assertRaises(ValueError):
                     record(root, context, dict(proof, run_id='new-run'))
 
-    def test_enrollment_requires_explicit_flag_and_never_rebinds(self):
+    def test_prepare_uses_local_alias_and_ignores_legacy_binding(self):
         from types import SimpleNamespace
         from maa_planner.prts import StageCatalog
         config = SimpleNamespace(client_type='Official', account='fixture-account')
-        box = SimpleNamespace(account_id='Official:12345678')
         catalog = StageCatalog([{'stageId': 'stage', 'code': 'NL-8'}])
         with tempfile.TemporaryDirectory() as tmp, \
              patch('maa_planner.copilot_capability.load_config', return_value=config), \
              patch('maa_planner.copilot_capability.scope', return_value='a' * 24), \
              patch('maa_planner.copilot_capability.StageCatalog.load', return_value=catalog):
             root = Path(tmp)
-            with self.assertRaises(ValueError):
-                prepare(root, box, 'stage', 'NL-8')
-            context = prepare(root, box, 'stage', 'NL-8', enroll=True)
+            context = prepare(root, 'stage', 'NL-8')
+            self.assertEqual(context['account'], 'fixture-account')
+            self.assertEqual(context['account_binding'], 'user_managed')
+            self.assertNotIn('expected_uid', context)
+            self.assertNotIn('uid_sha256', context)
             binding = root / 'var/state/copilot-account-binding.json'
             self.assertFalse(binding.exists())
             binding.parent.mkdir(parents=True)
-            binding.write_text(json.dumps({k: context[k] for k in ('client', 'account', 'uid_sha256')}))
-            self.assertEqual(prepare(root, box, 'stage', 'NL-8')['account'], 'fixture-account')
-            box.account_id = 'Official:87654321'
-            with self.assertRaises(ValueError):
-                prepare(root, box, 'stage', 'NL-8', enroll=True)
+            binding.write_text('obsolete binding: deliberately not JSON')
+            self.assertEqual(prepare(root, 'stage', 'NL-8'), context)
+            events, battle, _ = fixture()
+            self.assertTrue(record(root, context, complete(events, battle, context)))
+            self.assertEqual(binding.read_text(), 'obsolete binding: deliberately not JSON')
 
     def test_record_rechecks_scope_and_deduplicates_after_newer_observation(self):
         events, battle, context = fixture()
@@ -158,6 +155,7 @@ class CapabilityProofTests(unittest.TestCase):
 
     def test_proxy_overlay_disables_every_spending_entry(self):
         overlay = safe_proxy_tasks('NL-8')
+        self.assertNotIn('ZootdCopilotUID', overlay)
         for name in ('GoLastBattle', 'StartButton1', 'StartButton2', 'MedicineConfirm',
                      'ExpiringMedicineConfirm', 'StoneConfirm'):
             self.assertEqual(overlay[name]['action'], 'Stop')
