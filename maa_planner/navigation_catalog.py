@@ -53,6 +53,22 @@ def load_tables(root: Path, *, refresh=False, now=None):
     return tables, evidence
 
 
+def title_text(value):
+    return re.sub(r'[\s·•・.\-]+', '', value)
+
+
+def activity_labels(name, all_names):
+    normalized = title_text(name)
+    labels = [normalized]
+    # Stylized title OCR sometimes loses the leading glyph. Accept a suffix
+    # only when it still identifies a unique activity in the whole snapshot;
+    # the target detail panel is verified independently before any battle.
+    suffix = normalized[1:]
+    if len(suffix) >= 4 and not any(suffix in other and other != normalized for other in all_names):
+        labels.append(suffix)
+    return labels
+
+
 class NavigationCatalog(StageCatalog):
     """Normal playable stages, including EX and current events omitted by MAA stages.json."""
 
@@ -61,6 +77,8 @@ class NavigationCatalog(StageCatalog):
         self.evidence = evidence or {}
         self.routes = {}
         game, zones, activities, retro = (tables[t] for t in TABLES)
+        all_names = {title_text(a['name']) for group in (activities['basicInfo'], retro['retroActList'])
+                     for a in group.values() if text(a.get('name'))}
         require(isinstance(tiles, dict), 'Invalid installed tile overview.')
         tile_index = {}
         for tile in tiles.values():
@@ -150,7 +168,8 @@ class NavigationCatalog(StageCatalog):
                                     if isinstance(c, dict) and text(c.get('stageId')))
             self.routes[canonical] = {
                 'kind': route_kind, 'stage_id': canonical, 'battle_id': sid, 'code': code,
-                'activity': activity, 'activity_id': instance, 'zone_id': zone_id,
+                'activity': activity, 'activity_labels': activity_labels(activity, all_names),
+                'activity_id': instance, 'zone_id': zone_id,
                 'zone_names': names, 'available': available, 'window': window,
                 'ap_cost': cost, 'tile_available': len(tile_matches) == 1,
                 'locked_texts': list(dict.fromkeys(unlock_texts)),

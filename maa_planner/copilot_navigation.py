@@ -17,6 +17,8 @@ def navigation_tasks(route: dict) -> dict:
 
     find = ['ZootdStage', 'ZootdZone', 'ZootdMapReset']
     scan = ['ZootdStage', 'ZootdMapScan']
+    labels = route.get('activity_labels', [route['activity']])
+    title_ocr = {'fullMatch': False, 'ocrReplace': [[r'[\s·•・.\-]+', '']]}
     tasks = {
         'ZootdNavigate': {'algorithm': 'JustReturn', 'next': ['ZootdEntry']},
         # Mirror StageNavigationTask::swipe_and_find_stage using installed
@@ -48,8 +50,7 @@ def navigation_tasks(route: dict) -> dict:
             'ZootdList': ocr(['默认进度'], ['ZootdListReset'], roi=[680, 0, 340, 90], click=False),
             'ZootdListReset': swipe([1110, 160, 20, 20], [1110, 610, 20, 20],
                                     ['ZootdListReset'], 15, ['ZootdActivity', 'ZootdListScan']),
-            'ZootdActivity': ocr([route['activity']] if route['kind'] == 'archive' else route['zone_names'],
-                                  ['ZootdEnter'], roi=[45, 90, 1140, 590]),
+            'ZootdActivity': {**ocr(labels, ['ZootdEnter'], roi=[45, 90, 1140, 590]), **title_ocr},
             'ZootdListScan': swipe([1110, 600, 20, 20], [1110, 350, 20, 20],
                                    ['ZootdActivity', 'ZootdListScan'], 45, []),
             'ZootdEnter': ocr(['进入活动', '前往章节'], find, roi=[940, 540, 340, 180]),
@@ -63,7 +64,7 @@ def navigation_tasks(route: dict) -> dict:
             native.append('ChapterDifficultyNormal')
         tasks['ZootdEntry'] = {'algorithm': 'JustReturn', 'sub': native, 'next': find}
     elif route['kind'] == 'activity':
-        tasks['ZootdEntry'] = ocr([route['activity']], ['ZootdStage', 'ZootdZone', 'ZootdActivityEnter'])
+        tasks['ZootdEntry'] = {**ocr(labels, ['ZootdStage', 'ZootdZone', 'ZootdActivityEnter']), **title_ocr}
         tasks['ZootdActivityEnter'] = {**ocr(['进入活动', '前往活动', '进入作战'], find),
                                       'maxTimes': 2, 'exceededNext': []}
     elif route['kind'] == 'supplies':

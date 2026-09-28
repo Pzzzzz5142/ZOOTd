@@ -234,8 +234,6 @@ class RetryIntegrationTests(unittest.TestCase):
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
         root = self.root
         (root / 'config').mkdir()
-        (root / 'config/copilot.toml').write_text(
-            '[navigation.NL-8]\nactivity="长夜临光"\nmap_marker="NL-"\n')
         for name, payload in (
             ('var/state/runtime/maa-resource.json', {}),
             ('var/data/resource/stages.json', [{'code': 'NL-8', 'stageId': 'stage', 'apCost': 18}]),

@@ -123,6 +123,16 @@ class CopilotRunTests(unittest.TestCase):
         self.assertFalse(load_policy(root, None)['allow_support'])
         self.assertTrue(load_policy(root, 'allow-support')['allow_support'])
 
+    def test_local_profile_override_is_not_a_navigation_whitelist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / 'var/config/copilot.toml'
+            path.parent.mkdir(parents=True)
+            path.write_text('default_profile="allow-support"\n'
+                            '[profiles.allow-support]\nallow_support=true\n')
+            self.assertTrue(load_policy(root, None)['allow_support'])
+            self.assertFalse((root / 'config/copilot.toml').exists())
+
     def test_global_assignment_is_bound_into_executable_groups(self):
         c = candidate()
         c.groups.append({'name': 'healer', 'operators': candidate(names=('A', 'B')).operators})
@@ -252,8 +262,6 @@ class CopilotRunTests(unittest.TestCase):
             with self.subTest(drift=drift, proof_mode=proof_mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
                 root = Path(tmp)
                 (root / 'config').mkdir()
-                (root / 'config/copilot.toml').write_text(
-                    '[navigation.NL-8]\nactivity="长夜临光"\nmap_marker="NL-"\n')
                 for name, payload in (
                     ('var/state/runtime/maa-resource.json', {}),
                     ('var/data/resource/stages.json', [{'code': 'NL-8', 'stageId': 'stage', 'apCost': 18}]),
