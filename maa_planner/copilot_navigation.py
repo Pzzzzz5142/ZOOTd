@@ -18,7 +18,7 @@ def navigation_tasks(route: dict) -> dict:
     find = ['ZootdStage', 'ZootdZone', 'ZootdMapReset']
     scan = ['ZootdStage', 'ZootdMapScan']
     labels = route.get('activity_labels', [route['activity']])
-    title_ocr = {'fullMatch': False, 'ocrReplace': [[r'[\s·•・.\-]+', '']]}
+    title_ocr = {'fullMatch': False, 'ocrReplace': [[r'[\s·•・.\-]+', ''], [r'^复刻[:：]?|[:：]?复刻$', '']]}
     tasks = {
         'ZootdNavigate': {'algorithm': 'JustReturn', 'next': ['ZootdEntry']},
         # Mirror StageNavigationTask::swipe_and_find_stage using installed

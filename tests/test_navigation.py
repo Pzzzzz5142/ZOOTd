@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from maa_planner.copilot_core import map_recognized
 from maa_planner.copilot_navigation import navigation_tasks
-from maa_planner.navigation_catalog import NavigationCatalog, load_tables, MAX_AGE, activity_labels
+from maa_planner.navigation_catalog import NavigationCatalog, load_tables, MAX_AGE, activity_labels, title_text
 from maa_planner.prts import PrtsError
 from maa_planner.navigation_cli import navigate
 
@@ -120,6 +120,7 @@ class NavigationTests(unittest.TestCase):
         self.assertFalse(map_recognized(20002, event, 'MN-EX-7'))
 
     def test_activity_title_fallback_requires_unique_long_suffix(self):
+        self.assertEqual(title_text('玛莉娅·临光·复刻'), title_text('玛莉娅·临光'))
         self.assertEqual(activity_labels('玛莉娅·临光', {'玛莉娅临光', '长夜临光'}),
                          ['玛莉娅临光', '莉娅临光'])
         self.assertEqual(activity_labels('甲莉娅·临光', {'甲莉娅临光', '乙莉娅临光'}),

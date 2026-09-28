@@ -54,7 +54,8 @@ def load_tables(root: Path, *, refresh=False, now=None):
 
 
 def title_text(value):
-    return re.sub(r'[\s·•・.\-]+', '', value)
+    value = re.sub(r'[\s·•・.\-]+', '', value)
+    return re.sub(r'^复刻[:：]?|[:：]?复刻$', '', value)
 
 
 def activity_labels(name, all_names):
