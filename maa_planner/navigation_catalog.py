@@ -115,6 +115,10 @@ class NavigationCatalog(StageCatalog):
             else:
                 continue
             code = stage['code']
+            chapter_match = re.search(r'(?:main_|EPISODE\s*)(\d+)',
+                                      zone_id + ' ' + str(zone.get('zoneNameThird', '')))
+            if kind in ('MAINLINE', 'MAINLINE_ACTIVITY') or (rid and act.get('type') == 'MAINLINE'):
+                route_kind = 'main'
             # Use existing farm identity only with an exact ID/code binding.
             ids = installed_ids.get(code, set()) & {sid, sid + '_perm'}
             canonical = sid + '_perm' if rid and sid + '_perm' in ids else sid
@@ -129,11 +133,29 @@ class NavigationCatalog(StageCatalog):
             names = list(dict.fromkeys(zone[f].strip() for f in
                          ('zoneNameSecond', 'zoneNameFirst', 'zoneNameTitleCurrent', 'zoneNameTitleUnCurrent')
                          if text(zone.get(f))))
+            unlock_texts = []
+            if aid:
+                extra = activities.get('activity', {}).get(act.get('type'), {}).get(aid, {})
+                to_visit, seen = [sid], set()
+                while to_visit:
+                    prerequisite = to_visit.pop()
+                    if prerequisite in seen:
+                        continue
+                    seen.add(prerequisite)
+                    toast = extra.get('stageUnlockToastMap', {}).get(prerequisite, {}).get('unlockToast')
+                    if text(toast):
+                        unlock_texts.append(toast)
+                    previous = game['stages'].get(prerequisite, {})
+                    to_visit.extend(c['stageId'] for c in previous.get('unlockCondition', [])
+                                    if isinstance(c, dict) and text(c.get('stageId')))
             self.routes[canonical] = {
                 'kind': route_kind, 'stage_id': canonical, 'battle_id': sid, 'code': code,
                 'activity': activity, 'activity_id': instance, 'zone_id': zone_id,
                 'zone_names': names, 'available': available, 'window': window,
                 'ap_cost': cost, 'tile_available': len(tile_matches) == 1,
+                'locked_texts': list(dict.fromkeys(unlock_texts)),
+                'chapter': int(chapter_match[1]) if chapter_match else None,
+                'select_normal': stage.get('diffGroup') == 'NORMAL',
             }
             rows.append({'stageId': canonical, 'code': code, 'levelId': stage['levelId']})
             bindings.append((canonical, sid))

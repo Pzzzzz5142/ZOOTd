@@ -55,7 +55,9 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
                     and callbacks_are_fresh(events, run_id=run.name, started_ns=start, finished_ns=end)):
                 audit['status'] = 'success'
             else:
-                audit['error'] = 'Target detail panel was not proven; inspect this run’s callbacks.'
+                audit['category'] = 'stage_locked' if worker.get('phase') == 'stage_locked' else 'navigation_failure'
+                audit['error'] = ('Stage prerequisite is locked.' if audit['category'] == 'stage_locked' else
+                                  'Target detail panel was not proven; inspect this run’s callbacks.')
     except PrtsError as exc:
         audit.update(category=exc.category, error=str(exc))
     except (Exception, KeyboardInterrupt) as exc:

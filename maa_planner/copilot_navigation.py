@@ -40,7 +40,7 @@ def navigation_tasks(route: dict) -> dict:
         'ZootdMapScan': {'baseTask': 'StageNavigationSlowlySwipeLeft',
                          'next': ['ZootdMapReset'], 'maxTimes': 20, 'exceededNext': []},
     }
-    if route['kind'] in ('archive', 'main'):
+    if route['kind'] == 'archive':
         tasks.update({
             'ZootdEntry': {'baseTask': 'StageTheme', 'template': 'StageTheme.png',
                            'next': ['ZootdCollect']},
@@ -54,12 +54,26 @@ def navigation_tasks(route: dict) -> dict:
                                    ['ZootdActivity', 'ZootdListScan'], 45, []),
             'ZootdEnter': ocr(['进入活动', '前往章节'], find, roi=[940, 540, 340, 180]),
         })
+    elif route['kind'] == 'main':
+        chapter = route.get('chapter')
+        if type(chapter) is not int:
+            raise ValueError('Missing main chapter identity')
+        native = [f'Episode{chapter}']
+        if route.get('select_normal'):
+            native.append('ChapterDifficultyNormal')
+        tasks['ZootdEntry'] = {'algorithm': 'JustReturn', 'sub': native, 'next': find}
     elif route['kind'] == 'activity':
         tasks['ZootdEntry'] = ocr([route['activity']], ['ZootdStage', 'ZootdZone', 'ZootdActivityEnter'])
         tasks['ZootdActivityEnter'] = {**ocr(['进入活动', '前往活动', '进入作战'], find),
                                       'maxTimes': 2, 'exceededNext': []}
     elif route['kind'] == 'supplies':
-        tasks['ZootdEntry'] = ocr(['资源收集'], ['ZootdZone'])
+        tasks['ZootdEntry'] = {'baseTask': 'ResourceStages', 'next': ['ZootdZone']}
     else:
         raise ValueError('Unsupported navigation entrance')
+    if route.get('locked_texts'):
+        tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)
+        for task in tasks.values():
+            following = task.get('next', [])
+            if 'ZootdStage' in following:
+                following.insert(following.index('ZootdStage') + 1, 'ZootdNavigationLocked')
     return tasks

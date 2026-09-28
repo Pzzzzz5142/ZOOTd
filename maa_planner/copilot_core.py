@@ -125,6 +125,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
     sequence = 0
     map_observed = threading.Event()
     home_observed = threading.Event()
+    locked_observed = threading.Event()
     with (run / 'callbacks.jsonl').open('x') as output:
         @callback_type
         def callback(msg, raw, _):
@@ -139,6 +140,9 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     output.flush()
                     if home_recognized(msg, value):
                         home_observed.set()
+                    if (msg == 20002 and value.get('details', {}).get('task') == 'ZootdNavigationLocked'
+                            and value.get('details', {}).get('result', {}).get('text') in route.get('locked_texts', [])):
+                        locked_observed.set()
                     if map_recognized(msg, value, route['code']):
                         map_observed.set()
                     if msg in (0, 1, 10000, 10002, 10004):
@@ -184,6 +188,9 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             check(home_observed.is_set())
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
             run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
+            if locked_observed.is_set():
+                progress['phase'] = 'stage_locked'
+                raise RuntimeError('Stage prerequisite is locked')
             check(map_observed.is_set())
             if route.get('navigation_only'):
                 progress['phase'] = 'navigation_complete'
@@ -218,6 +225,14 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 run_task(b'Custom', b'{"task_names":["StageQueue@CheckPrts"]}')
             return 0
         finally:
+            try:
+                shot = subprocess.run(['/usr/bin/adb', '-s', address, 'exec-out', 'screencap', '-p'],
+                                      capture_output=True, timeout=10, check=True).stdout
+                offset = shot.find(b'\x89PNG\r\n\x1a\n')
+                if offset >= 0:
+                    (run / 'navigation-final.png').write_bytes(shot[offset:])
+            except (OSError, subprocess.SubprocessError):
+                pass
             lib.AsstStop(handle)
             lib.AsstDestroy(handle)
 
