@@ -73,6 +73,8 @@ class NavigationTests(unittest.TestCase):
             tasks = navigation_tasks(route)
             self.assertEqual(tasks['ZootdStage']['text'], [route['code']])
             self.assertEqual(tasks['ZootdZone']['text'], [zone])
+            if '-EX-' in route['code']:
+                self.assertEqual(tasks['ZootdZoneTab']['text'], ['EX'])
             self.assertEqual(tasks['ZootdStageConfirmed']['next'], [])
         self.assertEqual(catalog.resolve('MN-EX-7'), 'act13d5_ex07')
         self.assertEqual(catalog.resolve('act13side_09'), 'act13side_09_perm')

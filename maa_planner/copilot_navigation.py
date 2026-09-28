@@ -71,7 +71,16 @@ def navigation_tasks(route: dict) -> dict:
         tasks['ZootdEntry'] = {'baseTask': 'ResourceStages', 'next': ['ZootdZone']}
     else:
         raise ValueError('Unsupported navigation entrance')
+    # Older event maps may label the EX selector only as 'EX', rather
+    # than printing zoneNameSecond. This is a shared zone type, not a
+    # stage/event-specific route. Keep the exact target check afterwards.
+    if '-EX-' in code:
+        tasks['ZootdZoneTab'] = {'baseTask': 'ClickStageName', 'text': ['EX'],
+                                'next': find, 'maxTimes': 2,
+                                'exceededNext': ['ZootdStage', 'ZootdMapReset']}
+        find.insert(find.index('ZootdMapReset'), 'ZootdZoneTab')
     if route.get('locked_texts'):
+
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)
         for task in tasks.values():
             following = task.get('next', [])
