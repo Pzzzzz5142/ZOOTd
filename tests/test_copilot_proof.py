@@ -124,6 +124,29 @@ class CopilotProofTests(unittest.TestCase):
             records.insert(4, failure)
             self.assert_unproven(stamp(records))
 
+    def test_only_optional_preformation_prts_probe_is_ignored(self):
+        probe = {'message': 20000, 'details': {
+            'uuid': 'device', 'taskid': 7, 'taskchain': 'Copilot',
+            'subtask': 'ProcessTask', 'class': 'asst::ProcessTask',
+            'first': ['NotUsePrts'], 'pre_task': '', 'details': {}}}
+        records = observations()
+        records.insert(2, probe)
+        self.assertTrue(prove(stamp(records))['three_star'])
+        for index in (0, 1, 3, 4, 5, 6):
+            records = observations()
+            records.insert(index, copy.deepcopy(probe))
+            self.assert_unproven(stamp(records))
+        records = observations()
+        records[2:2] = [copy.deepcopy(probe), copy.deepcopy(probe)]
+        self.assert_unproven(stamp(records))
+        for field, value in [('first', ['OtherTask']), ('uuid', 'wrong'),
+                             ('taskid', 8), ('pre_task', 'other'), ('why', 'error')]:
+            records = observations()
+            changed = copy.deepcopy(probe)
+            changed['details'][field] = value
+            records.insert(2, changed)
+            self.assert_unproven(stamp(records))
+
     def test_malformed_evidence_fails_closed(self):
         for value in (None, [], 'text', 1):
             records = observations()

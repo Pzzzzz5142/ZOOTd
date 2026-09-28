@@ -927,6 +927,24 @@ class CapabilityLedger:
         self._records[key] = record
         return record
 
+    def mark_verified_observation(
+        self, key: CapabilityKey, *, observation_id: str, evidence: dict[str, Any],
+        observed_at: datetime | None = None,
+    ) -> bool:
+        """Record a separately validated observation once without lifting manual quarantine."""
+        if not isinstance(observation_id, str) or re.fullmatch(r"[0-9a-f]{64}", observation_id) is None:
+            raise CapabilityError("invalid observation identity")
+        previous = self.query(key)
+        if previous is not None:
+            if previous.quarantine_kind == "manual":
+                raise CapabilityError("manual quarantine requires explicit reset")
+            if observation_id in previous.processed_observations:
+                return False
+        record = self.mark_verified(key, evidence=evidence, observed_at=observed_at)
+        self._records[key] = replace(
+            record, processed_observations=record.processed_observations + (observation_id,))
+        return True
+
     def mark_verified_from_log(
         self,
         key: CapabilityKey,

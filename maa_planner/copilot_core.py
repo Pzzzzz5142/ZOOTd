@@ -114,6 +114,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
         fn = getattr(lib, name)
         fn.argtypes, fn.restype = args, result
 
+    proof_context = None
+    if (run / 'proof-context.json').exists():
+        proof_context = json.loads((run / 'proof-context.json').read_bytes())
+    uid_observed = threading.Event()
     callback_failed = threading.Event()
     mutex = threading.Lock()
     chains = []
@@ -132,6 +136,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                                              'message': msg, 'details': value}, ensure_ascii=False) + '\n')
                     sequence += 1
                     output.flush()
+                    if proof_context:
+                        from .copilot_capability import observed_uid
+                        if observed_uid(msg, value, proof_context['expected_uid']):
+                            uid_observed.set()
                     if home_recognized(msg, value):
                         home_observed.set()
                     if map_recognized(msg, value):
@@ -177,6 +185,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":false}')
             run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
             check(home_observed.is_set())
+            if proof_context:
+                progress['phase'] = 'account_proof'
+                run_task(b'Custom', b'{"task_names":["ZootdCopilotUID"]}')
+                check(uid_observed.is_set())
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
             run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
             check(map_observed.is_set())
@@ -191,6 +203,26 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     raise RuntimeError('Callback recording failed')
                 time.sleep(0.2)
             check(not callback_failed.is_set())
+            if proof_context:
+                # Only after battle: Stop overlays would otherwise prevent it.
+                from .copilot_capability import safe_proxy_tasks
+                overlay = run / 'proof-overlay/resource/tasks'
+                overlay.mkdir(parents=True)
+                (overlay / 'tasks.json').write_text(json.dumps(safe_proxy_tasks(proof_context['stage_code'])))
+                check(lib.AsstLoadResource(str(run / 'proof-overlay').encode()))
+                progress['phase'] = 'proxy_proof'
+                uid_observed.clear()
+                home_observed.clear()
+                map_observed.clear()
+                run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
+                check(home_observed.is_set())
+                run_task(b'Custom', b'{"task_names":["ZootdCopilotUID"]}')
+                check(uid_observed.is_set())
+                run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
+                run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
+                check(map_observed.is_set())
+                run_task(b'Custom', b'{"task_names":["ZootdCopilotProofStage"]}')
+                run_task(b'Custom', b'{"task_names":["StageQueue@CheckPrts"]}')
             return 0
         finally:
             lib.AsstStop(handle)
