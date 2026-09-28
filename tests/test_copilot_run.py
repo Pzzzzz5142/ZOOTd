@@ -1,5 +1,6 @@
 import copy
 import json
+import subprocess
 import tempfile
 import time
 import unittest
@@ -7,9 +8,9 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
-from maa_planner.copilot_core import terminal_result, map_recognized
+from maa_planner.copilot_core import terminal_result, map_recognized, home_recognized, launch_game
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
-from maa_planner.copilot_run import (bind_formation, device_lock, execute, experiment, load_policy,
+from maa_planner.copilot_run import (bind_formation, device, device_lock, execute, experiment, load_policy,
                                      select_candidate, ExperimentError)
 from maa_planner.copilot_static import build_catalog
 from maa_planner.operator_box import Operator, OperatorBox
@@ -36,6 +37,56 @@ def result(records):
 
 
 class CopilotRunTests(unittest.TestCase):
+    def test_device_waits_for_android_boot_after_adb_connects(self):
+        boots = iter(['', '1'])
+        def command(args):
+            if args == ['waydroid', 'status']:
+                return 'Session: RUNNING\nIP address: 192.168.1.2'
+            if args == ['adb', 'devices']:
+                return '192.168.1.2:5555 device'
+            if 'getprop' in args:
+                return next(boots)
+            if 'pm' in args:
+                return 'package:/data/app/game.apk'
+            return 'Override size: 1280x720'
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch('maa_planner.copilot_run.command', side_effect=command), \
+                patch('maa_planner.copilot_run.subprocess.run'), \
+                patch('maa_planner.copilot_run.time.sleep') as sleep:
+            with device(Path(tmp), Path(tmp)) as address:
+                self.assertEqual(address, '192.168.1.2:5555')
+            sleep.assert_called_once_with(1)
+
+    def test_android_launch_requires_explicit_success_even_with_zero_exit(self):
+        for output, accepted in [('Status: ok\nComplete\n', True),
+                                 ('Starting: Intent {}\nError type 3\n', False),
+                                 ('Status: timeout\nComplete\n', False),
+                                 ('Status: ok\n', False)]:
+            with patch('maa_planner.copilot_core.subprocess.run',
+                       return_value=subprocess.CompletedProcess([], 0, output)) as run:
+                if accepted:
+                    launch_game('device:5555')
+                else:
+                    with self.assertRaises(RuntimeError):
+                        launch_game('device:5555')
+                self.assertIn('-W', run.call_args.args[0])
+                self.assertEqual(run.call_args.kwargs['timeout'], 60)
+        with patch('maa_planner.copilot_core.subprocess.run',
+                   side_effect=subprocess.TimeoutExpired('adb', 60)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                launch_game('device:5555')
+
+    def test_home_requires_template_evidence_not_startup_completion(self):
+        event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',
+                 'details': {'task': 'Home', 'action': 'Stop', 'algorithm': 'MatchTemplate',
+                             'result': {'template': 'SwitchTheme@ToggleSettingsMenu.png'}}}
+        self.assertTrue(home_recognized(20001, event))
+        self.assertFalse(home_recognized(10002, event))
+        for key, value in [('task', 'ReturnButton'), ('algorithm', 'JustReturn'), ('result', {})]:
+            changed = copy.deepcopy(event)
+            changed['details'][key] = value
+            self.assertFalse(home_recognized(20001, changed))
+
     def test_archive_scan_completion_does_not_prove_map(self):
         event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',
                  'details': {'task': 'ZootdCopilotMap', 'algorithm': 'OcrDetect',

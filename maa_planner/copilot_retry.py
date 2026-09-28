@@ -114,6 +114,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
 
     active = None
     all_done = False
+    ignored_prts_probe = False
     loaded = forming = formed = battling = chain_failed = False
     missing = None
     requirements = []
@@ -192,7 +193,19 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 mission_failed |= task == 'FightMissionFailed'
                 evidence.append({'sequence': event['sequence'], 'task': task})
         if msg == 20000 and subtask == 'ProcessTask' and not battle_failed:
-            unexpected = True
+            # v6.18.0 MultiCopilotTaskPlugin explicitly ignores this one
+            # optional probe. A later, complete formation failure is still
+            # required; no other process/navigation error is exempted.
+            optional_prts_probe = (
+                loaded and not forming and not ignored_prts_probe
+                and value.get('class') == 'asst::ProcessTask'
+                and value.get('first') == ['NotUsePrts']
+                and value.get('pre_task') == '' and detail == {}
+                and not value.get('why') and not what)
+            if optional_prts_probe:
+                ignored_prts_probe = True
+            else:
+                unexpected = True
         if msg == 20000 and subtask not in {'BattleFormationTask', 'BattleProcessTask', 'ProcessTask'}:
             unexpected = True
     if not loaded or not chain_failed or not all_done or unexpected:

@@ -81,6 +81,29 @@ class RetryClassificationTests(unittest.TestCase):
         self.assertEqual(classify(failed_events('requirement'))['evidence'],
                          [{'oper_name': 'A', 'requirement_type': 'module'}])
 
+    def test_optional_prts_probe_before_proven_formation_failure(self):
+        probe = event(20000, subtask='ProcessTask', first=['NotUsePrts'],
+                      pre_task='', details={}, **{'class': 'asst::ProcessTask'})
+        records = failed_events('missing')
+        records.insert(2, probe)
+        self.assertEqual(classify(stamp(records))['category'], 'formation_missing_operator')
+        for changes in [{'first': ['Other']}, {'pre_task': 'Other'},
+                        {'details': {'error': 'failure'}}, {'why': 'error'},
+                        {'class': 'Other'}]:
+            changed = copy.deepcopy(records)
+            changed[2]['details'].update(changes)
+            self.assertFalse(classify(stamp(changed))['retryable'])
+        for index in (0, 4):
+            changed = failed_events('missing')
+            changed.insert(index, probe)
+            self.assertFalse(classify(stamp(changed))['retryable'])
+        records.insert(2, copy.deepcopy(probe))
+        self.assertFalse(classify(stamp(records))['retryable'])
+        # Probe alone or followed by an unrelated navigation error cannot retry.
+        records = failed_events('navigation')
+        records.insert(2, probe)
+        self.assertFalse(classify(stamp(records))['retryable'])
+
     def test_unknown_navigation_and_generic_failures_stop(self):
         for kind, category in [('unchecked', 'formation_other_failure'),
                                ('formation', 'formation_other_failure'),
@@ -289,6 +312,21 @@ class RetryIntegrationTests(unittest.TestCase):
         self.box_fetch.assert_called_once()
         self.provider.query.assert_called_once()
 
+    def test_acceptance_missing_must_identify_injected_operator(self):
+        (self.root / 'var/data/resource/battle_data.json').write_text(json.dumps({'chars': {'A': {'rarity': 4}}}))
+        for injected_name, accepted in [('A', True), ('B', False)]:
+            with self.subTest(injected_name=injected_name):
+                self.outcomes = ['missing', 'success']
+                from maa_planner.copilot_run import acceptance_formation_failure as inject
+                def renamed(*args):
+                    content, evidence = inject(*args)
+                    evidence['oper_name'] = injected_name
+                    return content, evidence
+                with patch('maa_planner.copilot_run.acceptance_formation_failure', side_effect=renamed):
+                    result = experiment(self.root, 'NL-8', None,
+                                        limits=RetryLimits(2, 2, 18), acceptance_failure=True)
+                self.assertEqual(result['acceptance_passed'], accepted, result)
+
     def test_acceptance_never_labels_direct_success_as_retry_acceptance(self):
         (self.root / 'var/data/resource/battle_data.json').write_text(json.dumps({'chars': {'A': {'rarity': 4}}}))
         self.outcomes = ['success']
@@ -332,7 +370,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.dev.assert_called_once()
         self.assertEqual(self.provider.get.call_count, 2)
         resets = [c for c in self.commands.call_args_list if 'force-stop' in c.args[0]]
-        self.assertEqual(len(resets), 1)
+        self.assertEqual(len(resets), 0)
+        self.assertEqual(result['attempts'][1]['reset_strategy'], 'fresh_core_startup_navigation')
         self.assertNotEqual(self.paths[0].name, self.paths[1].name)
         for i, path in enumerate(self.paths):
             self.assertEqual(json.loads((path / 'result.json').read_text()), result['attempts'][i])
@@ -420,16 +459,13 @@ class RetryIntegrationTests(unittest.TestCase):
         self.box_fetch.assert_not_called()
         self.dev.assert_not_called()
 
-    def test_reset_failure_stops_without_second_worker(self):
-        def command(args):
-            if 'force-stop' in args:
-                raise RuntimeError('reset failed')
-            return '' if 'status' in args else 'head'
-        self.commands.side_effect = command
-        result = self.run_experiment()
-        self.assertEqual(result['stop_reason'], 'adb_failure')
-        self.assertEqual(len(self.paths), 1)
-        self.assertEqual(result['attempts'][1]['failure_phase'], 'reset')
+    def test_retry_navigation_failure_stops_without_third_worker(self):
+        self.outcomes = ['missing', 'navigation', 'success']
+        result = self.run_experiment(max_candidates=3, max_battles=3)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(len(self.paths), 2)
+        self.assertFalse(result['attempts'][1]['failure']['retryable'])
+        self.assertEqual(result['attempts'][1]['reset_strategy'], 'fresh_core_startup_navigation')
 
     def test_default_still_runs_only_one_candidate(self):
         result = experiment(self.root, 'NL-8', None)

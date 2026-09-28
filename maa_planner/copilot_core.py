@@ -4,10 +4,32 @@ from __future__ import annotations
 import ctypes as C
 import json
 import signal
+import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
+
+
+def launch_game(address):
+    """Wait for Android's actual launch result; am may exit zero on errors."""
+    result = subprocess.run(
+        ['/usr/bin/adb', '-s', address, 'shell', 'am', 'start', '-W', '-n',
+         'com.hypergryph.arknights/com.u8.sdk.U8UnityContext'],
+        capture_output=True, text=True, timeout=60, check=True)
+    lines = result.stdout.splitlines()
+    if 'Status: ok' not in lines or 'Complete' not in lines or any(
+            line.startswith('Error') for line in lines):
+        raise RuntimeError('Android did not confirm game launch')
+
+
+def home_recognized(message, value):
+    details = value.get('details', {})
+    return (message == 20001 and value.get('taskchain') == 'Custom'
+            and value.get('subtask') == 'ProcessTask'
+            and details.get('task') == 'Home' and details.get('action') == 'Stop'
+            and details.get('algorithm') == 'MatchTemplate'
+            and details.get('result', {}).get('template') == 'SwitchTheme@ToggleSettingsMenu.png')
 
 
 def map_recognized(message, value):
@@ -97,6 +119,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
     chains = []
     sequence = 0
     map_observed = threading.Event()
+    home_observed = threading.Event()
     with (run / 'callbacks.jsonl').open('x') as output:
         @callback_type
         def callback(msg, raw, _):
@@ -109,6 +132,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                                              'message': msg, 'details': value}, ensure_ascii=False) + '\n')
                     sequence += 1
                     output.flush()
+                    if home_recognized(msg, value):
+                        home_observed.set()
                     if map_recognized(msg, value):
                         map_observed.set()
                     if msg in (0, 1, 10000, 10002, 10004):
@@ -148,7 +173,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             # Separate task starts prevent a failed navigation from proceeding
             # into Copilot. These tasks have no battle or refill actions.
             progress['phase'] = 'navigation'
-            run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":true}')
+            launch_game(address)
+            run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":false}')
+            run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
+            check(home_observed.is_set())
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
             run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
             check(map_observed.is_set())

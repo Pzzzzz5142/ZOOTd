@@ -89,12 +89,14 @@ def device(root: Path, run: Path):
                     address = ip[1] + ':5555'
                     subprocess.run(['waydroid', 'adb', 'connect'], stdout=output,
                                    stderr=subprocess.STDOUT, timeout=15, check=False)
-                    if re.search(r'^' + re.escape(address) + r'\s+device$',
-                                 command(['adb', 'devices']), re.M):
+                    if (re.search(r'^' + re.escape(address) + r'\s+device$',
+                                  command(['adb', 'devices']), re.M)
+                            and command(['adb', '-s', address, 'shell', 'getprop',
+                                         'sys.boot_completed']).strip() == '1'):
                         break
                 time.sleep(1)
             else:
-                raise ExperimentError('Waydroid/ADB not ready within 120 seconds')
+                raise ExperimentError('Waydroid/ADB/Android boot not ready within 120 seconds')
             package = command(['adb', '-s', address, 'shell', 'pm', 'path', 'com.hypergryph.arknights'])
             if not package.strip().startswith('package:'):
                 raise ExperimentError('Official CN client is unavailable')
@@ -235,10 +237,10 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         phase = 'device'
         address = get_address()
         if restart:
-            # Only reached after the preceding worker exited with a proven
-            # candidate failure. Reset UI before fresh startup/navigation.
-            phase = 'reset'
-            command(['adb', '-s', address, 'shell', 'am', 'force-stop', 'com.hypergryph.arknights'])
+            # The previous worker has exited with a proven candidate failure.
+            # Fresh Core StartUp returns from formation/results to home before
+            # navigating again. Force-stop can strand Waydroid's game process.
+            audit['reset_strategy'] = 'fresh_core_startup_navigation'
         phase = 'execution'
         started_ns = time.monotonic_ns()
         status = execute(root, run, address)
@@ -416,7 +418,11 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                 attempts = audit['attempts']
                 audit['acceptance_passed'] = (
                     len(attempts) == 2 and attempts[0].get('acceptance_injection') is not None
-                    and attempts[0].get('failure', {}).get('category') == 'formation_requirement_unsatisfied'
+                    and attempts[0].get('failure', {}).get('category') in (
+                        'formation_requirement_unsatisfied', 'formation_missing_operator')
+                    and any(e.get('oper_name', e.get('name')) ==
+                            attempts[0]['acceptance_injection']['oper_name']
+                            for e in attempts[0].get('failure', {}).get('evidence', []))
                     and attempts[0].get('sanity_settlement', {}).get('outcome') == 'not_spent'
                     and attempts[1]['status'] == 'success'
                     and 'acceptance_injection' not in attempts[1])
