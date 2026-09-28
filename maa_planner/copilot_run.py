@@ -25,7 +25,7 @@ from .copilot_navigation import navigation_tasks
 from .navigation_catalog import load_navigation
 from .copilot_matcher import match_candidate, rank_candidates
 from .copilot_static import fetch_catalog
-from .prts import PrtsError, CopilotCandidate, PrtsCopilotClient, StageCatalog, decode, operators
+from .prts import PrtsError, CopilotCandidate, PrtsCopilotClient, decode, operators
 from .runtime_receipt import validate_runtime_receipt
 from .skland import SklandBoxProvider, SklandClient
 from .util import atomic_write_json, canonical_json, sha256_bytes

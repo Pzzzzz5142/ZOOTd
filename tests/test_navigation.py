@@ -1,6 +1,7 @@
-import copy
 import json
 import tempfile
+import time
+from contextlib import ExitStack, contextmanager
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +10,7 @@ from maa_planner.copilot_core import map_recognized
 from maa_planner.copilot_navigation import navigation_tasks
 from maa_planner.navigation_catalog import NavigationCatalog, load_tables, MAX_AGE, activity_labels
 from maa_planner.prts import PrtsError
-from maa_planner.util import canonical_json, sha256_bytes
+from maa_planner.navigation_cli import navigate
 
 
 def fixture():
@@ -176,6 +177,55 @@ class NavigationTests(unittest.TestCase):
                 path.write_text(json.dumps(saved))
                 with self.assertRaises(PrtsError):
                     load_tables(root, now=1001)
+
+
+class NavigationCliTests(unittest.TestCase):
+    def test_zero_battle_requires_fresh_exact_panel_and_worker_completion(self):
+        for mode, expected in [('ok', 'success'), ('wrong_stage', 'failed'),
+                               ('old', 'failed'), ('unfinished', 'failed'), ('locked', 'failed')]:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+                root = Path(tmp)
+                catalog = NavigationCatalog(*fixture(), now=150, evidence={'sha256': 'test'})
+                def mock(name, **kwargs):
+                    return stack.enter_context(patch('maa_planner.navigation_cli.' + name, **kwargs))
+                mock('load_navigation', return_value=catalog)
+                mock('command', side_effect=['', 'head'])
+                mock('validate_runtime_receipt', return_value='sealed')
+                @contextmanager
+                def fake_device(*args):
+                    yield 'device'
+                mock('device', side_effect=fake_device)
+                def execute(root, run, address):
+                    tasks = json.loads((run / 'navigation/resource/tasks/tasks.json').read_text())
+                    for name in ('StartButton1', 'StartButton2', 'MedicineConfirm', 'StoneConfirm'):
+                        self.assertEqual(tasks[name]['action'], 'Stop')
+                    self.assertFalse((run / 'params.json').exists())
+                    event = {'run_id': 'old' if mode == 'old' else run.name, 'sequence': 0,
+                             'recorded_ns': time.monotonic_ns(), 'message': 20002,
+                             'details': {'taskchain': 'Custom', 'subtask': 'ProcessTask',
+                                         'details': {'task': 'ZootdStageConfirmed', 'action': 'DoNothing',
+                                                     'algorithm': 'OcrDetect',
+                                                     'result': {'text': 'NL-8' if mode == 'wrong_stage' else 'NL-9'}}}}
+                    (run / 'callbacks.jsonl').write_text(json.dumps(event) + '\n')
+                    phase = 'stage_locked' if mode == 'locked' else 'navigation' if mode == 'unfinished' else 'navigation_complete'
+                    (run / 'worker-result.json').write_text(json.dumps({'phase': phase}))
+                    return 1 if mode == 'locked' else 0
+                mock('execute', side_effect=execute)
+                result = navigate(root, 'nl 9')
+                self.assertEqual(result['status'], expected)
+                self.assertFalse(result['consumes_sanity'])
+                if mode == 'locked':
+                    self.assertEqual(result['category'], 'stage_locked')
+
+    def test_plan_does_not_start_device_or_validate_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch('maa_planner.navigation_cli.load_navigation',
+                      return_value=NavigationCatalog(*fixture(), now=150)), \
+                patch('maa_planner.navigation_cli.device') as device, \
+                patch('maa_planner.navigation_cli.validate_runtime_receipt') as runtime:
+            self.assertEqual(navigate(Path(tmp), 'DS-1', plan_only=True)['status'], 'planned')
+            device.assert_not_called()
+            runtime.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -225,6 +225,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 run_task(b'Custom', b'{"task_names":["StageQueue@CheckPrts"]}')
             return 0
         finally:
+            lib.AsstStop(handle)
             try:
                 shot = subprocess.run(['/usr/bin/adb', '-s', address, 'exec-out', 'screencap', '-p'],
                                       capture_output=True, timeout=10, check=True).stdout
@@ -233,7 +234,6 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     (run / 'navigation-final.png').write_bytes(shot[offset:])
             except (OSError, subprocess.SubprocessError):
                 pass
-            lib.AsstStop(handle)
             lib.AsstDestroy(handle)
 
 
