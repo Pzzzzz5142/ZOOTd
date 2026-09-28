@@ -124,6 +124,7 @@ class RetryClassificationTests(unittest.TestCase):
             self.assertEqual(classify(records)['category'], category)
             self.assertFalse(classify(records)['retryable'])
         for phase, category in [('adb', 'adb_failure'), ('navigation', 'navigation_failure'),
+                               ('stage_locked', 'stage_locked'),
                                 ('execution', 'runtime_failure')]:
             self.assertEqual(classify([], exit_code=1, worker_phase=phase)['category'], category)
         self.assertFalse(classify(failed_events(), exit_code=124)['retryable'])

@@ -92,7 +92,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     completed formation. Generic BattleProcess errors are never battle results.
     """
     if type(exit_code) is not int or exit_code != 0:
-        return failure({'adb': 'adb_failure', 'navigation': 'navigation_failure'}.get(
+        return failure({'adb': 'adb_failure', 'navigation': 'navigation_failure', 'stage_locked': 'stage_locked'}.get(
             worker_phase, 'runtime_failure'))
     if (type(task_id) is not int or task_id < 0 or not callbacks_are_fresh(
             events, run_id=run_id, started_ns=started_ns, finished_ns=finished_ns)):

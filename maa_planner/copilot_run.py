@@ -48,6 +48,8 @@ def failure_message(result):
         return '能力账本登记失败；请检查活动有效期、本地配置、人工隔离状态及账本文件权限。'
     if attempt.get('worker_phase') == 'proxy_proof' or phase == 'capability_proof':
         return '通关或已保存代理的证明未完成；请检查战斗结果、客户端代理开关及本次运行记录。'
+    if category == 'stage_locked':
+        return '目标关卡的前置尚未解锁；请先完成游戏要求的前置关卡。'
     if category == 'navigation_failure':
         return '游戏启动或关卡导航失败；请检查游戏登录、更新/公告弹窗及关卡入口。'
     if category == 'adb_failure' or phase == 'device':
