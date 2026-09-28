@@ -119,7 +119,6 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
     proof_context = None
     if (run / 'proof-context.json').exists():
         proof_context = json.loads((run / 'proof-context.json').read_bytes())
-    uid_observed = threading.Event()
     callback_failed = threading.Event()
     mutex = threading.Lock()
     chains = []
@@ -138,10 +137,6 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                                              'message': msg, 'details': value}, ensure_ascii=False) + '\n')
                     sequence += 1
                     output.flush()
-                    if proof_context:
-                        from .copilot_capability import observed_uid
-                        if observed_uid(msg, value, proof_context['expected_uid']):
-                            uid_observed.set()
                     if home_recognized(msg, value):
                         home_observed.set()
                     if map_recognized(msg, value, route['code']):
@@ -187,10 +182,6 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":false}')
             run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
             check(home_observed.is_set())
-            if proof_context:
-                progress['phase'] = 'account_proof'
-                run_task(b'Custom', b'{"task_names":["ZootdCopilotUID"]}')
-                check(uid_observed.is_set())
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
             run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
             check(map_observed.is_set())
@@ -216,13 +207,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 (overlay / 'tasks.json').write_text(json.dumps(safe_proxy_tasks(proof_context['stage_code'])))
                 check(lib.AsstLoadResource(str(run / 'proof-overlay').encode()))
                 progress['phase'] = 'proxy_proof'
-                uid_observed.clear()
                 home_observed.clear()
                 map_observed.clear()
                 run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
                 check(home_observed.is_set())
-                run_task(b'Custom', b'{"task_names":["ZootdCopilotUID"]}')
-                check(uid_observed.is_set())
                 run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
                 run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
                 check(map_observed.is_set())

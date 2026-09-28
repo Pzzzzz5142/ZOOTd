@@ -31,6 +31,40 @@ from .skland import SklandBoxProvider, SklandClient
 from .util import atomic_write_json, canonical_json, sha256_bytes
 
 
+ACCOUNT_NOTICE = ('账号提示：请确保森空岛 Box 与游戏当前登录的是同一国服官服账号；'
+                  '程序不自动识别或核对游戏 UID，能力记录归入配置的本地 account 别名。')
+
+
+def failure_message(result):
+    """Human-readable, bounded diagnostics; never echo raw worker/API errors."""
+    attempt = (result.get('attempts') or [result])[-1]
+    phase = attempt.get('failure_phase', result.get('failure_phase'))
+    category = attempt.get('failure', {}).get('category')
+    if attempt.get('worker_exit_code') == 124:
+        return '执行超时，结果未确认；请查看本次运行记录和游戏状态。'
+    if attempt.get('worker_exit_code') == 130 or result.get('error') == 'KeyboardInterrupt':
+        return '运行已中断；请查看本次运行记录确认进度。'
+    if phase == 'ledger_record':
+        return '能力账本登记失败；请检查活动有效期、本地配置、人工隔离状态及账本文件权限。'
+    if attempt.get('worker_phase') == 'proxy_proof' or phase == 'capability_proof':
+        return '通关或已保存代理的证明未完成；请检查战斗结果、客户端代理开关及本次运行记录。'
+    if category == 'navigation_failure':
+        return '游戏启动或关卡导航失败；请检查游戏登录、更新/公告弹窗及关卡入口。'
+    if category == 'adb_failure' or phase == 'device':
+        return '设备连接失败；请检查 Waydroid 和 ADB 状态。'
+    if category in {'formation_missing_operator', 'formation_requirement_unsatisfied', 'copilot_schema_failure'}:
+        return '作业或编队不满足要求；请检查干员练度、森空岛与游戏账号是否一致，并查看本次记录。'
+    if category == 'battle_failed':
+        return '本次战斗未通过；请查看战斗结果及作业适配情况。'
+    return {
+        'readiness': '运行准备失败；请检查工作区是否干净、运行锁及 MAA runtime 状态。',
+        'box': '森空岛 Box 同步失败；请检查登录凭据、绑定角色和网络。',
+        'proof_context': '无法准备能力记录；请检查本地 account 配置和关卡活动数据。',
+        'static_catalog': '干员静态数据获取失败；请检查网络和资源文件。',
+        'query_match': '作业查询或匹配失败；请检查网络、候选作业及 Box 练度是否适用。',
+    }.get(phase, '运行失败，未确认成功；请查看本次运行记录中的失败阶段和错误类别。')
+
+
 class ExperimentError(RuntimeError):
     pass
 
@@ -267,6 +301,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             worker = decode(receipt.read_bytes())
             if worker.get('run_id') == run.name and worker.get('exit_code') == status:
                 worker_phase = worker.get('phase')
+                if worker_phase in {'runtime', 'adb', 'navigation', 'execution', 'proxy_proof'}:
+                    audit['worker_phase'] = worker_phase
         fresh = callbacks_are_fresh(events, run_id=run.name, started_ns=started_ns, finished_ns=finished_ns)
         # The battle reducer ends at its own AllTasksCompleted. Later Custom
         # tasks have independent terminals and are checked by the strong proof.
@@ -300,7 +336,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
                 started_ns=started_ns, finished_ns=finished_ns)
             audit['battle_proof'] = proof
             if proof['status'] != 'verified':
-                raise ExperimentError('Account-bound saved proxy proof incomplete: ' + proof['reason'])
+                raise ExperimentError('Saved proxy proof incomplete: ' + proof['reason'])
+            phase = 'ledger_record'
             proof['ledger_recorded'] = copilot_capability.record(root, proof_context, proof)
         audit['status'] = 'success'
     except (Exception, KeyboardInterrupt) as exc:
@@ -321,17 +358,17 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             audit['sanity_settlement'] = {'reservation': reservation, 'outcome': outcome,
                                           'released': released}
         audit['budget'] = budget.as_dict()
+        if audit['status'] != 'success':
+            audit['message'] = failure_message(audit)
         atomic_write_json(run / 'result.json', audit, mode=0o600)
     return audit
 
 
 def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None,
-               acceptance_failure: bool = False, prove_capability: bool = False,
-               bind_account: bool = False) -> dict:
+               acceptance_failure: bool = False, prove_capability: bool = False) -> dict:
     limits = limits or RetryLimits()
     policy = load_policy(root, profile)
-    if bind_account and not prove_capability:
-        raise ExperimentError('--bind-account requires --prove-capability')
+    print(ACCOUNT_NOTICE, file=sys.stderr, flush=True)
     if prove_capability and (policy['allow_support'] or acceptance_failure):
         raise ExperimentError('Capability proof requires no-support and no failure injection')
     if acceptance_failure and (limits.max_candidates != 2 or limits.max_battles != 2
@@ -343,7 +380,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
     run.mkdir(mode=0o700)
     audit = {'schema': 2, 'experimental': True, 'requested_stage': stage,
              'policy': policy, 'run_dir': str(run), 'status': 'failed', 'attempts': [],
-             'proof_requested': prove_capability, 'account_enrollment_requested': bind_account,
+             'proof_requested': prove_capability, 'account_binding': 'user_managed',
              'authorization': {'max_candidates': limits.max_candidates, 'max_battles': limits.max_battles,
                                'sanity_budget': limits.sanity_budget, 'medicine': 0, 'stone': 0, 'raid': False}}
     if acceptance_failure:
@@ -377,7 +414,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             atomic_write_json(root / 'var/state/operator-box.json', payload, mode=0o600)
             audit['box'] = {'sha256': sha256_bytes(canonical_json(payload)), 'fetched_at': box.fetched_at}
             phase = 'proof_context'
-            proof_context = (copilot_capability.prepare(root, box, canonical, code, enroll=bind_account)
+            proof_context = (copilot_capability.prepare(root, canonical, code)
                              if prove_capability else None)
             phase = 'static_catalog'
             catalog, audit['static_sources'] = fetch_catalog(decode((root / 'var/data/resource/battle_data.json').read_bytes()))
@@ -467,6 +504,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
     finally:
         if budget is not None:
             audit['budget'] = budget.as_dict()
+        if audit['status'] != 'success':
+            audit['message'] = failure_message(audit)
         atomic_write_json(run / 'result.json', audit, mode=0o600)
     return audit
 
@@ -482,9 +521,7 @@ def main(argv=None):
     parser.add_argument('--acceptance-formation-failure', action='store_true',
                         help='NL-8 hardware test only: inject an impossible formation level into candidate A')
     parser.add_argument('--prove-capability', action='store_true',
-                        help='Require account UID and post-battle zero-sanity saved proxy proof')
-    parser.add_argument('--bind-account', action='store_true',
-                        help='Enroll configured account alias against the freshly observed Box UID')
+                        help='Record capability after battle and zero-sanity saved proxy proof')
     args = parser.parse_args(argv)
     try:
         limits = RetryLimits(args.max_candidates, args.max_battles, args.sanity_budget)
@@ -497,11 +534,17 @@ def main(argv=None):
     try:
         result = experiment(args.project_root.resolve(), args.stage, args.profile, limits=limits,
                             acceptance_failure=args.acceptance_formation_failure,
-                            prove_capability=args.prove_capability, bind_account=args.bind_account)
-        print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'failure_phase', 'error')
+                            prove_capability=args.prove_capability)
+        if result['status'] != 'success':
+            print(result.get('message') or failure_message(result), file=sys.stderr)
+        print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'failure_phase', 'error', 'message')
                           if k in result}, ensure_ascii=False))
         return 0 if result['status'] == 'success' else 1
+    except ExperimentError as exc:
+        print('Copilot 运行条件不满足：' + str(exc), file=sys.stderr)
+        return 1
     except Exception:
+        print('配置或运行记录存储不可用，请检查配置、目录权限与可用空间。', file=sys.stderr)
         print('{"status":"failed","error":"Invalid configuration or audit storage unavailable"}', file=sys.stderr)
         return 1
 
