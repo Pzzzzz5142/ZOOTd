@@ -93,20 +93,26 @@ def navigation_tasks(route: dict) -> dict:
                                 'next': find, 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReset']}
         find.insert(find.index('ZootdMapReset'), 'ZootdZoneTab')
-    # Overlapping crops keep small stylized labels separate from card artwork.
-    # Use the word model throughout so unlock hints retain their Chinese text.
-    regions = []
-    for top in (350, 175, 470, 0):
-        for left in (0, 320, 640):
-            name = f'ZootdStageRegion{left}_{top}'
-            regions.append(name)
-            tasks[name] = {'baseTask': 'ZootdStage', 'roi': [left, top, 640, 250]}
+    # Card artwork can prevent the OCR detector from finding an otherwise
+    # legible label. Bypass detection in bounded overlapping label windows.
+    # These are click proposals only: the native detail panel remains mandatory.
+    labels = []
+    width = max(100, min(300, len(code) * 20 + 20))
+    for top in (*range(380, 601, 10), *range(80, 380, 10)):
+        for left in range(0, 1281 - width, 20):
+            name = f'ZootdStageLabel{left}_{top}'
+            labels.append(name)
+            tasks[name] = {
+                'baseTask': 'ZootdStage', 'roi': [left, top, width, 35],
+                'isAscii': True, 'withoutDet': True, 'binThreshold': [0, 255],
+                'useRaw': True, 'maxTimes': 1,
+                'next': ['ZootdStagePanel', 'ZootdMapReset']}
     for task in tasks.values():
         for edge in ('next', 'exceededNext'):
             following = task.get(edge, [])
-            if 'ZootdStage' in following and regions[0] not in following:
+            if 'ZootdStage' in following and labels[0] not in following:
                 index = following.index('ZootdStage') + 1
-                following[index:index] = regions
+                following[index:index] = labels
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)
