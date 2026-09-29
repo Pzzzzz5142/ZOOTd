@@ -172,6 +172,8 @@ def bind_formation(content, result, catalog):
     if result.support_slot:
         assignments[result.support_slot] = result.support_operator
     for i, group in enumerate(content.get('groups', [])):
+        if not group['opers']:
+            continue  # MaaCore ignores empty formation groups.
         slot = f'group:{i}:{group["name"]}'
         selected = [o for o in group['opers'] if catalog.resolve(o['name']) is not None
                     and catalog.resolve(o['name']).id == assignments[slot]]
