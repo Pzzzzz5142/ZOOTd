@@ -107,12 +107,11 @@ def navigation_tasks(route: dict) -> dict:
                 'isAscii': True, 'withoutDet': True, 'binThreshold': [0, 255],
                 'useRaw': True, 'maxTimes': 1,
                 'next': ['ZootdStagePanel', 'ZootdMapReset']}
-    for task in tasks.values():
-        for edge in ('next', 'exceededNext'):
-            following = task.get(edge, [])
-            if 'ZootdStage' in following and labels[0] not in following:
-                index = following.index('ZootdStage') + 1
-                following[index:index] = labels
+    # Only scan after entering a zone or reaching a map-search position;
+    # scanning the activity landing page adds work before its zone button.
+    for following in (find, scan):
+        index = following.index('ZootdStage') + 1
+        following[index:index] = labels
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)
