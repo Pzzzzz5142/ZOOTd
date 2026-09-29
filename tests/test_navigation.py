@@ -148,6 +148,16 @@ class NavigationTests(unittest.TestCase):
         route.update(kind='supplies')
         self.assertEqual(navigation_tasks(route)['ZootdEntry']['baseTask'], 'ResourceStages')
 
+    def test_stage_bands_keep_exact_target_and_panel_confirmation(self):
+        tasks = navigation_tasks(self.catalog().route('DS-1'))
+        for top in (0, 175, 350, 470):
+            name = f'ZootdStageBand{top}'
+            self.assertEqual(tasks[name]['baseTask'], 'ZootdStage')
+            self.assertEqual(tasks[name]['roi'], [0, top, 1280, 250])
+            self.assertIn(name, tasks['ZootdZone']['next'])
+            self.assertIn(name, tasks['ZootdMapReset']['exceededNext'])
+        self.assertEqual(tasks['ZootdStage']['next'][0], 'ZootdStagePanel')
+
     def test_event_lock_texts_follow_game_prerequisite_graph(self):
         tables, installed, tiles = fixture()
         tables['stage_table']['stages']['act1dp_s01']['unlockCondition'] = [{'stageId': 'previous'}]

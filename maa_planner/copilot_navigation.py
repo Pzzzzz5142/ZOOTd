@@ -93,6 +93,19 @@ def navigation_tasks(route: dict) -> dict:
                                 'next': find, 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReset']}
         find.insert(find.index('ZootdMapReset'), 'ZootdZoneTab')
+    # Smaller overlapping bands separate stylized stage labels from nearby
+    # artwork in OCR detection, while retaining full-word lock text checks.
+    bands = []
+    for top in (0, 175, 350, 470):
+        name = f'ZootdStageBand{top}'
+        bands.append(name)
+        tasks[name] = {'baseTask': 'ZootdStage', 'roi': [0, top, 1280, 250]}
+    for task in tasks.values():
+        for edge in ('next', 'exceededNext'):
+            following = task.get(edge, [])
+            if 'ZootdStage' in following and bands[0] not in following:
+                index = following.index('ZootdStage') + 1
+                following[index:index] = bands
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)

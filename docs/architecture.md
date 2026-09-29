@@ -100,4 +100,4 @@ Copilot 作业允许空干员列表和空干员组。与 MaaCore 编队行为一
 
 `navigation_catalog.py` 从同一游戏数据 revision 的 stage、zone、activity、retro 表建立普通难度关卡目录。运行缓存和来源哈希位于 `var/cache/copilot-navigation/`，当期活动与分区窗口每次按当前时间检查；旧活动使用常驻表的 zone，而不是已经过期的复刻 zone。安装的 MAA `stages.json` 仅兼容既有 `_perm` 账本身份，Tile overview 用于核对可执行地图。
 
-`copilot_navigation.py` 按入口类别生成每次运行的 OCR/滑动任务，活动名、分区名、目标编号来自数据，不维护逐关导航配置。地图选关使用保留中文的整词 OCR，避免将“通关某关解锁”的提示截成目标编号；成功证据是本次目标详情页的精确编号；`navigation_cli.py` 提供独立的零战斗验收。操作和限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
+`copilot_navigation.py` 按入口类别生成每次运行的 OCR/滑动任务，活动名、分区名、目标编号来自数据，不维护逐关导航配置。地图选关使用保留中文的整词 OCR，并以重叠水平分区补充全屏识别，避免将“通关某关解锁”的提示截成目标编号；成功证据是本次目标详情页的精确编号；`navigation_cli.py` 提供独立的零战斗验收。操作和限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
