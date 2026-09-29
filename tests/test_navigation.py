@@ -155,6 +155,8 @@ class NavigationTests(unittest.TestCase):
                 for edge in ('next', 'exceededNext', 'onErrorNext'):
                     self.assertLessEqual(len(task.get(edge, [])), 6)
                 self.assertFalse(task.get('withoutDet'))
+            self.assertLessEqual(sum(task.get('maxTimes', 0) for task in tasks.values()
+                                     if task.get('action') == 'Swipe'), 60)
             self.assertEqual(tasks['ZootdZone']['maxTimes'], 1)
             self.assertEqual(tasks['ZootdStagePanel']['next'],
                              ['ZootdStageConfirmed', 'ZootdMapReady'])

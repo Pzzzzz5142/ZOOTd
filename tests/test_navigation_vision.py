@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from maa_planner.navigation_vision import (MAX_OCR_PASSES, MAX_SCANS, MAX_SWIPES,
-                                          MapRecognizer, normalize, preprocess, scan_map, template_path)
+                                          MapRecognizer, normalize, preprocess, resource_file, scan_map, template_path)
 
 
 class VisionTests(unittest.TestCase):
@@ -37,6 +37,7 @@ class VisionTests(unittest.TestCase):
     def scan(self, capture, confirm, proposals):
         with tempfile.TemporaryDirectory() as tmp, patch(
                 'maa_planner.navigation_vision.MapRecognizer') as recognizer:
+            recognizer.return_value.ocr_passes = 0
             recognizer.return_value.proposals.side_effect = proposals
             swipes = []
             result = scan_map(Path(tmp), 'DP-1', Path(tmp) / 'audit', capture=capture,
@@ -72,6 +73,7 @@ class VisionTests(unittest.TestCase):
 
     def test_full_image_ocr_filters_and_refreshes_after_rejected_click(self):
         recognizer = MapRecognizer.__new__(MapRecognizer)
+        recognizer.ocr_passes = 0
         recognizer.code, recognizer.template, recognizer.replacements = 'DP-1', None, []
         box = np.array([[10, 10], [90, 10], [90, 40], [10, 40]], np.float32)
         recognizer.detector = lambda image: (np.array([box] * 4), 0)
@@ -91,3 +93,16 @@ class VisionTests(unittest.TestCase):
             self.assertEqual(len(calls), count + 1)
             self.assertEqual(list(proposals), [])
             self.assertEqual(len(calls), 3)
+            self.assertEqual(recognizer.ocr_passes, 2)
+
+    def test_resource_overlay_precedence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            roots = [Path(tmp) / name for name in ('core', 'resource', 'cache')]
+            for root in roots:
+                root.mkdir()
+                (root / 'model').write_text(root.name)
+            self.assertEqual(resource_file(roots, 'model'), roots[-1] / 'model')
+            (roots[-1] / 'model').unlink()
+            self.assertEqual(resource_file(roots, 'model'), roots[-2] / 'model')
+            with self.assertRaises(FileNotFoundError):
+                resource_file(roots, 'missing')

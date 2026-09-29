@@ -38,20 +38,35 @@ def template_path(resource: Path, code: str):
     return path if path.is_file() else None
 
 
+def resource_file(resources, relative):
+    """Match MaaCore's load order: the last installed overlay wins."""
+    for resource in reversed(resources):
+        path = resource / relative
+        if path.is_file():
+            return path
+    raise FileNotFoundError(relative)
+
+
 class MapRecognizer:
     def __init__(self, resource: Path, code: str):
         from rapidocr_onnxruntime.ch_ppocr_v3_det import TextDetector
         from rapidocr_onnxruntime.ch_ppocr_v3_rec import TextRecognizer
         self.code = code
-        self.template = template_path(resource, code)
-        tasks = json.loads((resource / 'tasks/tasks.json').read_text())
-        self.replacements = tasks['ClickStageName']['ocrReplace']
-        models = resource / 'PaddleCharOCR'
+        self.ocr_passes = 0
+        resources = [resource] if isinstance(resource, Path) else resource
+        self.template = next((path for root in reversed(resources)
+                              if (path := template_path(root, code))), None)
+        task = {}
+        for root in resources:
+            path = root / 'tasks/tasks.json'
+            if path.is_file():
+                task.update(json.loads(path.read_text()).get('ClickStageName', {}))
+        self.replacements = task['ocrReplace']
         # No bundled RapidOCR models or network downloads are used.
         common = {'use_cuda': False, 'intra_op_num_threads': 2, 'inter_op_num_threads': 2}
-        self.detector = TextDetector({**common, 'model_path': str(models / 'det/inference.onnx')})
-        self.recognizer = TextRecognizer({**common, 'model_path': str(models / 'rec/inference.onnx'),
-                                         'keys_path': str(models / 'rec/keys.txt'),
+        self.detector = TextDetector({**common, 'model_path': str(resource_file(resources, 'PaddleCharOCR/det/inference.onnx'))})
+        self.recognizer = TextRecognizer({**common, 'model_path': str(resource_file(resources, 'PaddleCharOCR/rec/inference.onnx')),
+                                         'keys_path': str(resource_file(resources, 'PaddleCharOCR/rec/keys.txt')),
                                          'rec_img_shape': [3, 48, 320], 'rec_batch_num': 6})
 
     def proposals(self, image, evidence_dir, refresh=None):
@@ -71,6 +86,7 @@ class MapRecognizer:
             cv2.imwrite(str(evidence_dir / (branch + '-source.png')), image)
             processed = preprocess(image, dark=dark)
             cv2.imwrite(str(evidence_dir / (branch + '.png')), processed)
+            self.ocr_passes += 1
             boxes, _ = self.detector(processed)
             if boxes is None or not len(boxes):
                 continue
@@ -133,5 +149,6 @@ def scan_map(resource, code, directory, *, capture, click_and_confirm, swipe):
                 audit['swipes'] += 1
         return False
     finally:
+        audit['ocr_passes'] = recognizer.ocr_passes
         audit['elapsed_seconds'] = round(time.monotonic() - started, 3)
         (directory / 'result.json').write_text(json.dumps(audit, ensure_ascii=False, indent=2))

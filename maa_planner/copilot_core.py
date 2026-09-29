@@ -157,7 +157,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 raise RuntimeError('MaaCore operation failed')
 
         check(lib.AsstSetUserDir(str(run).encode()))
-        for resource in ('var/data', 'var/data/MaaResource', 'var/data/cache'):
+        resources = ('var/data', 'var/data/MaaResource', 'var/data/cache')
+        for resource in resources:
             check(lib.AsstLoadResource(str(root / resource).encode()))
         check(lib.AsstLoadResource(str(run / 'navigation').encode()))
         handle = lib.AsstCreateEx(callback, None)
@@ -231,7 +232,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     progress['phase'] = 'stage_locked'
                     raise RuntimeError('Stage prerequisite is locked')
                 if not map_observed.is_set():
-                    if not scan_map(root / 'var/data/resource', route['code'], run / f'map-vision-{navigation_attempt}',
+                    if not scan_map([root / path / 'resource' for path in resources], route['code'],
+                                    run / f'map-vision-{navigation_attempt}',
                                     capture=capture, click_and_confirm=click_and_confirm, swipe=swipe):
                         progress['phase'] = 'stage_not_found_on_map'
                         raise RuntimeError('Stage not found on map')
