@@ -217,8 +217,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     return map_observed.is_set()
 
                 def swipe(index):
-                    # Reuse installed MAA swipe geometry. Reset left once, then
-                    # scan right; stop early when consecutive images do not move.
+                    # Reuse installed MAA swipe geometry. Move right once, then
+                    # scan left; stop early when consecutive images do not move.
                     base = 'ChapterSwipeToTheRight' if index == 0 else 'StageNavigationSlowlySwipeLeft'
                     overlay({'ZootdVisionSwipe': {'baseTask': base, 'next': [],
                                                  'maxTimes': 1, 'exceededNext': []}})

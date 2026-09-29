@@ -131,8 +131,7 @@ class NavigationTests(unittest.TestCase):
         route = self.catalog().route('NL-9')
         tasks = navigation_tasks(route)
         for name, base in [('ZootdStage', 'ClickStageName'),
-                           ('ZootdStagePanel', 'ClickedCorrectStageOrSwipe'),
-                           ('ZootdMapScan', 'StageNavigationSlowlySwipeLeft')]:
+                           ('ZootdStagePanel', 'ClickedCorrectStageOrSwipe')]:
             self.assertEqual(tasks[name]['baseTask'], base)
         self.assertEqual(tasks['ZootdStagePanel']['action'], 'DoNothing')
         self.assertFalse(tasks['ZootdStage']['isAscii'])
@@ -140,12 +139,24 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(tasks['StartUp@ReturnButtons']['next'][0], 'StartUp@ReturnButton')
         self.assertEqual(tasks['ZootdStartUpTexturedReturn']['template'], 'Return.png')
         self.assertEqual(tasks['ZootdStartUpTexturedReturn']['templThreshold'], 0.7)
-        self.assertEqual(tasks['ZootdMapScan']['exceededNext'], [])
         route.update(kind='main', chapter=16, select_normal=True)
         self.assertEqual(navigation_tasks(route)['ZootdEntry']['sub'],
                          ['Episode16', 'ChapterDifficultyNormal'])
         route.update(kind='supplies')
         self.assertEqual(navigation_tasks(route)['ZootdEntry']['baseTask'], 'ResourceStages')
+
+    def test_resource_entry_search_reuses_native_geometry_in_both_directions(self):
+        route = self.catalog().route('DS-1')
+        route.update(kind='supplies')
+        tasks = navigation_tasks(route)
+        self.assertEqual(tasks['ZootdEntry']['next'], ['ZootdZone', 'ZootdResourceLeft'])
+        self.assertEqual(tasks['ZootdResourceLeft']['baseTask'], 'SwipeToTheLeft')
+        self.assertEqual(tasks['ZootdResourceRight']['baseTask'], 'SwipeToTheRight')
+        self.assertLessEqual(sum(tasks[name]['maxTimes'] for name in
+                                 ('ZootdResourceLeft', 'ZootdResourceRight')), 9)
+        self.assertEqual(tasks['ZootdResourceLeft']['exceededNext'],
+                         ['ZootdZone', 'ZootdResourceRight'])
+        self.assertEqual(tasks['ZootdResourceRight']['exceededNext'], [])
 
     def test_navigation_graph_has_bounded_fanout_and_no_coordinate_scan(self):
         for code in ('NL-9', 'MN-EX-7', 'DS-1', 'XX-3'):
