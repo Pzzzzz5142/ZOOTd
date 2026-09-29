@@ -27,3 +27,13 @@
 该监督器的真实合成异常探针先发现 Codex 结构化输出不接受 `uniqueItems`，失败 probe 被保留；把唯一性改为 Python 二次校验后，下一次真实模型探针成功返回 `safe_to_retry_whole_run=false`。随后在 commit `3249301` 的 clean 工作树上完成两轮 headless 验收：Award-only 账本包含 runtime、device、Award、cleanup 四个 `succeeded`，日志只有 StartUp、Award 和总链完成；完整链路的九个阶段依次为 runtime/device/Depot/daily/source `succeeded`、剿灭 `policy-resolved(weekly-state-unknown)`、farming/Award/cleanup `succeeded`。Depot 仍为 79 项；daily 为 2/2 Infrast、4 Dorm、2 Recruit、1 Mall、0 Training，Core 对四间 Dorm 均记录 `m_notstationed_filter_enabled: 1`；活动候选没有新鲜三星证明时没有猜成功，AP-5 preflight 失败后由 1-7 三次三星回退取得实际掉落证明；最终 Award 无任何基建、公招、商店、Depot 或 Fight marker。两轮最终事件均为 `llm.invoked=false`，证明正常强证据路径没有模型开销；cleanup 后 Waydroid 为 STOPPED，schema-3 readiness 仍有效。
 
 2026-08-28 的 07:30 run 在 Waydroid/ADB/分辨率和通用网络探针均通过后，游戏长期停在“正在获取更新…”，随后 Android 对 `com.hypergryph.arknights/com.u8.sdk.U8UnityContext` 报 input-dispatch ANR。Depot 没有完成，后续阶段因此都未开始。07:36 的 LLM 实际已经被调用且成功返回诊断，但当时 adapter 被固定为 read-only classifier，prompt 和 sandbox 都明确禁止执行命令，所以它只能写 postmortem，无法点 `Wait`、检查游戏实际 CDN DNS、重启 Waydroid或重跑。这个事故直接促成操作型恢复：同类故障现在应按 scope FAQ 修到一轮新 full run 成功，而不是在第一次诊断后退出。
+
+## 2026-09-29：游戏数据导航与零战斗验收
+
+移除逐关 `navigation.NL-8` 白名单。关卡目录改用同一 revision 的游戏 stage/zone/activity/retro 数据，按入口和分区生成任务，复用 MAA 原生选关、详情核验与滑动逻辑；本机配置、数据快照和运行证据均保存在忽略的 `var/`。这是当时的验收记录，当前命令见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
+
+- NL-9：`20260928-224229-08174eb2372c`，到达并确认 NL-9 详情页，未提交战斗任务。
+- MN-EX-7：`20260928-233600-2854613a4e5b`，识别活动标题、切换 EX 分区、滑动选关并确认目标详情页，未提交战斗任务。两次成功均核对了当次有序 Custom 链与精确目标 OCR，失败尝试记录保留。
+- DS-1：`20260928-225127-9b2c2062b649`，进入当期“逐影集趣”，识别“通关DP-1解锁”，返回 `stage_locked`。游戏数据中的目标前置链要求推进至 DP-4，因此未完成 DS-1 详情页验收，也没有自动战斗解锁。
+
+活动艺术字、只显示 EX 图标的分区入口，以及带纹理背景的返回箭头已纳入通用处理。两个目标通过不代表所有特殊活动布局都完成实机验收；当期活动的开放窗口、游戏解锁状态和导航结果分别校验。

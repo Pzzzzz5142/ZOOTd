@@ -32,15 +32,16 @@ def home_recognized(message, value):
             and details.get('result', {}).get('template') == 'SwitchTheme@ToggleSettingsMenu.png')
 
 
-def map_recognized(message, value):
-    """A completed scan is not proof that the archive map was reached."""
+def map_recognized(message, value, code):
+    """Require the requested stage in the detail panel, not a map prefix."""
     details = value.get('details', {})
     result = details.get('result', {})
     return (message == 20002 and value.get('taskchain') == 'Custom'
             and value.get('subtask') == 'ProcessTask'
-            and details.get('task') == 'ZootdCopilotMap'
+            and details.get('task') == 'ZootdStageConfirmed'
             and details.get('algorithm') == 'OcrDetect'
-            and isinstance(result.get('text'), str) and 'NL-' in result['text'])
+            and details.get('action') == 'DoNothing'
+            and result.get('text') in (code, code.replace('-', '')))
 
 
 def callbacks_are_fresh(events, *, run_id, started_ns, finished_ns):
@@ -114,6 +115,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
         fn = getattr(lib, name)
         fn.argtypes, fn.restype = args, result
 
+    route = json.loads((run / 'navigation.json').read_bytes())
     proof_context = None
     if (run / 'proof-context.json').exists():
         proof_context = json.loads((run / 'proof-context.json').read_bytes())
@@ -123,6 +125,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
     sequence = 0
     map_observed = threading.Event()
     home_observed = threading.Event()
+    locked_observed = threading.Event()
     with (run / 'callbacks.jsonl').open('x') as output:
         @callback_type
         def callback(msg, raw, _):
@@ -137,7 +140,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     output.flush()
                     if home_recognized(msg, value):
                         home_observed.set()
-                    if map_recognized(msg, value):
+                    if (msg == 20002 and value.get('details', {}).get('task') == 'ZootdNavigationLocked'
+                            and value.get('details', {}).get('result', {}).get('text') in route.get('locked_texts', [])):
+                        locked_observed.set()
+                    if map_recognized(msg, value, route['code']):
                         map_observed.set()
                     if msg in (0, 1, 10000, 10002, 10004):
                         chains.append((msg, value.get('taskid')))
@@ -181,8 +187,14 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
             check(home_observed.is_set())
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
-            run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
+            run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
+            if locked_observed.is_set():
+                progress['phase'] = 'stage_locked'
+                raise RuntimeError('Stage prerequisite is locked')
             check(map_observed.is_set())
+            if route.get('navigation_only'):
+                progress['phase'] = 'navigation_complete'
+                return 0
             progress['phase'] = 'execution'
             params = (run / 'params.json').read_bytes()
             task_id = lib.AsstAppendTask(handle, b'Copilot', params)
@@ -207,13 +219,21 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
                 check(home_observed.is_set())
                 run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
-                run_task(b'Custom', b'{"task_names":["ZootdCopilotArchive"]}')
+                run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
                 check(map_observed.is_set())
                 run_task(b'Custom', b'{"task_names":["ZootdCopilotProofStage"]}')
                 run_task(b'Custom', b'{"task_names":["StageQueue@CheckPrts"]}')
             return 0
         finally:
             lib.AsstStop(handle)
+            try:
+                shot = subprocess.run(['/usr/bin/adb', '-s', address, 'exec-out', 'screencap', '-p'],
+                                      capture_output=True, timeout=10, check=True).stdout
+                offset = shot.find(b'\x89PNG\r\n\x1a\n')
+                if offset >= 0:
+                    (run / 'navigation-final.png').write_bytes(shot[offset:])
+            except (OSError, subprocess.SubprocessError):
+                pass
             lib.AsstDestroy(handle)
 
 

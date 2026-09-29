@@ -21,10 +21,11 @@ from .copilot_core import callbacks_are_fresh, terminal_result
 from .copilot_proof import battle_proof
 from . import copilot_capability
 from .copilot_retry import RetryLimits, RetryBudget, classify_failure, failure
-from .copilot_navigation import archive_tasks
+from .copilot_navigation import navigation_tasks
+from .navigation_catalog import load_navigation
 from .copilot_matcher import match_candidate, rank_candidates
 from .copilot_static import fetch_catalog
-from .prts import PrtsError, CopilotCandidate, PrtsCopilotClient, StageCatalog, decode, operators
+from .prts import PrtsError, CopilotCandidate, PrtsCopilotClient, decode, operators
 from .runtime_receipt import validate_runtime_receipt
 from .skland import SklandBoxProvider, SklandClient
 from .util import atomic_write_json, canonical_json, sha256_bytes
@@ -47,6 +48,8 @@ def failure_message(result):
         return '能力账本登记失败；请检查活动有效期、本地配置、人工隔离状态及账本文件权限。'
     if attempt.get('worker_phase') == 'proxy_proof' or phase == 'capability_proof':
         return '通关或已保存代理的证明未完成；请检查战斗结果、客户端代理开关及本次运行记录。'
+    if category == 'stage_locked':
+        return '目标关卡的前置尚未解锁；请先完成游戏要求的前置关卡。'
     if category == 'navigation_failure':
         return '游戏启动或关卡导航失败；请检查游戏登录、更新/公告弹窗及关卡入口。'
     if category == 'adb_failure' or phase == 'device':
@@ -74,7 +77,10 @@ def command(args, **kwargs):
 
 
 def load_policy(root: Path, profile: str | None) -> dict:
-    config = tomllib.loads((root / 'config/copilot.toml').read_text())
+    path = root / 'var/config/copilot.toml'
+    config = (tomllib.loads(path.read_text()) if path.exists() else {
+        'default_profile': 'no-support', 'profiles': {
+            'no-support': {'allow_support': False}, 'allow-support': {'allow_support': True}}})
     profile = profile or config['default_profile']
     policy = config['profiles'][profile]
     if set(policy) != {'allow_support'} or type(policy['allow_support']) is not bool:
@@ -261,7 +267,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         atomic_write_json(run / 'params.json', params, mode=0o600)
         overlay = run / 'navigation/resource/tasks'
         overlay.mkdir(parents=True)
-        tasks = archive_tasks(route['activity'], route['map_marker'])
+        tasks = navigation_tasks(route)
+        atomic_write_json(run / 'navigation.json', route, mode=0o600)
         if proof_context:
             tasks.update(copilot_capability.proof_tasks(code))
             atomic_write_json(run / 'proof-context.json', proof_context, mode=0o600)
@@ -337,7 +344,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         audit['status'] = 'success'
     except (Exception, KeyboardInterrupt) as exc:
         audit['failure_phase'] = phase
-        audit['error'] = str(exc) if isinstance(exc, ExperimentError) else type(exc).__name__
+        audit['error'] = (str(exc) if isinstance(exc, ExperimentError) else
+                          exc.category if isinstance(exc, PrtsError) else type(exc).__name__)
         if 'failure' not in audit:
             if isinstance(exc, CandidateRejected) or (isinstance(exc, PrtsError) and exc.category == 'copilot_not_found'):
                 audit['failure'] = failure('copilot_schema_failure', retryable=True)
@@ -388,27 +396,18 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             audit['git_head'] = command(['git', '-C', str(root), 'rev-parse', 'HEAD']).strip()
             audit['runtime'] = validate_runtime_receipt(root)
             audit['runtime_receipt_sha256'] = sha256_bytes((root / 'var/state/runtime/maa-resource.json').read_bytes())
-            stages = StageCatalog.load(root / 'var/data/resource/stages.json')
+            stages = load_navigation(root)
             canonical = stages.resolve(stage)
+            route = stages.route(canonical, require_tiles=True)
             audit['stage'] = canonical
-            rows = decode((root / 'var/data/resource/stages.json').read_bytes())
-            codes = {r['code'] for r in rows if r['stageId'] == canonical}
-            if len(codes) != 1:
-                raise ExperimentError('Ambiguous navigation code')
-            code = next(iter(codes))
+            code = route['code']
             if acceptance_failure and code != 'NL-8':
                 raise ExperimentError('Acceptance check is restricted to NL-8')
-            route = tomllib.loads((root / 'config/copilot.toml').read_text()).get('navigation', {}).get(code)
-            if (not isinstance(route, dict) or set(route) != {'activity', 'map_marker'}
-                    or any(not isinstance(v, str) or not v for v in route.values())):
-                raise ExperimentError('No verified automatic navigation route for this stage')
             audit['navigation'] = route
-            costs = [r.get('apCost') for r in rows if r['stageId'] == canonical]
-            if not costs or any(type(c) is not int or c != costs[0] for c in costs):
-                raise ExperimentError('Missing or ambiguous stage sanity cost')
-            budget = RetryBudget(limits, costs[0])
+            audit['navigation_sources'] = stages.evidence
+            budget = RetryBudget(limits, route['ap_cost'])
             audit['authorization']['sanity_budget'] = budget.sanity_limit
-            audit['stage_catalog_sha256'] = sha256_bytes((root / 'var/data/resource/stages.json').read_bytes())
+            audit['stage_catalog_sha256'] = stages.evidence['sha256']
             phase = 'box'
             client = SklandClient()
             credentials = client.authenticate(**load_secret(root))
@@ -502,7 +501,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
     except (Exception, KeyboardInterrupt) as exc:
         audit['status'] = 'failed'
         audit['failure_phase'] = phase
-        audit['error'] = str(exc) if isinstance(exc, ExperimentError) else type(exc).__name__
+        audit['error'] = (str(exc) if isinstance(exc, ExperimentError) else
+                          exc.category if isinstance(exc, PrtsError) else type(exc).__name__)
     finally:
         if budget is not None:
             audit['budget'] = budget.as_dict()

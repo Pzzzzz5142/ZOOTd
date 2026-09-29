@@ -90,16 +90,16 @@ class CopilotRunTests(unittest.TestCase):
 
     def test_archive_scan_completion_does_not_prove_map(self):
         event = {'taskchain': 'Custom', 'subtask': 'ProcessTask',
-                 'details': {'task': 'ZootdCopilotMap', 'algorithm': 'OcrDetect',
+                 'details': {'task': 'ZootdStageConfirmed', 'algorithm': 'OcrDetect', 'action': 'DoNothing',
                              'result': {'text': 'NL-8'}}}
-        self.assertTrue(map_recognized(20002, event))
-        self.assertFalse(map_recognized(10002, event))
-        self.assertFalse(map_recognized(20001, event))
-        for task, text in [('ZootdCopilotScan', 'NL-8'), ('ZootdCopilotMap', '默认进度')]:
+        self.assertTrue(map_recognized(20002, event, 'NL-8'))
+        self.assertFalse(map_recognized(10002, event, 'NL-8'))
+        self.assertFalse(map_recognized(20001, event, 'NL-8'))
+        for task, text in [('ZootdCopilotScan', 'NL-8'), ('ZootdStageConfirmed', '默认进度')]:
             changed = copy.deepcopy(event)
             changed['details']['task'] = task
             changed['details']['result']['text'] = text
-            self.assertFalse(map_recognized(20002, changed))
+            self.assertFalse(map_recognized(20002, changed, 'NL-8'))
 
     def setUp(self):
         self.catalog = OperatorCatalog([OperatorIdentity(n, n, {1: 's' + n}) for n in ('A', 'B', 'C')])
@@ -122,6 +122,16 @@ class CopilotRunTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         self.assertFalse(load_policy(root, None)['allow_support'])
         self.assertTrue(load_policy(root, 'allow-support')['allow_support'])
+
+    def test_local_profile_override_is_not_a_navigation_whitelist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / 'var/config/copilot.toml'
+            path.parent.mkdir(parents=True)
+            path.write_text('default_profile="allow-support"\n'
+                            '[profiles.allow-support]\nallow_support=true\n')
+            self.assertTrue(load_policy(root, None)['allow_support'])
+            self.assertFalse((root / 'config/copilot.toml').exists())
 
     def test_global_assignment_is_bound_into_executable_groups(self):
         c = candidate()
@@ -252,8 +262,6 @@ class CopilotRunTests(unittest.TestCase):
             with self.subTest(drift=drift, proof_mode=proof_mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
                 root = Path(tmp)
                 (root / 'config').mkdir()
-                (root / 'config/copilot.toml').write_text(
-                    '[navigation.NL-8]\nactivity="长夜临光"\nmap_marker="NL-"\n')
                 for name, payload in (
                     ('var/state/runtime/maa-resource.json', {}),
                     ('var/data/resource/stages.json', [{'code': 'NL-8', 'stageId': 'stage', 'apCost': 18}]),
@@ -273,6 +281,8 @@ class CopilotRunTests(unittest.TestCase):
                     mock('copilot_capability.load_config', return_value=type('Config', (), {
                         'client_type': 'Official', 'account': proof_context['account']})())
                 mock('command', side_effect=['', 'fixture-head'])
+                from tests.test_navigation import pipeline_catalog
+                mock('load_navigation', side_effect=pipeline_catalog)
                 mock('validate_runtime_receipt', return_value='fixture')
                 mock('load_secret', return_value={})
                 mock('SklandClient')

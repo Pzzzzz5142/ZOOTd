@@ -288,6 +288,8 @@ Commands:
                         Experimental: query lightweight PRTS candidates
   copilot-get ID --stage STAGE
                         Experimental: retrieve one full PRTS copilot (no game launch)
+  navigate STAGE [--plan] [--refresh]
+                        Navigate to the stage detail panel without starting battle
   copilot-run STAGE [--profile no-support|allow-support]
                         Experimental: defaults to one battle; no medicine or stones
                         Retry: --max-candidates N --max-battles N --sanity-budget N
@@ -327,6 +329,11 @@ case "${command_name}" in
     raw-run)
         shift
         run_raw_task "$@"
+        ;;
+    navigate)
+        shift
+        export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec python3 -m maa_planner.navigation_cli --project-root "${project_root}" "$@"
         ;;
     copilot-run)
         shift
