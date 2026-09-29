@@ -110,6 +110,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
         'AsstRunning': ([C.c_void_p], C.c_uint8),
         'AsstStop': ([C.c_void_p], C.c_uint8),
         'AsstDestroy': ([C.c_void_p], None),
+        'AsstAsyncScreencap': ([C.c_void_p, C.c_uint8], C.c_int32),
+        'AsstGetImage': ([C.c_void_p, C.c_void_p, C.c_uint64], C.c_uint64),
     }
     for name, (args, result) in signatures.items():
         fn = getattr(lib, name)
@@ -155,7 +157,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 raise RuntimeError('MaaCore operation failed')
 
         check(lib.AsstSetUserDir(str(run).encode()))
-        for resource in ('var/data', 'var/data/MaaResource', 'var/data/cache'):
+        resources = ('var/data', 'var/data/MaaResource', 'var/data/cache')
+        for resource in resources:
             check(lib.AsstLoadResource(str(root / resource).encode()))
         check(lib.AsstLoadResource(str(run / 'navigation').encode()))
         handle = lib.AsstCreateEx(callback, None)
@@ -179,6 +182,63 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 with mutex:
                     check((10002, task) in chains and not any(m in (0, 1, 10000, 10004) for m, _ in chains))
 
+            navigation_attempt = 0
+
+            def navigate():
+                nonlocal navigation_attempt
+                navigation_attempt += 1
+                from .navigation_vision import scan_map
+                import cv2
+                import numpy as np
+
+                def overlay(tasks):
+                    directory = run / 'navigation-vision-overlay/resource/tasks'
+                    directory.mkdir(parents=True, exist_ok=True)
+                    (directory / 'tasks.json').write_text(json.dumps(tasks))
+                    check(lib.AsstLoadResource(str(directory.parent.parent).encode()))
+
+                def capture():
+                    check(lib.AsstAsyncScreencap(handle, True))
+                    buffer = C.create_string_buffer(8 * 1024 * 1024)
+                    size = lib.AsstGetImage(handle, buffer, len(buffer))
+                    check(0 < size <= len(buffer))
+                    image = cv2.imdecode(np.frombuffer(buffer.raw[:size], dtype=np.uint8), cv2.IMREAD_COLOR)
+                    check(image is not None and image.shape[:2] == (720, 1280))
+                    return image
+
+                def click_and_confirm(rect):
+                    map_observed.clear()
+                    overlay({
+                        'ZootdNavigate': {'algorithm': 'JustReturn', 'next': ['ZootdVisionClick']},
+                        'ZootdVisionClick': {'algorithm': 'JustReturn', 'action': 'ClickRect',
+                                            'specificRect': rect, 'postDelay': 700,
+                                            'next': ['ZootdStagePanel', 'ZootdMapReady']}})
+                    run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
+                    return map_observed.is_set()
+
+                def swipe(index):
+                    # Reuse installed MAA swipe geometry. Move right once, then
+                    # scan left; stop early when consecutive images do not move.
+                    base = 'ChapterSwipeToTheRight' if index == 0 else 'StageNavigationSlowlySwipeLeft'
+                    overlay({'ZootdVisionSwipe': {'baseTask': base, 'next': [],
+                                                 'maxTimes': 1, 'exceededNext': []}})
+                    run_task(b'Custom', b'{"task_names":["ZootdVisionSwipe"]}')
+
+                map_observed.clear()
+                locked_observed.clear()
+                check(lib.AsstLoadResource(str(run / 'navigation').encode()))
+                run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
+                if locked_observed.is_set():
+                    progress['phase'] = 'stage_locked'
+                    raise RuntimeError('Stage prerequisite is locked')
+                if not map_observed.is_set():
+                    if not scan_map([root / path / 'resource' for path in resources], route['code'],
+                                    run / f'map-vision-{navigation_attempt}',
+                                    capture=capture, click_and_confirm=click_and_confirm, swipe=swipe):
+                        progress['phase'] = 'stage_not_found_on_map'
+                        raise RuntimeError('Stage not found on map')
+                check(map_observed.is_set())
+
             # Separate task starts prevent a failed navigation from proceeding
             # into Copilot. These tasks have no battle or refill actions.
             progress['phase'] = 'navigation'
@@ -187,11 +247,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
             check(home_observed.is_set())
             run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
-            run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
-            if locked_observed.is_set():
-                progress['phase'] = 'stage_locked'
-                raise RuntimeError('Stage prerequisite is locked')
-            check(map_observed.is_set())
+            navigate()
             if route.get('navigation_only'):
                 progress['phase'] = 'navigation_complete'
                 return 0
@@ -219,8 +275,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
                 check(home_observed.is_set())
                 run_task(b'Custom', b'{"task_names":["Terminal-Entry"]}')
-                run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
-                check(map_observed.is_set())
+                navigate()
                 run_task(b'Custom', b'{"task_names":["ZootdCopilotProofStage"]}')
                 run_task(b'Custom', b'{"task_names":["StageQueue@CheckPrts"]}')
             return 0

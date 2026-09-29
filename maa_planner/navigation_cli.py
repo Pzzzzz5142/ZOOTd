@@ -47,6 +47,7 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
     run.mkdir(parents=True, mode=0o700)
     audit = {'status': 'failed', 'requested_stage': stage, 'run_dir': str(run),
              'consumes_sanity': False}
+    started = time.monotonic()
     try:
         with device_lock(root):
             catalog = load_navigation(root, refresh=refresh)
@@ -77,8 +78,10 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
                     and worker.get('phase') == 'navigation_complete'
                     and callbacks_are_fresh(events, run_id=run.name, started_ns=start, finished_ns=end)):
                 audit['status'] = 'success'
+                audit['evidence_type'] = 'fresh_detail_ocr_completed_custom_chain'
             else:
-                audit['category'] = 'stage_locked' if worker.get('phase') == 'stage_locked' else 'navigation_failure'
+                audit['category'] = (worker['phase'] if worker.get('phase') in
+                                     {'stage_locked', 'stage_not_found_on_map'} else 'navigation_failure')
                 audit['error'] = ('Stage prerequisite is locked.' if audit['category'] == 'stage_locked' else
                                   'Target detail panel was not proven; inspect this run’s callbacks.')
     except PrtsError as exc:
@@ -86,6 +89,12 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
     except (Exception, KeyboardInterrupt) as exc:
         audit['error'] = type(exc).__name__
     finally:
+        audit['elapsed_seconds'] = round(time.monotonic() - started, 3)
+        vision = run / 'map-vision-1/result.json'
+        if vision.exists():
+            audit['map_search'] = json.loads(vision.read_text())
+        elif audit['status'] == 'success':
+            audit['map_search'] = {'branch': 'maa_task_graph'}
         atomic_write_json(run / 'result.json', audit, mode=0o600)
     return audit
 

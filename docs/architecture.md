@@ -94,10 +94,16 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 技能使用 canonical ID，专精、模组等级和解锁状态保留未知值；名字、技能序号与模组编号由 matcher 调用方提供明确的静态数据映射。获取时间不意味着远端练度与客户端实时一致，静态匹配也不等于通关证明。Box 模块没有游戏执行能力；独立 `copilot_matcher.py` 接受 Box、候选和显式静态身份映射，离线完成全局位置分配、四档分类与稳定排序，缺少映射或数据时保留 unknown；独立 `prts.py` / `prts_cli.py` 只提供显式 PRTS 候选查询与单份完整作业获取，以游戏关卡目录和安装的地图身份进行两次复核。daily、planner、timer 与恢复 controller 均不调用这些实验模块。独立 `copilot_run.py` 在显式命令下串联 Box、静态身份表、匹配与有限候选重试，单轮复用 Box 和候选快照；`copilot_retry.py` 只允许明确候选失败换候选，未知或系统失败停止，每次执行前预留完整关卡费用，仅在新鲜证据确认未开战或实际战败后释放理智预留，执行次数不返还；`copilot_core.py` 以独立 MaaCore 子进程记录结构化回调，只有当次有序终态可记执行成功。`copilot_proof.py` 校验新鲜三星观察；显式证明模式由 `copilot_capability.py` 验证活动作用域，并用战后零理智关卡/代理证据经现有账本锁幂等登记。账号一致性由用户维护，运行前提示，使用配置的 account 别名且标记 `account_binding=user_managed`，不读取游戏 UID 或维护账号绑定文件。战斗或代理证明缺失不登记，不解除人工隔离，后续普通 Fight 仍须客户端 preflight。实验必须由用户显式触发，详见 [路线图](copilot/README.md)，登录与文件权限见[运维手册](operations.md#森空岛登录与-box-同步experimental)。
 
-Copilot 作业允许空干员列表和空干员组。与 MaaCore 编队行为一致，空组（含重名空组）保留在候选快照和执行作业中，但不参与干员匹配、组名重复检查或固定编队分配；非空组仍执行原有校验。
+Copilot 作业允许空干员列表和空干员组。与 MaaCore 编队行为一致，空组（含重名空组）保留在候选快照和执行作业中，但不参与干员匹配、组名重复检查或固定编队分配；非空组仍执行原有校验。完整作业允许 `actions: []`，由 MaaCore 启动战斗后等待结束；缺失或非数组的动作列表仍拒绝，空动作不降低战斗终态与通关证据要求。
 
 ## Copilot 关卡目录与导航
 
 `navigation_catalog.py` 从同一游戏数据 revision 的 stage、zone、activity、retro 表建立普通难度关卡目录。运行缓存和来源哈希位于 `var/cache/copilot-navigation/`，当期活动与分区窗口每次按当前时间检查；旧活动使用常驻表的 zone，而不是已经过期的复刻 zone。安装的 MAA `stages.json` 仅兼容既有 `_perm` 账本身份，Tile overview 用于核对可执行地图。
 
-`copilot_navigation.py` 按入口类别生成每次运行的 OCR/滑动任务，活动名、分区名、目标编号来自数据，不维护逐关导航配置。成功证据是本次目标详情页的精确编号；`navigation_cli.py` 提供独立的零战斗验收。操作和限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
+`copilot_navigation.py` 按入口类别生成每次运行的 OCR/滑动任务，活动名、分区名、目标编号来自数据，不维护逐关导航配置。地图选关先使用 MAA 的 `ClickStageName`；失败后由 `navigation_vision.py` 依次读取上游 `StageNavigation/SideStory/<前缀>/<编号>.png` 模板、执行上游 `MultiCopilotTaskPlugin::find_stage` 的白字 HSV 预处理，再对反色图执行相同处理以覆盖浅色卡片上的深色编号。不新增逐关模板，不修改 live runtime；使用当前 runtime 的 PaddleCharOCR 模型和 ClickStageName 替换规则，当前发布版 MaaCore v6.18.0 没有独立的地图 OCR API，因此 RapidOCR 仅提供推理调用。资源关列表保留横向位置时，使用原生滑动任务双向搜索数据中的分区名，入口最多滑动 9 次。
+
+扫描每幅图最多两次全图检测及批量文字识别，不生成固定坐标窗口。单次扫描最多提出一个模板候选和每种字色各一个 OCR 候选，OCR 要求完整编号匹配、置信度不低于 0.5；每次候选之后重新截图。最多扫描 7 幅图、滑动 6 次，连续两次滑动后缩小灰度图的平均差异低于 3 时提前报告 `stage_not_found_on_map`，具体静止原因保存在识别记录。地图文字或模板只用于提出点击位置；成功仍要求目标详情页编号 OCR、同一 Custom 链完成、最终任务列表及本次时间边界内的新鲜回调。零战斗模式和作业执行复用同一证据门。
+
+有实机理由的偏离：普通地图 OCR 使用 `isAscii=false`，防止把“通关 DP-1 解锁”剥成目标编号；锁定提示从游戏前置条件和活动提示表收集。深色字分支来自 DP-1 浅色卡片实机截图：白字掩码无命中，反色后能识别编号。这些证据不证明入口 ROI、EX tab 或所有活动地图均通用。离线测试限制生成任务数、候选列表、地图 OCR 和滑动预算，并拒绝未通过详情页确认的候选；跨入口类别的实机覆盖另行记录，不能以 fixture 代替。
+
+`navigation_cli.py` 提供独立的零战斗验收。操作和限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。

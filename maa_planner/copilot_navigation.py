@@ -15,8 +15,7 @@ def navigation_tasks(route: dict) -> dict:
                 'rectMove': end, 'specialParams': [450], 'postDelay': 400,
                 'maxTimes': limit, 'next': next_tasks, 'exceededNext': exceeded}
 
-    find = ['ZootdStage', 'ZootdZone', 'ZootdMapReset']
-    scan = ['ZootdStage', 'ZootdMapScan']
+    find = ['ZootdStage', 'ZootdZone', 'ZootdMapReady']
     labels = route.get('activity_labels', [route['activity']])
     title_ocr = {'fullMatch': False, 'ocrReplace': [[r'[\s·•・.\-]+', ''], [r'^复刻[:：]?|[:：]?复刻$', '']]}
     tasks = {
@@ -24,23 +23,22 @@ def navigation_tasks(route: dict) -> dict:
         # Mirror StageNavigationTask::swipe_and_find_stage using installed
         # MAA base tasks: retain its OCR corrections, button detection and
         # swipe geometry. Override only target text, edges and finite limits.
+        # Word OCR retains Chinese lock text; ASCII OCR can reduce
+        # '通关DP-1解锁' to DP-1 and click the locked successor.
         'ZootdStage': {'baseTask': 'ClickStageName', 'text': [code],
+                      'isAscii': False, 'specialParams': [],
                       'next': ['ZootdStagePanel', 'ZootdStage'],
                       'maxTimes': 6, 'exceededNext': []},
         'ZootdStagePanel': {'baseTask': 'ClickedCorrectStageOrSwipe',
                             'action': 'DoNothing', 'sub': [], 'reduceOtherTimes': [],
-                            'next': ['ZootdStageConfirmed', 'ZootdMapReset']},
+                            'next': ['ZootdStageConfirmed', 'ZootdMapReady']},
         'ZootdStageConfirmed': {
             'baseTask': 'ClickedCorrectStage', 'text': [code, code.replace('-', '')],
             'action': 'DoNothing', 'next': [], 'sub': [], 'onErrorNext': [],
             'exceededNext': [], 'fullMatch': True},
-        'ZootdZone': {**ocr(route['zone_names'], find), 'maxTimes': 2,
-                     'exceededNext': ['ZootdStage', 'ZootdMapReset']},
-        'ZootdMapReset': {'baseTask': 'FullStageNavigation',
-                          'next': ['ZootdMapReset'], 'maxTimes': 10,
-                          'exceededNext': scan},
-        'ZootdMapScan': {'baseTask': 'StageNavigationSlowlySwipeLeft',
-                         'next': ['ZootdMapReset'], 'maxTimes': 20, 'exceededNext': []},
+        'ZootdZone': {**ocr(route['zone_names'], find), 'maxTimes': 1,
+                     'exceededNext': ['ZootdStage', 'ZootdMapReady']},
+        'ZootdMapReady': {'algorithm': 'JustReturn', 'next': []},
     }
     # Keep native return recognition first. Some event panels texture the
     # button background: reuse the same MAA arrow template, masking its dark
@@ -79,7 +77,17 @@ def navigation_tasks(route: dict) -> dict:
         tasks['ZootdActivityEnter'] = {**ocr(['进入活动', '前往活动', '进入作战'], find),
                                       'maxTimes': 2, 'exceededNext': []}
     elif route['kind'] == 'supplies':
-        tasks['ZootdEntry'] = {'baseTask': 'ResourceStages', 'next': ['ZootdZone']}
+        tasks['ZootdEntry'] = {'baseTask': 'ResourceStages',
+                               'next': ['ZootdZone', 'ZootdResourceLeft']}
+        # Resource collection remembers its horizontal position. Use native
+        # swipe geometry to search both directions for the data-owned name.
+        tasks['ZootdResourceLeft'] = {
+            'baseTask': 'SwipeToTheLeft', 'maxTimes': 3,
+            'next': ['ZootdZone', 'ZootdResourceLeft'],
+            'exceededNext': ['ZootdZone', 'ZootdResourceRight']}
+        tasks['ZootdResourceRight'] = {
+            'baseTask': 'SwipeToTheRight', 'maxTimes': 6,
+            'next': ['ZootdZone', 'ZootdResourceRight'], 'exceededNext': []}
     else:
         raise ValueError('Unsupported navigation entrance')
     # Older event maps may label the EX selector only as 'EX', rather
@@ -88,8 +96,8 @@ def navigation_tasks(route: dict) -> dict:
     if '-EX-' in code:
         tasks['ZootdZoneTab'] = {'baseTask': 'ClickStageName', 'text': ['EX'],
                                 'next': find, 'maxTimes': 2,
-                                'exceededNext': ['ZootdStage', 'ZootdMapReset']}
-        find.insert(find.index('ZootdMapReset'), 'ZootdZoneTab')
+                                'exceededNext': ['ZootdStage', 'ZootdMapReady']}
+        find.insert(find.index('ZootdMapReady'), 'ZootdZoneTab')
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)

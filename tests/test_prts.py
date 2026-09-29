@@ -88,12 +88,18 @@ class PrtsTests(unittest.TestCase):
         self.assertEqual(result, content)
         self.assertEqual(self.opener.calls[0][0], 'https://prts.maa.plus/copilot/get/12')
 
+    def test_full_copilot_accepts_empty_actions_for_idle_battle(self):
+        content = dict(CONTENT, opers=[], groups=[], actions=[])
+        result = self.client({'status_code': 200, 'data': row(content)}).get(12, stage='1-7')
+        self.assertEqual(result, content)
+
     def test_full_copilot_rechecks_stage_id_and_actions(self):
         for content, identity, category in (
             (dict(CONTENT, stage_name='1-8', actions=[{}]), 12, 'stage_mismatch'),
             (dict(CONTENT, actions=[{}]), 13, 'schema_error'),
             (CONTENT, 12, 'schema_error'),
-            (dict(CONTENT, actions=[]), 12, 'schema_error'),
+            (dict(CONTENT, actions=None), 12, 'schema_error'),
+            (dict(CONTENT, actions=[None]), 12, 'schema_error'),
         ):
             payload = row(content)
             payload['id'] = identity
