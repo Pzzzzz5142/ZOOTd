@@ -17,6 +17,31 @@ from .runtime_receipt import validate_runtime_receipt
 from .util import atomic_write_json
 
 
+def navigation_complete(events, code):
+    """Bind target OCR to the same completed Custom chain and final task list."""
+    active = completed = None
+    matched = finished = False
+    for event in events:
+        msg, value = event['message'], event['details']
+        if (msg in (0, 1, 10000, 10004) or value.get('what') == 'GameOffline'
+                or value.get('taskchain') in ('Fight', 'Copilot')):
+            return False
+        key = (value.get('uuid'), value.get('taskid'))
+        if msg == 10001:
+            completed = None
+            finished = False
+            active = key if value.get('taskchain') == 'Custom' else None
+            matched = False
+        if (active is not None and key == active and value.get('first') == ['ZootdNavigate']
+                and map_recognized(msg, value, code)):
+            matched = True
+        if msg == 10002 and key == active and matched:
+            completed = active
+        if msg == 3 and completed is not None:
+            finished = completed[1] in value.get('finished_tasks', [])
+    return finished
+
+
 def navigate(root, stage, *, plan_only=False, refresh=False):
     run = root / 'var/state/navigation' / (time.strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:12])
     run.mkdir(parents=True, mode=0o700)
@@ -45,12 +70,10 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
                 end = time.monotonic_ns()
             events_path = run / 'callbacks.jsonl'
             events = [json.loads(line) for line in events_path.read_text().splitlines()] if events_path.exists() else []
-            completed = any(map_recognized(e['message'], e['details'], route['code']) for e in events)
-            failures = any(e['message'] in (0, 1, 10000, 10004)
-                           or e['details'].get('what') == 'GameOffline' for e in events)
+            completed = navigation_complete(events, route['code'])
             worker = json.loads((run / 'worker-result.json').read_bytes())
             audit['exit_code'] = exit_code
-            if (exit_code == 0 and completed and not failures
+            if (exit_code == 0 and completed
                     and worker.get('phase') == 'navigation_complete'
                     and callbacks_are_fresh(events, run_id=run.name, started_ns=start, finished_ns=end)):
                 audit['status'] = 'success'

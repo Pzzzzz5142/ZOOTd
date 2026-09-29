@@ -10,7 +10,7 @@ from maa_planner.copilot_core import map_recognized
 from maa_planner.copilot_navigation import navigation_tasks
 from maa_planner.navigation_catalog import NavigationCatalog, load_tables, MAX_AGE, activity_labels, title_text
 from maa_planner.prts import PrtsError
-from maa_planner.navigation_cli import navigate
+from maa_planner.navigation_cli import navigate, navigation_complete
 
 
 def fixture():
@@ -188,7 +188,7 @@ class NavigationTests(unittest.TestCase):
 class NavigationCliTests(unittest.TestCase):
     def test_zero_battle_requires_fresh_exact_panel_and_worker_completion(self):
         for mode, expected in [('ok', 'success'), ('wrong_stage', 'failed'),
-                               ('old', 'failed'), ('unfinished', 'failed'), ('locked', 'failed')]:
+                               ('old', 'failed'), ('unfinished', 'failed'), ('locked', 'failed'), ('missing_end', 'failed'), ('wrong_chain', 'failed')]:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
                 root = Path(tmp)
                 catalog = NavigationCatalog(*fixture(), now=150, evidence={'sha256': 'test'})
@@ -212,7 +212,17 @@ class NavigationCliTests(unittest.TestCase):
                                          'details': {'task': 'ZootdStageConfirmed', 'action': 'DoNothing',
                                                      'algorithm': 'OcrDetect',
                                                      'result': {'text': 'NL-8' if mode == 'wrong_stage' else 'NL-9'}}}}
-                    (run / 'callbacks.jsonl').write_text(json.dumps(event) + '\n')
+                    event['details'].update(uuid='device', taskid=4 if mode != 'wrong_chain' else 9,
+                                            first=['ZootdNavigate'])
+                    records = [{'message': 10001, 'details': {'taskchain': 'Custom', 'uuid': 'device', 'taskid': 4}},
+                               event,
+                               {'message': 10002, 'details': {'taskchain': 'Custom', 'uuid': 'device', 'taskid': 4}},
+                               {'message': 3, 'details': {'finished_tasks': [4]}}]
+                    if mode == 'missing_end':
+                        del records[2]
+                    for index, record in enumerate(records):
+                        record.update(run_id=event['run_id'], sequence=index, recorded_ns=time.monotonic_ns())
+                    (run / 'callbacks.jsonl').write_text('\n'.join(json.dumps(r) for r in records))
                     phase = 'stage_locked' if mode == 'locked' else 'navigation' if mode == 'unfinished' else 'navigation_complete'
                     (run / 'worker-result.json').write_text(json.dumps({'phase': phase}))
                     return 1 if mode == 'locked' else 0
