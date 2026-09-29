@@ -12,7 +12,7 @@ from unittest.mock import patch
 from maa_planner.copilot_core import terminal_result, map_recognized, home_recognized, launch_game
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
 from maa_planner.copilot_run import (bind_formation, device, device_lock, execute, experiment, load_policy,
-                                     select_candidate, ExperimentError, main, failure_message, ACCOUNT_NOTICE)
+                                     select_candidate, full_candidate, ExperimentError, main, failure_message, ACCOUNT_NOTICE)
 from maa_planner.copilot_static import build_catalog
 from maa_planner.operator_box import Operator, OperatorBox
 from maa_planner.prts import CopilotCandidate, StageCatalog, PrtsCopilotClient
@@ -144,6 +144,37 @@ class CopilotRunTests(unittest.TestCase):
         self.assertEqual([o['name'] for o in bound['groups'][0]['opers']], ['B'])
         self.assertEqual(bound['actions'], original['actions'])
         self.assertEqual(len(original['groups'][0]['opers']), 2)
+
+    def test_empty_groups_survive_query_full_match_and_binding(self):
+        empty = {'name': 'choice', 'opers': []}
+        for groups in ([empty, empty],
+                       [empty, {'name': 'choice', 'opers': candidate(names=('B', 'A')).operators}, empty]):
+            with self.subTest(groups=groups):
+                content = {'stage_name': 'stage', 'doc': {'title': 'Empty groups'},
+                           'opers': [], 'groups': groups, 'actions': [{'type': 'SpeedUp'}]}
+                original = copy.deepcopy(content)
+                catalog = StageCatalog([{'stageId': 'stage', 'code': 'DP-1'}])
+                client = PrtsCopilotClient(catalog, opener=Opener(page([row(content)])))
+                queried = CopilotCandidate(**client.query('DP-1')['candidates'][0])
+                selected, _ = select_candidate(self.box, [queried], self.catalog, False)
+                self.assertIsNotNone(selected)
+                self.assertEqual(selected.status, 'exact')
+                client = PrtsCopilotClient(catalog, opener=Opener({'status_code': 200, 'data': row(content)}))
+                fetched = client.get(12, stage='DP-1')
+                checked = match_candidate(self.box, full_candidate(fetched, queried), self.catalog)
+                self.assertEqual(checked.to_dict(), selected.to_dict())
+                bound = bind_formation(fetched, checked, self.catalog)
+                self.assertEqual(bound['groups'][0], empty)
+                self.assertEqual(bound['groups'][-1], empty)
+                self.assertEqual(bound['actions'], content['actions'])
+                self.assertEqual(content, original)
+                self.assertEqual(fetched, original)
+                if len(groups) == 3:
+                    self.assertEqual(checked.assignments, {'group:1:choice': 'A'})
+                    self.assertEqual([o['name'] for o in bound['groups'][1]['opers']], ['A'])
+                else:
+                    self.assertEqual(checked.assignments, {})
+                    self.assertEqual(checked.slots, {})
 
     def test_complete_terminal_required(self):
         self.assertEqual(result(events())['status'], 'success')

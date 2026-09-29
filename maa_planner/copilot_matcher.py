@@ -178,7 +178,7 @@ def match_candidate(box: OperatorBox, candidate: CopilotCandidate,
              for i, spec in enumerate(candidate.operators)}
     slots.update({f'group:{i}:{group["name"]}':
                   [match_member(spec, box, catalog) for spec in group['operators']]
-                  for i, group in enumerate(candidate.groups)})
+                  for i, group in enumerate(candidate.groups) if group['operators']})
     assignment = _assignment(slots, {'yes'})
     if assignment is not None:
         return CompatibilityResult(candidate.id, 'exact', assignment, None, None, slots)

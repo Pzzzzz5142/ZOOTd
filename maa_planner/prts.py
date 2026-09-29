@@ -187,10 +187,12 @@ class PrtsCopilotClient:
         names = set()
         for group in groups:
             require(isinstance(group, dict) and text(group.get("name")), "Invalid group.")
-            require(group["name"] not in names, "Duplicate group name.")
-            names.add(group["name"])
             members = operators(group.get("opers"))
-            require(bool(members), "Empty group.")
+            # MaaCore skips empty groups before checking formation names.
+            # Preserve them in the snapshot, but they impose no assignment.
+            if members:
+                require(group["name"] not in names, "Duplicate group name.")
+                names.add(group["name"])
             normalized_groups.append({"name": group["name"], "operators": members})
         difficulty = content.get("difficulty")
         require(difficulty is None or (type(difficulty) is int and difficulty in (0, 1, 2, 3)),

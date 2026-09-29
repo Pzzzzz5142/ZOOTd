@@ -128,11 +128,32 @@ class PrtsTests(unittest.TestCase):
                            ('opers', [{'name': 'A', 'skill': 4}]),
                            ('opers', [{'name': 'A', 'role': {}}]),
                            ('opers', [{'name': 'A', 'requirements': []}]),
-                           ('groups', [{'name': 'A', 'opers': []}])):
+                           ('groups', [{'name': 'A', 'opers': None}])):
             variants.append(row(dict(CONTENT, **{key: value})))
         for variant in variants:
             with self.subTest(variant=variant):
                 self.error('schema_error', lambda: self.client(page([variant])).query('1-7'))
+
+    def test_empty_operator_lists_and_repeated_empty_groups(self):
+        for opers in ([], CONTENT['opers']):
+            content = dict(CONTENT, opers=opers,
+                           groups=[{'name': '1', 'opers': []}] * 2,
+                           actions=[{'type': 'SpeedUp'}])
+            with self.subTest(opers=opers):
+                candidates = self.client(page([row(content)])).query('1-7')['candidates']
+                self.assertEqual(len(candidates), 1)
+                self.assertEqual(candidates[0]['groups'],
+                                 [{'name': '1', 'operators': []}] * 2)
+                fetched = self.client({'status_code': 200, 'data': row(content)}).get(12, stage='1-7')
+                self.assertEqual(fetched, content)
+
+    def test_only_nonempty_groups_participate_in_duplicate_name_check(self):
+        empty = {'name': 'choice', 'opers': []}
+        populated = {'name': 'choice', 'opers': [{'name': 'Fixture B'}]}
+        for groups in ([empty, populated, empty], [populated, empty]):
+            self.client(page([row(dict(CONTENT, groups=groups))])).query('1-7')
+        self.error('schema_error', lambda: self.client(page([
+            row(dict(CONTENT, groups=[populated, empty, populated]))])).query('1-7'))
 
     def test_pagination_and_duplicate_ids(self):
         self.error('schema_error', lambda: self.client(page([row(), row()])).query('1-7'))
