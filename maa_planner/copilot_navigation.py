@@ -93,24 +93,20 @@ def navigation_tasks(route: dict) -> dict:
                                 'next': find, 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReset']}
         find.insert(find.index('ZootdMapReset'), 'ZootdZoneTab')
-    # Smaller overlapping bands separate stylized stage labels from nearby
-    # artwork in OCR detection, while retaining full-word lock text checks.
-    bands = []
+    # Overlapping crops keep small stylized labels separate from card artwork.
+    # Use the word model throughout so unlock hints retain their Chinese text.
+    regions = []
     for top in (350, 175, 470, 0):
-        name = f'ZootdStageBand{top}'
-        bands.append(name)
-        tasks[name] = {'baseTask': 'ZootdStage', 'roi': [0, top, 1280, 250]}
-        # Character OCR also handles wide, stylized Latin labels. Its match
-        # is only a click proposal; the detail panel must still prove identity.
-        ascii_name = name + 'Ascii'
-        bands.append(ascii_name)
-        tasks[ascii_name] = {'baseTask': name, 'isAscii': True}
+        for left in (0, 320, 640):
+            name = f'ZootdStageRegion{left}_{top}'
+            regions.append(name)
+            tasks[name] = {'baseTask': 'ZootdStage', 'roi': [left, top, 640, 250]}
     for task in tasks.values():
         for edge in ('next', 'exceededNext'):
             following = task.get(edge, [])
-            if 'ZootdStage' in following and bands[0] not in following:
+            if 'ZootdStage' in following and regions[0] not in following:
                 index = following.index('ZootdStage') + 1
-                following[index:index] = bands
+                following[index:index] = regions
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)

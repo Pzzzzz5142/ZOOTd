@@ -148,14 +148,16 @@ class NavigationTests(unittest.TestCase):
         route.update(kind='supplies')
         self.assertEqual(navigation_tasks(route)['ZootdEntry']['baseTask'], 'ResourceStages')
 
-    def test_stage_bands_keep_exact_target_and_panel_confirmation(self):
+    def test_stage_regions_keep_exact_target_and_panel_confirmation(self):
         tasks = navigation_tasks(self.catalog().route('DS-1'))
         for top in (0, 175, 350, 470):
-            name = f'ZootdStageBand{top}'
-            self.assertEqual(tasks[name]['baseTask'], 'ZootdStage')
-            self.assertEqual(tasks[name]['roi'], [0, top, 1280, 250])
-            self.assertIn(name, tasks['ZootdZone']['next'])
-            self.assertIn(name, tasks['ZootdMapReset']['exceededNext'])
+            for left in (0, 320, 640):
+                name = f'ZootdStageRegion{left}_{top}'
+                self.assertEqual(tasks[name]['baseTask'], 'ZootdStage')
+                self.assertEqual(tasks[name]['roi'], [left, top, 640, 250])
+                self.assertEqual(tasks['ZootdZone']['next'].count(name), 1)
+                self.assertEqual(tasks['ZootdMapReset']['exceededNext'].count(name), 1)
+        self.assertFalse(tasks['ZootdStage']['isAscii'])
         self.assertEqual(tasks['ZootdStage']['next'][0], 'ZootdStagePanel')
 
     def test_event_lock_texts_follow_game_prerequisite_graph(self):
