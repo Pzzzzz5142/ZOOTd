@@ -132,7 +132,6 @@ class NavigationTests(unittest.TestCase):
         tasks = navigation_tasks(route)
         for name, base in [('ZootdStage', 'ClickStageName'),
                            ('ZootdStagePanel', 'ClickedCorrectStageOrSwipe'),
-                           ('ZootdMapReset', 'FullStageNavigation'),
                            ('ZootdMapScan', 'StageNavigationSlowlySwipeLeft')]:
             self.assertEqual(tasks[name]['baseTask'], base)
         self.assertEqual(tasks['ZootdStagePanel']['action'], 'DoNothing')
@@ -148,21 +147,19 @@ class NavigationTests(unittest.TestCase):
         route.update(kind='supplies')
         self.assertEqual(navigation_tasks(route)['ZootdEntry']['baseTask'], 'ResourceStages')
 
-    def test_stage_label_scan_keeps_exact_target_and_panel_confirmation(self):
-        tasks = navigation_tasks(self.catalog().route('DS-1'))
-        labels = {k: v for k, v in tasks.items() if k.startswith('ZootdStageLabel')}
-        self.assertLessEqual(len(labels), 3200)
-        self.assertGreater(len(labels), 0)
-        for name, task in labels.items():
-            self.assertEqual(task['baseTask'], 'ZootdStage')
-            self.assertTrue(task['withoutDet'])
-            self.assertEqual(task['maxTimes'], 1)
-            self.assertEqual(task['next'], ['ZootdStagePanel', 'ZootdMapReset'])
-            self.assertEqual(tasks['ZootdZone']['next'].count(name), 1)
-            self.assertEqual(tasks['ZootdMapReset']['exceededNext'].count(name), 1)
-            x, y, w, h = task['roi']
-            self.assertTrue(0 <= x < x + w <= 1280 and 0 <= y < y + h <= 720)
-        self.assertTrue(tasks['ZootdStageConfirmed']['fullMatch'])
+    def test_navigation_graph_has_bounded_fanout_and_no_coordinate_scan(self):
+        for code in ('NL-9', 'MN-EX-7', 'DS-1', 'XX-3'):
+            tasks = navigation_tasks(self.catalog().route(code))
+            self.assertLessEqual(len(tasks), 32)
+            for task in tasks.values():
+                for edge in ('next', 'exceededNext', 'onErrorNext'):
+                    self.assertLessEqual(len(task.get(edge, [])), 6)
+                self.assertFalse(task.get('withoutDet'))
+            self.assertEqual(tasks['ZootdZone']['maxTimes'], 1)
+            self.assertEqual(tasks['ZootdStagePanel']['next'],
+                             ['ZootdStageConfirmed', 'ZootdMapReady'])
+            self.assertTrue(tasks['ZootdStageConfirmed']['fullMatch'])
+            self.assertEqual(tasks['ZootdStageConfirmed']['action'], 'DoNothing')
 
     def test_event_lock_texts_follow_game_prerequisite_graph(self):
         tables, installed, tiles = fixture()

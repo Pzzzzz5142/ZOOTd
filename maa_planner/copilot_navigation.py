@@ -16,7 +16,6 @@ def navigation_tasks(route: dict) -> dict:
                 'maxTimes': limit, 'next': next_tasks, 'exceededNext': exceeded}
 
     find = ['ZootdStage', 'ZootdZone', 'ZootdMapReset']
-    scan = ['ZootdStage', 'ZootdMapScan']
     labels = route.get('activity_labels', [route['activity']])
     title_ocr = {'fullMatch': False, 'ocrReplace': [[r'[\s·•・.\-]+', ''], [r'^复刻[:：]?|[:：]?复刻$', '']]}
     tasks = {
@@ -32,18 +31,17 @@ def navigation_tasks(route: dict) -> dict:
                       'maxTimes': 6, 'exceededNext': []},
         'ZootdStagePanel': {'baseTask': 'ClickedCorrectStageOrSwipe',
                             'action': 'DoNothing', 'sub': [], 'reduceOtherTimes': [],
-                            'next': ['ZootdStageConfirmed', 'ZootdMapReset']},
+                            'next': ['ZootdStageConfirmed', 'ZootdMapReady']},
         'ZootdStageConfirmed': {
             'baseTask': 'ClickedCorrectStage', 'text': [code, code.replace('-', '')],
             'action': 'DoNothing', 'next': [], 'sub': [], 'onErrorNext': [],
             'exceededNext': [], 'fullMatch': True},
-        'ZootdZone': {**ocr(route['zone_names'], find), 'maxTimes': 2,
+        'ZootdZone': {**ocr(route['zone_names'], find), 'maxTimes': 1,
                      'exceededNext': ['ZootdStage', 'ZootdMapReset']},
-        'ZootdMapReset': {'baseTask': 'FullStageNavigation',
-                          'next': ['ZootdMapReset'], 'maxTimes': 10,
-                          'exceededNext': scan},
+        'ZootdMapReady': {'algorithm': 'JustReturn', 'next': []},
+        'ZootdMapReset': {'algorithm': 'JustReturn', 'next': ['ZootdMapReady']},
         'ZootdMapScan': {'baseTask': 'StageNavigationSlowlySwipeLeft',
-                         'next': ['ZootdMapReset'], 'maxTimes': 20, 'exceededNext': []},
+                         'next': [], 'maxTimes': 1, 'exceededNext': []},
     }
     # Keep native return recognition first. Some event panels texture the
     # button background: reuse the same MAA arrow template, masking its dark
@@ -93,25 +91,6 @@ def navigation_tasks(route: dict) -> dict:
                                 'next': find, 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReset']}
         find.insert(find.index('ZootdMapReset'), 'ZootdZoneTab')
-    # Card artwork can prevent the OCR detector from finding an otherwise
-    # legible label. Bypass detection in bounded overlapping label windows.
-    # These are click proposals only: the native detail panel remains mandatory.
-    labels = []
-    width = max(100, min(300, len(code) * 20 + 20))
-    for top in (*range(380, 601, 10), *range(80, 380, 10)):
-        for left in range(0, 1281 - width, 20):
-            name = f'ZootdStageLabel{left}_{top}'
-            labels.append(name)
-            tasks[name] = {
-                'baseTask': 'ZootdStage', 'roi': [left, top, width, 35],
-                'isAscii': True, 'withoutDet': True, 'binThreshold': [0, 255],
-                'useRaw': True, 'maxTimes': 1,
-                'next': ['ZootdStagePanel', 'ZootdMapReset']}
-    # Only scan after entering a zone or reaching a map-search position;
-    # scanning the activity landing page adds work before its zone button.
-    for following in (find, scan):
-        index = following.index('ZootdStage') + 1
-        following[index:index] = labels
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)

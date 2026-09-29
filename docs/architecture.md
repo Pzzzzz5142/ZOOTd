@@ -100,4 +100,10 @@ Copilot 作业允许空干员列表和空干员组。与 MaaCore 编队行为一
 
 `navigation_catalog.py` 从同一游戏数据 revision 的 stage、zone、activity、retro 表建立普通难度关卡目录。运行缓存和来源哈希位于 `var/cache/copilot-navigation/`，当期活动与分区窗口每次按当前时间检查；旧活动使用常驻表的 zone，而不是已经过期的复刻 zone。安装的 MAA `stages.json` 仅兼容既有 `_perm` 账本身份，Tile overview 用于核对可执行地图。
 
-`copilot_navigation.py` 按入口类别生成每次运行的 OCR/滑动任务，活动名、分区名、目标编号来自数据，不维护逐关导航配置。地图选关优先使用保留中文的整词 OCR；装饰卡片导致文字检测失败时，使用有界的重叠小区域直接识别编号并尝试选关，每个区域最多点击一次。地图上的文字仅用于选关，不能作为到达证据；成功证据是本次目标详情页的精确编号；`navigation_cli.py` 提供独立的零战斗验收。操作和限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
+`copilot_navigation.py` 按入口类别生成每次运行的 OCR/滑动任务，活动名、分区名、目标编号来自数据，不维护逐关导航配置。地图选关先使用 MAA 的 `ClickStageName`；失败后由 `navigation_vision.py` 依次读取上游 `StageNavigation/SideStory/<前缀>/<编号>.png` 模板、执行上游 `MultiCopilotTaskPlugin::find_stage` 的白字 HSV 预处理，再对反色图执行相同处理以覆盖浅色卡片上的深色编号。不新增逐关模板，不修改 live runtime；使用当前 runtime 的 PaddleCharOCR 模型和 ClickStageName 替换规则，RapidOCR 仅提供推理调用。
+
+扫描每幅图最多两次全图检测及批量文字识别，不生成固定坐标窗口。单次扫描最多提出一个模板候选和每种字色各一个 OCR 候选，OCR 要求完整编号匹配、置信度不低于 0.5；每次候选之后重新截图。最多扫描 7 幅图、滑动 6 次，连续两次滑动后缩小灰度图的平均差异低于 3 时提前报告 `stage_not_found_on_map`，具体静止原因保存在识别记录。地图文字或模板只用于提出点击位置；成功仍要求目标详情页编号 OCR、同一 Custom 链完成、最终任务列表及本次时间边界内的新鲜回调。零战斗模式和作业执行复用同一证据门。
+
+有实机理由的偏离：普通地图 OCR 使用 `isAscii=false`，防止把“通关 DP-1 解锁”剥成目标编号；锁定提示从游戏前置条件和活动提示表收集。深色字分支来自 DP-1 浅色卡片实机截图：白字掩码无命中，反色后能识别编号。这些证据不证明入口 ROI、EX tab 或所有活动地图均通用。离线测试限制生成任务数、候选列表、地图 OCR 和滑动预算，并拒绝未通过详情页确认的候选；跨入口类别的实机覆盖另行记录，不能以 fixture 代替。
+
+`navigation_cli.py` 提供独立的零战斗验收。操作和限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。

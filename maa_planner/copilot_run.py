@@ -50,6 +50,8 @@ def failure_message(result):
         return '通关或已保存代理的证明未完成；请检查战斗结果、客户端代理开关及本次运行记录。'
     if category == 'stage_locked':
         return '目标关卡的前置尚未解锁；请先完成游戏要求的前置关卡。'
+    if category == 'stage_not_found_on_map':
+        return '未在地图上找到并确认目标关卡；已停止扫描，请查看本次地图识别记录。'
     if category == 'navigation_failure':
         return '游戏启动或关卡导航失败；请检查游戏登录、更新/公告弹窗及关卡入口。'
     if category == 'adb_failure' or phase == 'device':
@@ -194,7 +196,9 @@ def execute(root, run, address):
         env = dict(os.environ, PYTHONPATH=str(root),
                    LD_LIBRARY_PATH=str(root / 'var/data/lib'))
         try:
-            child = subprocess.Popen([sys.executable, '-m', 'maa_planner.copilot_core',
+            python = root / '.venv/bin/python'
+            interpreter = str(python) if python.exists() else sys.executable
+            child = subprocess.Popen([interpreter, '-m', 'maa_planner.copilot_core',
                                       str(root), str(run), address],
                                      cwd=run, env=env, stdout=output, stderr=subprocess.STDOUT)
             try:
@@ -305,7 +309,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             worker = decode(receipt.read_bytes())
             if worker.get('run_id') == run.name and worker.get('exit_code') == status:
                 worker_phase = worker.get('phase')
-                if worker_phase in {'runtime', 'adb', 'navigation', 'execution', 'proxy_proof'}:
+                if worker_phase in {'runtime', 'adb', 'navigation', 'stage_locked', 'stage_not_found_on_map', 'execution', 'proxy_proof'}:
                     audit['worker_phase'] = worker_phase
         fresh = callbacks_are_fresh(events, run_id=run.name, started_ns=started_ns, finished_ns=finished_ns)
         # The battle reducer ends at its own AllTasksCompleted. Later Custom

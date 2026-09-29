@@ -505,7 +505,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertFalse((ROOT / "maa_planner/codex_exec.py").exists())
         self.assertEqual(
             (ROOT / "requirements.txt").read_text().strip(),
-            "openai-codex",
+            "openai-codex\nrapidocr-onnxruntime==1.2.3",
         )
         for adapter_name in (
             "zootd-codex-advisor",
