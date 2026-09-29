@@ -94,7 +94,7 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
         if vision.exists():
             audit['map_search'] = json.loads(vision.read_text())
         elif audit['status'] == 'success':
-            audit['map_search'] = {'branch': 'maa_task_graph', 'ocr_passes': 0, 'swipes': 0}
+            audit['map_search'] = {'branch': 'maa_task_graph'}
         atomic_write_json(run / 'result.json', audit, mode=0o600)
     return audit
 
