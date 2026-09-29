@@ -96,10 +96,15 @@ def navigation_tasks(route: dict) -> dict:
     # Smaller overlapping bands separate stylized stage labels from nearby
     # artwork in OCR detection, while retaining full-word lock text checks.
     bands = []
-    for top in (0, 175, 350, 470):
+    for top in (350, 175, 470, 0):
         name = f'ZootdStageBand{top}'
         bands.append(name)
         tasks[name] = {'baseTask': 'ZootdStage', 'roi': [0, top, 1280, 250]}
+        # Character OCR also handles wide, stylized Latin labels. Its match
+        # is only a click proposal; the detail panel must still prove identity.
+        ascii_name = name + 'Ascii'
+        bands.append(ascii_name)
+        tasks[ascii_name] = {'baseTask': name, 'isAscii': True}
     for task in tasks.values():
         for edge in ('next', 'exceededNext'):
             following = task.get(edge, [])
