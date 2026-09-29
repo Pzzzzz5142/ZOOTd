@@ -237,7 +237,7 @@ class PrtsCopilotClient:
         row = self._request(f"/copilot/get/{copilot_id}", full=True)
         candidate, content = self._parse(row, canonical)
         require(candidate.id == copilot_id, "Returned copilot ID differs from requested ID.")
-        require(isinstance(content.get("actions"), list) and bool(content["actions"])
+        require(isinstance(content.get("actions"), list)
                 and all(isinstance(action, dict) for action in content["actions"]),
                 "Missing or invalid full copilot actions.")
         return content
