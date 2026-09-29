@@ -24,7 +24,10 @@ def navigation_tasks(route: dict) -> dict:
         # Mirror StageNavigationTask::swipe_and_find_stage using installed
         # MAA base tasks: retain its OCR corrections, button detection and
         # swipe geometry. Override only target text, edges and finite limits.
+        # Word OCR retains Chinese lock text; ASCII OCR can reduce
+        # '通关DP-1解锁' to DP-1 and click the locked successor.
         'ZootdStage': {'baseTask': 'ClickStageName', 'text': [code],
+                      'isAscii': False, 'specialParams': [],
                       'next': ['ZootdStagePanel', 'ZootdStage'],
                       'maxTimes': 6, 'exceededNext': []},
         'ZootdStagePanel': {'baseTask': 'ClickedCorrectStageOrSwipe',

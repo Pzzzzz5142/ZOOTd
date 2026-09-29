@@ -136,6 +136,8 @@ class NavigationTests(unittest.TestCase):
                            ('ZootdMapScan', 'StageNavigationSlowlySwipeLeft')]:
             self.assertEqual(tasks[name]['baseTask'], base)
         self.assertEqual(tasks['ZootdStagePanel']['action'], 'DoNothing')
+        self.assertFalse(tasks['ZootdStage']['isAscii'])
+        self.assertEqual(tasks['ZootdStage']['specialParams'], [])
         self.assertEqual(tasks['StartUp@ReturnButtons']['next'][0], 'StartUp@ReturnButton')
         self.assertEqual(tasks['ZootdStartUpTexturedReturn']['template'], 'Return.png')
         self.assertEqual(tasks['ZootdStartUpTexturedReturn']['templThreshold'], 0.7)
