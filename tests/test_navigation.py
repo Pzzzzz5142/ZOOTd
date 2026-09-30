@@ -45,7 +45,7 @@ def fixture():
     return tables, installed, tiles
 
 
-def pipeline_catalog(root):
+def pipeline_catalog(root, *, raid=False):
     """A game table fixture for the existing mocked execution pipeline."""
     rows = json.loads((root / 'var/data/resource/stages.json').read_text())
     if any('apCost' not in row for row in rows):
@@ -55,7 +55,7 @@ def pipeline_catalog(root):
         row['stageId']: dict(row, zoneId='nl-zone', levelId='activities/' + row['stageId'],
                              difficulty='NORMAL', diffGroup='NONE') for row in rows}
     tiles = {row['stageId']: dict(row, levelId='activities/' + row['stageId']) for row in rows}
-    return NavigationCatalog(tables, rows, tiles, now=150, evidence={'sha256': 'fixture'})
+    return NavigationCatalog(tables, rows, tiles, now=150, evidence={'sha256': 'fixture'}, raid=raid)
 
 
 class NavigationTests(unittest.TestCase):
@@ -75,12 +75,51 @@ class NavigationTests(unittest.TestCase):
             self.assertEqual(tasks['ZootdZone']['text'], [zone])
             if '-EX-' in route['code']:
                 self.assertEqual(tasks['ZootdZoneTab']['text'], ['EX'])
-            self.assertEqual(tasks['ZootdStageConfirmed']['next'], [])
+            self.assertEqual(tasks['ZootdStageConfirmed']['next'],
+                             ['NormalConfirm', 'ChangeToNormalDifficulty'] if route['has_raid'] else [])
         self.assertEqual(catalog.resolve('MN-EX-7'), 'act13d5_ex07')
         self.assertEqual(catalog.resolve('act13side_09'), 'act13side_09_perm')
         self.assertEqual(catalog.query_ids['act13side_09_perm'], 'act13side_09')
         with self.assertRaises(PrtsError):
             catalog.resolve('act13d5_ex07#f#')
+
+    def test_raid_identity_is_separate_and_bound_to_normal_search(self):
+        normal, raid = self.catalog(), self.catalog(raid=True)
+        route = raid.route('mn ex 7', require_tiles=True)
+        self.assertTrue(route['raid'])
+        self.assertEqual(route['battle_id'], 'act13d5_ex07#f#')
+        for alias in ('MN-EX-7', 'act13d5_ex07', 'act13d5_ex07#f#', route['battle_id'].upper()):
+            self.assertEqual(raid.resolve(alias), route['stage_id'])
+        self.assertEqual(raid.query_ids[route['stage_id']], 'act13d5_ex07')
+        self.assertFalse(normal.route('MN-EX-7')['raid'])
+        self.assertEqual(navigation_tasks(route)['ZootdStageConfirmed']['next'], [])
+        with self.assertRaises(PrtsError):
+            raid.resolve('NL-9')  # No challenge record; never invent one.
+
+    def test_raid_requires_exact_partner_and_its_own_tile(self):
+        for field, value in [('code', 'MN-EX-8'), ('zoneId', 'nl-zone'),
+                             ('levelId', 'foreign-level'), ('diffGroup', 'TOUGH')]:
+            tables, installed, tiles = fixture()
+            tables['retro_table']['stageList']['act13d5_ex07#f#'][field] = value
+            with self.assertRaises(PrtsError):
+                NavigationCatalog(tables, installed, tiles, now=150, raid=True)
+        tables, installed, tiles = fixture()
+        del tiles['act13d5_ex07#f#']
+        catalog = NavigationCatalog(tables, installed, tiles, now=150, raid=True)
+        self.assertFalse(catalog.route('MN-EX-7')['tile_available'])
+        with self.assertRaisesRegex(PrtsError, 'battle map'):
+            catalog.route('MN-EX-7', require_tiles=True)
+
+    def test_current_event_raid_keeps_window_and_challenge_cost(self):
+        tables, installed, tiles = fixture()
+        normal = tables['stage_table']['stages']['future_03']
+        hard = dict(normal, stageId='future_03#f#', difficulty='FOUR_STAR', apCost=25)
+        tables['stage_table']['stages'][hard['stageId']] = hard
+        tiles[hard['stageId']] = hard
+        catalog = NavigationCatalog(tables, installed, tiles, now=150, raid=True)
+        self.assertEqual(catalog.route('XX-3')['ap_cost'], 25)
+        with self.assertRaisesRegex(PrtsError, 'opening window'):
+            NavigationCatalog(tables, installed, tiles, now=200, raid=True).route('XX-3')
 
     def test_current_zone_window_and_first_clear_cost(self):
         self.assertEqual(self.catalog().route('DS-1')['ap_cost'], 40)

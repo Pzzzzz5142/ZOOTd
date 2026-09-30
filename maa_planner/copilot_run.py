@@ -167,6 +167,12 @@ def select_candidate(box, candidates, catalog, allow_support):
     return selected, ranked
 
 
+def difficulty_matches(difficulty, *, raid):
+    # Unspecified scripts retain the ordinary-mode behavior; they do not
+    # authorize a challenge. PRTS declares normal=1, raid=2, both=3.
+    return difficulty in ((2, 3) if raid else (None, 0, 1, 3))
+
+
 def bind_formation(content, result, catalog):
     """Constrain every group to the matcher's assignment, retaining action names."""
     content = copy.deepcopy(content)
@@ -237,7 +243,8 @@ def acceptance_formation_failure(content, box, catalog, battle):
 def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             code, route, budget, get_address, restart, snapshot_sha256, acceptance_failure=False, proof_context=None):
     audit = {'status': 'failed', 'copilot_id': candidate.id, 'run_dir': str(run),
-             'snapshot_sha256': snapshot_sha256}
+             'snapshot_sha256': snapshot_sha256, 'raid': route['raid'],
+             'stage': canonical, 'battle_id': route['battle_id']}
     phase = 'download_recheck'
     reservation = None
     try:
@@ -245,6 +252,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         full = full_candidate(content, candidate)
         if (full.operators, full.groups, full.difficulty) != (candidate.operators, candidate.groups, candidate.difficulty):
             raise CandidateRejected('Selected candidate changed between query and download')
+        if not difficulty_matches(full.difficulty, raid=route['raid']):
+            raise CandidateRejected('Downloaded copilot does not support the authorized difficulty')
         checked = match_candidate(box, full, catalog)
         if checked != selected:
             raise CandidateRejected('Full copilot compatibility differs from selected candidate')
@@ -252,6 +261,9 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         audit['copilot_sha256'] = sha256_bytes(canonical_json(content))
         atomic_write_json(run / 'source.json', content, mode=0o600)
         content = bind_formation(content, checked, catalog)
+        # Authors may use a code or shared level ID even for difficulty=2/3.
+        # Bind the execution copy to the exact installed authorized Tile.
+        content['stage_name'] = route['battle_id']
         if acceptance_failure:
             phase = 'acceptance_fixture'
             if checked.status != 'exact':
@@ -261,7 +273,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         audit['execution_sha256'] = sha256_bytes(canonical_json(content))
         filename = run / 'execution.json'
         atomic_write_json(filename, content, mode=0o600)
-        params = {'copilot_list': [{'filename': str(filename), 'stage_name': code, 'is_raid': False}],
+        params = {'copilot_list': [{'filename': str(filename), 'stage_name': code, 'is_raid': route['raid']}],
                   'formation': True, 'loop_times': 1, 'use_sanity_potion': False,
                   'add_trust': False, 'ignore_requirements': False,
                   'support_unit_usage': 2 if checked.support_needed else 0}
@@ -321,7 +333,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
                 if event['message'] == 3 and task_id in v.get('finished_tasks', []):
                     battle_events = events[:i + 1]
                     break
-        result = (terminal_result(battle_events, task_id=task_id, stage=content['stage_name'], filename=str(filename))
+        result = (terminal_result(battle_events, task_id=task_id, stage=content['stage_name'],
+                                  filename=str(filename), raid=route['raid'])
                   if fresh and type(task_id) is int else {'status': 'failed', 'errors': ['invalid_callback_evidence']})
         result['exit_code'] = status
         audit['execution'] = result
@@ -330,12 +343,12 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             filename=str(filename), copilot_id=candidate.id,
             copilot_sha256=audit['copilot_sha256'], execution_sha256=audit['execution_sha256'],
             started_ns=started_ns, finished_ns=finished_ns, exit_code=status,
-            support_used=checked.support_needed)
+            support_used=checked.support_needed, raid=route['raid'])
         if status != 0 or result['status'] != 'success':
             audit['failure'] = classify_failure(
                 events, run_id=run.name, started_ns=started_ns, finished_ns=finished_ns,
                 task_id=task_id, stage=content['stage_name'], filename=str(filename),
-                exit_code=status, worker_phase=worker_phase)
+                exit_code=status, worker_phase=worker_phase, raid=route['raid'])
             raise ExperimentError('MaaCore did not produce a complete successful Copilot terminal')
         if proof_context:
             phase = 'capability_proof'
@@ -373,10 +386,12 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
 
 
 def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None,
-               acceptance_failure: bool = False, prove_capability: bool = False) -> dict:
+               acceptance_failure: bool = False, prove_capability: bool = False, raid: bool = False) -> dict:
     limits = limits or RetryLimits()
     policy = load_policy(root, profile)
     print(ACCOUNT_NOTICE, file=sys.stderr, flush=True)
+    if raid and (prove_capability or acceptance_failure):
+        raise ExperimentError('Raid mode does not support saved proxy proof or the NL-8 acceptance check')
     if prove_capability and (policy['allow_support'] or acceptance_failure):
         raise ExperimentError('Capability proof requires no-support and no failure injection')
     if acceptance_failure and (limits.max_candidates != 2 or limits.max_battles != 2
@@ -390,7 +405,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
              'policy': policy, 'run_dir': str(run), 'status': 'failed', 'attempts': [],
              'proof_requested': prove_capability, 'account_binding': 'user_managed',
              'authorization': {'max_candidates': limits.max_candidates, 'max_battles': limits.max_battles,
-                               'sanity_budget': limits.sanity_budget, 'medicine': 0, 'stone': 0, 'raid': False}}
+                               'sanity_budget': limits.sanity_budget, 'medicine': 0, 'stone': 0, 'raid': raid}}
     if acceptance_failure:
         audit['acceptance_check'] = 'injected_formation_failure_then_unmodified_candidate'
     phase = 'readiness'
@@ -402,7 +417,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             audit['git_head'] = command(['git', '-C', str(root), 'rev-parse', 'HEAD']).strip()
             audit['runtime'] = validate_runtime_receipt(root)
             audit['runtime_receipt_sha256'] = sha256_bytes((root / 'var/state/runtime/maa-resource.json').read_bytes())
-            stages = load_navigation(root)
+            stages = load_navigation(root, raid=raid)
             canonical = stages.resolve(stage)
             route = stages.route(canonical, require_tiles=True)
             audit['stage'] = canonical
@@ -430,7 +445,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             prts = PrtsCopilotClient(stages)
             page = prts.query(canonical, limit=50)
             candidates = [CopilotCandidate(**c) for c in page['candidates']
-                          if c['difficulty'] in (None, 0, 1, 3)]
+                          if difficulty_matches(c['difficulty'], raid=raid)]
             selected, ranked = select_candidate(box, candidates, catalog, policy['allow_support'])
             audit['query'] = {k: v for k, v in page.items() if k != 'candidates'}
             audit['ranking'] = [r.to_dict() for r in ranked]
@@ -522,6 +537,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='Experimental bounded Copilot attempts; may spend stage sanity')
     parser.add_argument('--project-root', type=Path, required=True)
     parser.add_argument('stage')
+    parser.add_argument('--raid', action='store_true', help='Explicitly authorize challenge mode (突袭)')
     parser.add_argument('--profile', choices=('no-support', 'allow-support'))
     parser.add_argument('--max-candidates', type=int, default=1)
     parser.add_argument('--max-battles', type=int, default=1)
@@ -542,7 +558,7 @@ def main(argv=None):
     try:
         result = experiment(args.project_root.resolve(), args.stage, args.profile, limits=limits,
                             acceptance_failure=args.acceptance_formation_failure,
-                            prove_capability=args.prove_capability)
+                            prove_capability=args.prove_capability, raid=args.raid)
         if result['status'] != 'success':
             print(result.get('message') or failure_message(result), file=sys.stderr)
         print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'failure_phase', 'error', 'message')

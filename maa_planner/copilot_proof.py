@@ -14,7 +14,7 @@ from .util import canonical_json, sha256_bytes
 def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
                  filename: str, copilot_id: int, copilot_sha256: str,
                  execution_sha256: str, started_ns: int, finished_ns: int,
-                 exit_code: int, support_used: bool) -> dict:
+                 exit_code: int, support_used: bool, raid: bool = False) -> dict:
     """Reduce recorder-owned evidence, failing closed on old/malformed records.
 
     This proves a battle-screen observation, not account ownership, first clear,
@@ -23,10 +23,13 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
     result = {'schema': 1, 'status': 'unproven', 'three_star': False,
               'saved_proxy': 'unknown', 'account_binding': 'unknown',
               'activity_binding': 'unknown', 'ledger_recorded': False,
-              'support_used': support_used}
+              'support_used': support_used, 'raid': raid}
 
     def reject(reason):
         return dict(result, reason=reason)
+
+    if raid:
+        return reject('raid_saved_proxy_not_supported')
 
     if (not isinstance(run_id, str) or not run_id or type(task_id) is not int
             or task_id < 0 or type(copilot_id) is not int or copilot_id <= 0

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes as C
 import json
+import math
 import signal
 import subprocess
 import sys
@@ -63,9 +64,24 @@ def callbacks_are_fresh(events, *, run_id, started_ns, finished_ns):
     return True
 
 
-def terminal_result(events: list[dict], *, task_id: int, stage: str, filename: str) -> dict:
+def raid_recognized(message, value):
+    """MAA's native confirmation observes the button for returning to normal."""
+    details = value.get('details', {})
+    result = details.get('result', {})
+    return (message == 20002 and value.get('subtask') == 'ProcessTask'
+            and details.get('task') in ('RaidConfirm', 'Copilot@RaidConfirm')
+            and details.get('algorithm') == 'MatchTemplate'
+            and details.get('action') == 'DoNothing'
+            and isinstance(result, dict)
+            and result.get('template') in ('NormalDifficulty.png', 'NormalDifficulty-Chapter15.png')
+            and type(result.get('score')) in (int, float)
+            and math.isfinite(result['score']) and 0 < result['score'] <= 1)
+
+
+def terminal_result(events: list[dict], *, task_id: int, stage: str, filename: str, raid=False) -> dict:
     active = None
     loaded = formed = battled = completed = all_done = False
+    raid_confirmed = forming = False
     errors = []
     for event in events:
         msg, value = event['message'], event['details']
@@ -80,9 +96,13 @@ def terminal_result(events: list[dict], *, task_id: int, stage: str, filename: s
         detail = value.get('details', {})
         if bound and msg == 20003 and value.get('what') == 'CopilotListLoadTaskFileSuccess':
             loaded = detail.get('stage_name') == stage and detail.get('file_name') == filename
+        if bound and loaded and not forming and not formed and raid_recognized(msg, value):
+            raid_confirmed = True
+        if bound and msg == 20001 and value.get('subtask') == 'BattleFormationTask':
+            forming = True
         if bound and msg == 20002:
             if value.get('subtask') == 'BattleFormationTask':
-                formed = loaded
+                formed = loaded and (not raid or raid_confirmed)
             if value.get('subtask') == 'BattleProcessTask':
                 battled = formed
         if bound and msg == 10002:
@@ -91,6 +111,7 @@ def terminal_result(events: list[dict], *, task_id: int, stage: str, filename: s
             all_done = completed and task_id in value.get('finished_tasks', [])
     success = all_done and not errors
     return {'status': 'success' if success else 'failed', 'loaded': loaded,
+            'raid': raid, 'raid_confirmed': raid_confirmed,
             'formation_completed': formed, 'battle_completed': battled,
             'chain_completed': completed, 'all_tasks_completed': all_done,
             'errors': errors, 'task_id': task_id}

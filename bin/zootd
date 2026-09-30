@@ -290,10 +290,11 @@ Commands:
                         Experimental: retrieve one full PRTS copilot (no game launch)
   navigate STAGE [--plan] [--refresh]
                         Navigate to the stage detail panel without starting battle
-  copilot-run STAGE [--profile no-support|allow-support]
+  copilot-run STAGE [--raid] [--profile no-support|allow-support]
                         Experimental: defaults to one battle; no medicine or stones
+                        Raid: explicit challenge mode, requires compatible copilot
                         Retry: --max-candidates N --max-battles N --sanity-budget N
-                        Proof: --prove-capability (no-support only)
+                        Proof: --prove-capability (normal mode, no-support only)
   box-sync [--uid UID]   Experimental: read-only operator Box sync (no game launch)
   doctor                Check dependencies and the promoted runtime receipt
   advisor-check         Run and archive one bounded real-model connectivity probe

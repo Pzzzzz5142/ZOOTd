@@ -13,7 +13,7 @@ from maa_planner.copilot_run import experiment, acceptance_formation_failure, Ex
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity
 from maa_planner.operator_box import OperatorBox, Operator
 from maa_planner.prts import PrtsError
-from tests.test_copilot_run import candidate
+from tests.test_copilot_run import candidate, raid_confirmation
 from tests.test_copilot_proof import observations
 
 
@@ -193,6 +193,18 @@ class RetryClassificationTests(unittest.TestCase):
         records = stamp(failed_events('battle')+[event(20003, what='GameOffline')])
         self.assertEqual(classify(records)['sanity_outcome'], 'charged_or_unknown')
 
+    def test_raid_failure_keeps_sanity_and_requires_mode_evidence(self):
+        records = failed_events('battle')
+        records.insert(2, raid_confirmation())
+        outcome = classify(stamp(records), raid=True)
+        self.assertEqual(outcome['category'], 'battle_failed')
+        self.assertTrue(outcome['retryable'])
+        self.assertEqual(outcome['sanity_outcome'], 'charged_or_unknown')
+        self.assertFalse(classify(failed_events('battle'), raid=True)['retryable'])
+        records = failed_events('missing')
+        records.insert(2, raid_confirmation())
+        self.assertEqual(classify(stamp(records), raid=True)['sanity_outcome'], 'not_spent')
+
     def test_settlement_is_once_per_dispatch_and_does_not_restore_attempt_count(self):
         budget = RetryBudget(RetryLimits(3, 2, 18), 18)
         self.assertTrue(budget.reserve_battle())
@@ -267,6 +279,7 @@ class RetryIntegrationTests(unittest.TestCase):
             yield 'fixture-device'
         self.dev = mock('device', side_effect=fake_device)
         self.outcomes = ['missing', 'success']
+        self.confirm_raid = True
         self.paths = []
         self.execute = mock('execute', side_effect=self.fake_execute)
 
@@ -283,12 +296,15 @@ class RetryIntegrationTests(unittest.TestCase):
         if kind == 'interrupt':
             raise KeyboardInterrupt
         records = observations() if kind == 'success' else failed_events('missing' if kind in ('offline', 'timeout', 'old') else kind)
+        if params['copilot_list'][0]['is_raid'] and self.confirm_raid:
+            records.insert(2, raid_confirmation())
         if kind == 'offline':
             records.append(event(20003, what='GameOffline'))
         for i, record in enumerate(records):
             record.update(run_id=run.name if kind != 'old' else 'old-attempt', sequence=i,
                           recorded_ns=time.monotonic_ns())
         records[1]['details']['details']['file_name'] = str(run / 'execution.json')
+        records[1]['details']['details']['stage_name'] = json.loads((run / 'execution.json').read_text())['stage_name']
         (run / 'callbacks.jsonl').write_text('\n'.join(json.dumps(e) for e in records))
         (run / 'task-id.json').write_text('7')
         return 124 if kind == 'timeout' else 0
@@ -296,6 +312,86 @@ class RetryIntegrationTests(unittest.TestCase):
     def run_experiment(self, **kw):
         return experiment(self.root, 'NL-8', None, limits=RetryLimits(**dict(
             {'max_candidates': 3, 'max_battles': 2, 'sanity_budget': 36}, **kw)))
+
+    def raid_catalog(self):
+        from maa_planner.navigation_catalog import NavigationCatalog
+        from tests.test_navigation import fixture
+        self.mock('load_navigation', side_effect=lambda root, raid=False:
+                  NavigationCatalog(*fixture(), now=150, evidence={'sha256': 'fixture'}, raid=raid))
+
+    def test_raid_pipeline_filters_difficulty_binds_map_and_preserves_original(self):
+        self.raid_catalog()
+        for difficulty in (None, 0, 1, 2, 3):
+            with self.subTest(difficulty=difficulty):
+                self.dev.reset_mock()
+                self.provider.get.reset_mock()
+                c = dict(candidate().to_dict(), difficulty=difficulty, stage='act13d5_ex07#f#')
+                self.provider.query.return_value = {'candidates': [c], 'page': 1}
+                content = dict(self.content, stage_name='act13d5_ex07', difficulty=difficulty)
+                self.provider.get.return_value = content
+                self.outcomes = ['success']
+                audit = experiment(self.root, 'MN-EX-7', None, raid=True)
+                self.assertTrue(audit['authorization']['raid'])
+                self.assertEqual(audit['stage'], 'act13d5_ex07#f#')
+                if difficulty not in (2, 3):
+                    self.assertEqual(audit['status'], 'failed')
+                    self.dev.assert_not_called()
+                    self.provider.get.assert_not_called()
+                    continue
+                self.assertEqual(audit['status'], 'success', audit)
+                attempt = audit['attempts'][0]
+                path = Path(attempt['run_dir'])
+                params = json.loads((path / 'params.json').read_text())
+                self.assertTrue(params['copilot_list'][0]['is_raid'])
+                self.assertEqual(params['copilot_list'][0]['stage_name'], 'MN-EX-7')
+                self.assertEqual(json.loads((path / 'source.json').read_text()), content)
+                self.assertEqual(json.loads((path / 'execution.json').read_text())['stage_name'], audit['stage'])
+                self.assertNotEqual(attempt['copilot_sha256'], attempt['execution_sha256'])
+                self.assertTrue(attempt['execution']['raid_confirmed'])
+                self.assertFalse(attempt['battle_proof']['ledger_recorded'])
+                self.assertEqual(attempt['battle_proof']['reason'], 'raid_saved_proxy_not_supported')
+                self.assertEqual(audit['budget']['stage_cost'], 18)
+                self.assertFalse((self.root / 'var/state/planner/capabilities.json').exists())
+
+    def test_raid_download_difficulty_drift_never_dispatches(self):
+        self.raid_catalog()
+        c = dict(candidate().to_dict(), difficulty=2, stage='act13d5_ex07#f#')
+        self.provider.query.return_value = {'candidates': [c], 'page': 1}
+        self.provider.get.return_value = dict(self.content, stage_name='act13d5_ex07', difficulty=1)
+        audit = experiment(self.root, 'MN-EX-7', None, raid=True)
+        self.assertEqual(audit['status'], 'failed')
+        self.assertEqual(audit['attempts'][0]['failure_phase'], 'download_recheck')
+        self.dev.assert_not_called()
+        self.execute.assert_not_called()
+
+    def test_raid_zero_exit_without_confirmation_is_not_success(self):
+        self.raid_catalog()
+        self.provider.query.return_value = {'candidates': [dict(candidate().to_dict(), difficulty=3)], 'page': 1}
+        self.provider.get.return_value = dict(self.content, stage_name='act13d5_ex07', difficulty=3)
+        self.outcomes = ['success']
+        self.confirm_raid = False
+        audit = experiment(self.root, 'MN-EX-7', None, raid=True)
+        self.assertEqual(audit['status'], 'failed')
+        self.assertFalse(audit['attempts'][0]['execution']['raid_confirmed'])
+
+    def test_raid_retry_respects_sanity_budget_after_battle_failure(self):
+        self.raid_catalog()
+        self.provider.query.return_value = {'candidates': [dict(candidate(i).to_dict(), difficulty=3)
+                                                         for i in (1, 2)], 'page': 1}
+        self.provider.get.return_value = dict(self.content, stage_name='act13d5_ex07', difficulty=3)
+        self.outcomes = ['battle', 'success']
+        audit = experiment(self.root, 'MN-EX-7', None, raid=True, limits=RetryLimits(2, 2, 18))
+        self.assertEqual(audit['status'], 'failed')
+        self.assertEqual(len(self.paths), 1)
+        self.assertEqual(audit['budget']['sanity_reserved'], 18)
+        self.assertEqual(audit['attempts'][-1]['failure']['category'], 'budget_exhausted')
+
+    def test_raid_cannot_request_normal_proxy_proof_or_acceptance_check(self):
+        for options in ({'prove_capability': True}, {'acceptance_failure': True}):
+            with self.assertRaises(ExperimentError):
+                experiment(self.root, 'MN-EX-7', None, raid=True, **options)
+        self.box_fetch.assert_not_called()
+        self.dev.assert_not_called()
 
     def test_acceptance_injects_only_A_preserves_sources_and_uses_real_retry_path(self):
         (self.root / 'var/data/resource/battle_data.json').write_text(json.dumps({'chars': {'A': {'rarity': 4}}}))
