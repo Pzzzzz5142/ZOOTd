@@ -66,3 +66,19 @@ MaaCore v6.18.0 下移除固定坐标 OCR 窗口，地图回退使用上游模�
 - 09-30 重登时的一张公告也经过人工关闭，随后从正常首页重新发起完整导航。05:00 SDK 更新短暂占用设备锁，两次请求被拒绝，更新结束后重新验证。前置人工处理与设备锁拒绝不计为导航成功。
 
 本次完整离线测试共 246 项：241 项通过，5 项可选浏览器测试跳过。矩阵只证明列出的路径，不证明所有活动布局通用；图标分区、首次教学和 DP-1 的战斗初始化仍是后续验证范围。
+
+## 2026-09-30：Copilot 突袭实机验收
+
+这是提交 `1621c32`、MaaCore v6.18.0 下的当次观察。用户授权自行选择一关突袭实际验收，按 Box 和第一页候选选择主线 1-12；预选时 1-7 的公开作业查询返回 network 错误，未启动设备，1-12 有 5 个 exact 自有阵容候选。实际执行：
+
+```bash
+./bin/zootd copilot-run 1-12 --raid --profile no-support --max-candidates 1 --max-battles 1 --sanity-budget 9
+```
+
+运行 `20260930-165555-b9ebccece2fe` 只执行一个候选和一次战斗，作业 93962（difficulty=3），自有娜仁图亚，无助战，药和源石均禁用。所选突袭地图为 `main_01-12#f#`，单场费用/理智预留为 9，未追加其他战斗。原作业的 `stage_name=main_01-12` 保留不变，执行副本绑定到突袭 Tile；`is_raid=true`，两个文件及快照/回调哈希均复核一致。
+
+262 条当次回调证明：详情页目标编号确认后，先识别并点击 `ChangeToRaidDifficulty`，序号 126 完成 `RaidConfirm` 的 `NormalDifficulty.png` 模板识别（score=0.997445），随后才开始编队。task_id=7 的作业加载、编队、战斗、任务链及全部任务完成均为 true，进程退出码为 0，无终态错误；序号 237 另观察到 `StageDrops-Stars-Adverse.png` 突袭通关图标（score=0.983474）。导航回退使用 `upstream_hsv_white`，3 次 OCR、1 次滑动，无人工点击或页面干预。
+
+原作业 SHA-256 为 `aa5240e74091084e4733080fbe691b50a350b1db170ee2d072354d677d09b127`，执行副本为 `7f09ecda58f65d2aaf9cf038ce8220e010a64a53c02b248cf47ebf61dc882955`，原始回调为 `a03e6ce9bfba6db8db2cd7a7c043d52609ed2c19b92f4d2de4bbf6771bcf97d5`。原始文件与最后截图保留在私有 `var/state/copilot/<运行 ID>/`，不提交账号或设备日志；runtime receipt 保持不变。`battle_proof` 按当时契约仍为 `unproven / raid_saved_proxy_not_supported`，不登记普通代理账本。
+
+此项完成 RAID-02 的单关实机验收，仅覆盖主线入口、自有阵容及一次成功战斗。没有验证常驻活动/EX 入口的突袭执行、突袭助战、失败重试/退款或普通模式状态复位，也不证明普通三星/已保存代理能力。
