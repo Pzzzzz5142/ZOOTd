@@ -25,6 +25,8 @@
 
 2026-09-30 突袭扩展：`copilot-run --raid` 已接入模式隔离的游戏身份、PRTS 搜索映射、难度筛选/下载复核、精确突袭 Tile 执行副本及原生 `is_raid`，成功要求编队前收到同链 `RaidConfirm` 识别。普通模式会确认/恢复普通详情页；突袭不能写入普通代理账本。离线测试覆盖身份/窗口/地图缺失、未声明及普通作业拒绝、下载难度变更、确认缺失/异链/乱序、预算保留和证明模式拒绝；实现验证时未启动游戏。上游依据：[v6.18.0 MultiCopilotTaskPlugin](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/Miscellaneous/MultiCopilotTaskPlugin.cpp)。同日用户授权自行选关后，1-12 突袭以自有娜仁图亚、作业 93962 完成单场实机验收，授权上限 9 理智，完整终态及突袭通关图标均确认；详情见[历史验收记录](../history.md#2026-09-30copilot-突袭实机验收)。不追认普通 NL-8 验收为突袭证明，也不把此次执行成功登记为普通代理能力。
 
+同日 MN-EX-7 未解锁突袭时，旧实现的战后判定虽然拒绝记成功，却未阻止 MAA 打普通关（见[事故记录](../history.md#2026-09-30mn-ex-7-未解锁突袭误打普通)）。RAID-03 将确认移到追加 Copilot 之前的独立零战斗 Custom，绑定目标、模式、设备、任务及完整终态；检查失败停止整轮。原生切换点击超限后也必须识别 `RaidConfirm`，堵住 [ProcessTask 空 exceededNext 返回成功](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/ProcessTask.cpp) 的路径。`tests/test_copilot_preflight.py` 直接用 fake MaaCore API 验证失败时从未追加 Copilot；整轮回归确认不会换下一候选。真实 v6.18.0 仅验证资源加载，未连接设备、启动游戏或消耗理智；新保护的实机验证归入 RAID-04。
+
 协议依据：[MaaCore 集成接口](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/docs/zh-cn/protocol/integration.md)、[CopilotTask](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/src/MaaCore/Task/Interface/CopilotTask.cpp)、[结构化消息](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/src/MaaCore/Common/AsstMsg.h)。单项 copilot_list 启用导航与战斗等待；不把进程退出码或纯文本作业输出当作成功。操作方式见[运维手册](../operations.md#单次-copilot-通关实验phase-3)。
 
 ## 目标

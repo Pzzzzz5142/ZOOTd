@@ -20,7 +20,7 @@
 - `maa_planner/copilot_matcher.py`：独立 experimental 离线 matcher、静态身份映射与候选排序；`tests/test_copilot_matcher.py` 覆盖练度、未知数据、助战和全局分配，不启动游戏。
 - `maa_planner/copilot_retry.py`：候选失败/系统失败分类与候选数、设备执行次数、理智预算；`tests/test_copilot_retry.py` 离线验证 A 失败 B 成功、整轮快照复用、预算及停止边界。
 - `maa_planner/copilot_proof.py` / `copilot_capability.py`：新鲜三星观察、活动/已保存代理证明与用户维护的账号别名；`tests/test_copilot_proof.py` / `tests/test_copilot_capability.py` 验证运行身份、时序、失败拒绝、账号提示、错误提醒、零理智约束和既有账本幂等登记，实机状态见 Phase 5。
-- `maa_planner/copilot_run.py` / `copilot_core.py` / `copilot_static.py`：显式有限候选 Copilot 实验、隔离 Core 回调与静态身份；`tests/test_copilot_run.py` 离线覆盖两种助战策略、身份映射、锁与终态证据。
+- `maa_planner/copilot_run.py` / `copilot_core.py` / `copilot_static.py`：显式有限候选 Copilot 实验、隔离 Core 回调与静态身份；`tests/test_copilot_run.py` 离线覆盖两种助战策略、身份映射、锁与终态证据，`tests/test_copilot_preflight.py` 用 fake MaaCore API 验证突袭模式未确认时不追加作业及零战斗检查的证据顺序。
 - `maa_planner/`：来源适配、确定性策略、库存、能力证明、缓存、阶段账本及 LLM 权限边界。
 - `config/farming.toml`：活动、freshness、选关和库存目标策略。
 - `config/material-recipes.toml`：严格校验的经典 T1→T2→T3 合成链，只用于蓝材料等价库存计算，不执行合成。

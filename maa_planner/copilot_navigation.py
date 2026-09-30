@@ -44,6 +44,8 @@ def navigation_tasks(route: dict) -> dict:
         # The detail panel remembers challenge mode from a previous run.
         # Native recognition/switching finishes before ordinary execution.
         tasks['ZootdStageConfirmed']['next'] = ['NormalConfirm', 'ChangeToNormalDifficulty']
+    if route.get('raid'):
+        tasks.update(raid_preflight_tasks(code))
     # Keep native return recognition first. Some event panels texture the
     # button background: reuse the same MAA arrow template, masking its dark
     # background instead of lowering the native confidence threshold.
@@ -110,3 +112,25 @@ def navigation_tasks(route: dict) -> dict:
             if 'ZootdStage' in following and 'ZootdNavigationLocked' not in following:
                 following.insert(following.index('ZootdStage') + 1, 'ZootdNavigationLocked')
     return tasks
+
+
+def raid_preflight_tasks(code: str) -> dict:
+    """A closed, zero-battle graph; native Copilot also fails closed on runout."""
+    return {
+        'ZootdRaidPreflight': {
+            'baseTask': 'ClickedCorrectStage', 'text': [code, code.replace('-', '')],
+            'fullMatch': True, 'action': 'DoNothing', 'sub': [],
+            'next': ['ZootdRaidConfirmed', 'ZootdRaidSwitch'],
+            'onErrorNext': [], 'exceededNext': []},
+        'ZootdRaidConfirmed': {
+            'baseTask': 'RaidConfirm', 'action': 'DoNothing', 'sub': [],
+            'next': [], 'onErrorNext': [], 'exceededNext': []},
+        'ZootdRaidSwitch': {
+            'baseTask': 'ChangeToRaidDifficulty', 'maxTimes': 3, 'sub': [],
+            'next': ['ZootdRaidConfirmed', 'ZootdRaidSwitch'],
+            'onErrorNext': [], 'exceededNext': []},
+        # ProcessTask returns true on empty exceededNext, even if the clicks
+        # never changed mode. Requiring the real button after runout makes
+        # MultiCopilotTaskPlugin fail before BattleFormationTask instead.
+        'ChangeToRaidDifficulty': {'exceededNext': ['RaidConfirm'], 'onErrorNext': []},
+    }
