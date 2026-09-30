@@ -78,6 +78,23 @@ class PrtsTests(unittest.TestCase):
             content = dict(CONTENT, stage_name=stage)
             self.error('stage_mismatch', lambda: self.client(page([row(content)])).query('1-7'))
 
+    def test_raid_search_and_download_keep_one_scoped_stage_identity(self):
+        from maa_planner.navigation_catalog import NavigationCatalog
+        from tests.test_navigation import fixture
+        catalog = NavigationCatalog(*fixture(), now=150, raid=True)
+        for identity in ('MN-EX-7', 'act13d5_ex07', 'act13d5_ex07#f#'):
+            content = dict(CONTENT, stage_name=identity, difficulty=2, actions=[])
+            opener = Opener(page([row(content)]))
+            result = PrtsCopilotClient(catalog, opener=opener).query('MN-EX-7')
+            self.assertEqual(result['stage'], 'act13d5_ex07#f#')
+            self.assertEqual(result['candidates'][0]['stage'], result['stage'])
+            self.assertIn('level_keyword=act13d5_ex07&', opener.calls[0][0])
+            full = PrtsCopilotClient(catalog, opener=Opener({'status_code': 200, 'data': row(content)}))
+            self.assertEqual(full.get(12, stage=result['stage']), content)
+        wrong = dict(CONTENT, stage_name='act13side_09', difficulty=2, actions=[])
+        self.error('stage_mismatch', lambda: PrtsCopilotClient(catalog, opener=Opener(page([row(wrong)])))
+                   .query('MN-EX-7'))
+
     def test_candidate_code_alias_is_checked(self):
         result = self.client(page([row(dict(CONTENT, stage_name='1-7'))])).query('main_01-07')
         self.assertEqual(result['candidates'][0]['stage'], 'main_01-07')

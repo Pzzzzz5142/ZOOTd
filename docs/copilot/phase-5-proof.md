@@ -22,7 +22,7 @@ P5-04 离线验收：`tests/test_copilot_proof.py` 覆盖旧日志、越界时�
 
 ### 2026-09-28 继续实现
 
-显式 `copilot-run --prove-capability` 在同一 Core、同一设备锁内执行：运行前账号提示 → 地图 → Copilot → 返回首页 → 地图/目标关卡 OCR → 已保存代理检查。每个导航和代理任务必须有匹配设备与 task ID 的完整终态，整个回调流仍要求当次 run、连续序号和父进程时间窗口。战斗终态单独截取，后续 Custom 完成不能覆盖战斗结论。
+显式 `copilot-run --prove-capability` 在同一 Core、同一设备锁内执行：运行前账号提示 → 地图 → Copilot → 返回首页 → 地图/目标关卡 OCR → 已保存代理检查。每个导航和代理任务必须有匹配设备与 task ID 的完整终态，整个回调流仍要求当次 run、连续序号和父进程时间窗口。战斗终态单独截取，后续 Custom 完成不能覆盖战斗结论。2026-09-30 的突袭扩展不进入此证明链：`--raid --prove-capability` 在读取 Box 和启动设备前拒绝，突袭 `battle_proof` 保持 `unproven` 且不登记账本。
 
 账号一致性按用户要求采用提示方式：每次运行前告知用户确保森空岛 Box 与当前游戏为同一国服官服账号，记录归入 `config/farming.toml` 的本地 account 别名；不等待交互确认、不读取游戏 UID、不做战前战后账号比对。已移除 `--bind-account`，不创建或读取旧的账号绑定文件。`account_binding=user_managed` 明确表示账号归属由用户维护，不能解读为自动核验成功。实际发生 Box、启动导航、编队、战斗、代理证明或登记错误时，CLI 输出相应中文提醒及非零退出码，结果 JSON 的 `message` 保存同一提醒。
 

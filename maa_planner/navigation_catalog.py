@@ -71,10 +71,11 @@ def activity_labels(name, all_names):
 
 
 class NavigationCatalog(StageCatalog):
-    """Normal playable stages, including EX and current events omitted by MAA stages.json."""
+    """Playable identities scoped to one explicitly selected difficulty."""
 
-    def __init__(self, tables, installed, tiles, *, now=None, evidence=None):
+    def __init__(self, tables, installed, tiles, *, now=None, evidence=None, raid=False):
         now = time.time() if now is None else now
+        self.raid = raid
         self.evidence = evidence or {}
         self.routes = {}
         game, zones, activities, retro = (tables[t] for t in TABLES)
@@ -100,10 +101,25 @@ class NavigationCatalog(StageCatalog):
             if sid not in stages or act.get('startTime', 0) <= now < act.get('endTime', 0):
                 stages[sid] = stage
         for sid, stage in stages.items():
-            if (stage.get('difficulty') != 'NORMAL' or not text(stage.get('levelId'))
+            if (stage.get('difficulty') != ('FOUR_STAR' if raid else 'NORMAL')
+                    or not text(stage.get('levelId'))
                     or not text(stage.get('code'))
                     or stage.get('diffGroup') not in ('NONE', 'NORMAL', None)):
                 continue
+            query_id = sid
+            # Bind only game-owned challenge records to their normal PRTS
+            # search identity. A suffix or shared code alone is insufficient.
+            normal_id = sid.removesuffix('#f#') if raid else sid
+            normal = stages.get(normal_id, {})
+            challenge = stages.get(normal_id + '#f#', {})
+            has_raid = (normal.get('difficulty') == 'NORMAL'
+                        and challenge.get('difficulty') == 'FOUR_STAR'
+                        and all(normal.get(k) == challenge.get(k)
+                                for k in ('code', 'zoneId', 'levelId', 'diffGroup')))
+            if raid:
+                if normal_id == sid or not has_raid:
+                    continue
+                query_id = normal_id
             zone_id = stage['zoneId']
             zone = zones['zones'].get(zone_id, {})
             rid = retro['zoneToRetro'].get(zone_id)
@@ -176,9 +192,12 @@ class NavigationCatalog(StageCatalog):
                 'locked_texts': list(dict.fromkeys(unlock_texts)),
                 'chapter': int(chapter_match[1]) if chapter_match else None,
                 'select_normal': stage.get('diffGroup') == 'NORMAL',
+                'raid': raid, 'has_raid': has_raid,
             }
             rows.append({'stageId': canonical, 'code': code, 'levelId': stage['levelId']})
-            bindings.append((canonical, sid))
+            bindings.append((canonical, query_id))
+        if not rows:
+            raise PrtsError('stage_identity', 'No playable stages for the requested difficulty.')
         super().__init__(rows)
         for canonical, sid in bindings:
             self.aliases.setdefault(sid.casefold(), set()).add(canonical)
@@ -194,7 +213,8 @@ class NavigationCatalog(StageCatalog):
                 matches = self.short_codes.get(compact_code(value), set())
             if len(matches) == 1:
                 return next(iter(matches))
-        raise PrtsError('stage_identity', 'Unknown or ambiguous normal stage; specify its stageId.')
+        mode = 'raid' if self.raid else 'normal'
+        raise PrtsError('stage_identity', f'Unknown or ambiguous {mode} stage; specify its stageId.')
 
     def route(self, stage, *, require_tiles=False):
         result = dict(self.routes[self.resolve(stage)])
@@ -205,9 +225,9 @@ class NavigationCatalog(StageCatalog):
         return result
 
 
-def load_navigation(root: Path, *, refresh=False):
+def load_navigation(root: Path, *, refresh=False, raid=False):
     tables, evidence = load_tables(root, refresh=refresh)
     resource = root / 'var/data/resource'
     installed = decode((resource / 'stages.json').read_bytes())
     tiles = decode((resource / 'Arknights-Tile-Pos/overview.json').read_bytes())
-    return NavigationCatalog(tables, installed, tiles, evidence=evidence)
+    return NavigationCatalog(tables, installed, tiles, evidence=evidence, raid=raid)

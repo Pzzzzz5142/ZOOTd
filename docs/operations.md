@@ -304,11 +304,15 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 ./bin/zootd copilot-run NL-8 --profile no-support
 # 允许缺少一名干员时借助战，仍然优先 exact 自有阵容
 ./bin/zootd copilot-run NL-8 --profile allow-support
+# 显式授权突袭，可同样选择助战策略和有限重试参数
+./bin/zootd copilot-run MN-EX-7 --raid --profile allow-support
 ```
 
-两种助战策略内置，默认 `no-support`，本机可通过忽略的 `var/config/copilot.toml` 设置 `default_profile` 和 `profiles`（见[配置说明](configuration.md)）。命令授权普通难度战斗，可消耗该关卡理智；所有理智药和源石禁用；默认不执行第二候选，显式重试参数见下文，不调用自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。PRTS 视频攻略不作为可执行候选。
+两种助战策略内置，默认 `no-support`，本机可通过忽略的 `var/config/copilot.toml` 设置 `default_profile` 和 `profiles`（见[配置说明](configuration.md)）。命令默认授权普通难度战斗，`--raid` 显式授权突袭，可消耗所选难度的关卡理智；所有理智药和源石禁用；默认不执行第二候选，显式重试参数见下文，不调用自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。PRTS 视频攻略不作为可执行候选。
 
-导航不再读取逐关白名单。游戏关卡、分区、活动及常驻活动数据从同一上游 Git revision 获取，保存到 `var/cache/copilot-navigation/catalog.json`，缓存最多使用 6 小时；过期刷新失败则停止，不回退到旧活动窗口。关卡代码支持大小写、空格和连字符的无歧义别名，例如 `nl 9`、`ds1`、`mn ex 7`。普通难度与突袭身份分开；当前命令不授权突袭。当期活动和分区必须处于开放窗口；常驻活动从其自己的分区数据生成路线，EX 不沿用普通区。`stages.json` 只用于兼容现有刷图身份，不再决定关卡是否存在；执行作业仍要求安装的 Tile 地图与关卡身份一致。
+导航不再读取逐关白名单。游戏关卡、分区、活动及常驻活动数据从同一上游 Git revision 获取，保存到 `var/cache/copilot-navigation/catalog.json`，缓存最多使用 6 小时；过期刷新失败则停止，不回退到旧活动窗口。关卡代码支持大小写、空格和连字符的无歧义别名，例如 `nl 9`、`ds1`、`mn ex 7`。普通难度与突袭身份分开；`--raid` 要求游戏数据确有 `FOUR_STAR` 关卡及匹配的普通版本，仅有 EX 编号或手写 `#f#` 不构成授权。使用相同 code 或普通 stageId 选关时，程序按参数解析到对应难度；未加 `--raid` 时拒绝突袭 stageId。当前扩展不涵盖独立的 `TOUGH` 磨难环境。当期活动和分区必须处于开放窗口；常驻活动从其自己的分区数据生成路线，EX 不沿用普通区。`stages.json` 只用于兼容现有刷图身份，不再决定关卡是否存在；执行作业仍要求安装的 Tile 地图与所选难度身份一致。
+
+候选按 [MAA 作业协议](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/docs/zh-cn/protocol/copilot-schema.md) 的 `difficulty` 过滤：普通模式保留未声明、0、1、3，突袭只接受明确声明 2 或 3 的作业，下载后再次核对。PRTS 查询仍使用普通关卡搜索 ID，原作业保留不变；执行副本绑定所选难度的精确 Tile stageId，MAA 参数的 `is_raid` 与本轮授权一致。普通模式会在存在突袭版本的关卡详情页确认/切回普通，避免沿用上次突袭状态；突袭成功还要求同一 Copilot 链在编队前给出原生 `RaidConfirm` 模板识别证据。突袭不支持 `--prove-capability` 或 NL-8 失败注入验收，`battle_proof` 保持 `unproven`，不登记普通代理能力。突袭执行已通过离线验证，实机验收需另行指定关卡并授权。
 
 可单独验证导航，不查询作业、不编队、不开战：
 
@@ -349,7 +353,7 @@ Phase 5 的 `battle_proof` 位于各尝试结果：默认 `observed` 只表示�
 ./bin/zootd copilot-run NL-8 --profile allow-support --max-candidates 3 --max-battles 2 --sanity-budget 18
 ```
 
-候选数范围 1–5、战斗执行次数范围 1–3，默认均为 1。允许两次及以上执行时必须显式给出 `--sanity-budget`（0–999）；省略时预算为安装关卡表的单场 `apCost`。缺失或歧义费用会在 Box/设备启动前拒绝。每次设备执行前仍按完整关卡费用预留一场。只有当次完整失败证据确认编队/作业解析失败且尚未开战，或确认实际战败时，才释放这次理智预留。国服自 2025-08-02 起，失败和放弃行动全额返还理智，不限首次（[官方公告](https://ak.hypergryph.com/news/6277)）；当前程序只实现对明确战败的识别，不主动放弃战斗或猜测退款。
+候选数范围 1–5、战斗执行次数范围 1–3，默认均为 1。允许两次及以上执行时必须显式给出 `--sanity-budget`（0–999）；省略时预算为所选难度游戏数据的单场 `apCost`，特殊首次费用取较高值。缺失或歧义费用会在 Box/设备启动前拒绝。每次设备执行前仍按完整关卡费用预留一场。只有当次完整失败证据确认编队/作业解析失败且尚未开战，或普通模式确认实际战败时，才释放这次理智预留。国服自 2025-08-02 起，失败和放弃行动全额返还理智，不限首次（[官方公告](https://ak.hypergryph.com/news/6277)）；当前程序只实现普通模式明确战败后的预算释放，不主动放弃战斗或猜测退款。突袭尚无独立退款证据契约，开战失败仍保留整场预留，下一候选需要足够剩余预算；编队失败未开战仍可释放。
 
 二星通关仍是通关，不能按战败释放；超时、掉线、中断、旧/不完整回调等未知结果保留整场预留并停止。`sanity_reserved` 是已消耗或尚未排除消耗的预算，`sanity_released` 是有依据释放的累计预留，不是直接读取客户端余额。每个 `sanity_settlement` 只结算一次，释放理智不归还 `battle_reservations` 执行名额，因此免费失败也不会无限重试。NL-8 中 A 明确战败、B 成功可在 18 理智预算内完成；若 A 二星通关，再打 B 则仍需额外预算。候选内容变更、删除等在设备执行前被排除时只占候选名额。
 

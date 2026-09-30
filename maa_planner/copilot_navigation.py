@@ -40,6 +40,10 @@ def navigation_tasks(route: dict) -> dict:
                      'exceededNext': ['ZootdStage', 'ZootdMapReady']},
         'ZootdMapReady': {'algorithm': 'JustReturn', 'next': []},
     }
+    if route.get('has_raid') and not route.get('raid'):
+        # The detail panel remembers challenge mode from a previous run.
+        # Native recognition/switching finishes before ordinary execution.
+        tasks['ZootdStageConfirmed']['next'] = ['NormalConfirm', 'ChangeToNormalDifficulty']
     # Keep native return recognition first. Some event panels texture the
     # button background: reuse the same MAA arrow template, masking its dark
     # background instead of lowering the native confidence threshold.

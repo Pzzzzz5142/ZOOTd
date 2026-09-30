@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from .copilot_core import callbacks_are_fresh
+from .copilot_core import callbacks_are_fresh, raid_recognized
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,7 @@ def failure(category, *, retryable=False, evidence=None, sanity_outcome='charged
 
 
 def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
-                     stage, filename, exit_code, worker_phase=None):
+                     stage, filename, exit_code, worker_phase=None, raid=False):
     """Only explicit candidate failures in a fresh, failed Copilot chain retry.
 
     Informational unmet requirements can be recovered by formation itself; they
@@ -117,6 +117,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     all_done = False
     ignored_prts_probe = False
     loaded = forming = formed = battling = chain_failed = False
+    raid_confirmed = False
     missing = None
     requirements = []
     battle_failed = schema_failed = formation_error = unexpected = False
@@ -150,9 +151,13 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
             if loaded or detail.get('stage_name') != stage or detail.get('file_name') != filename:
                 return failure('unknown_execution_failure')
             loaded = True
+        if loaded and not forming and raid_recognized(msg, value):
+            raid_confirmed = True
         if msg == 20001 and subtask == 'BattleFormationTask':
             if not loaded or forming:
                 return failure('unknown_execution_failure')
+            if raid and not raid_confirmed:
+                return failure('navigation_failure')
             forming = True
         if msg == 20002 and subtask == 'BattleFormationTask':
             if not forming or formed:
@@ -215,8 +220,10 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
         # Official CN has refunded failed/abandoned normal operations since
         # 2025-08-02. A two-star CLEAR still costs sanity. Never infer a refund
         # from generic worker/task failure or absence of a successful terminal.
+        # Challenge refunds have no independent evidence contract here, so
+        # keep their full reservation even after an explicit mission failure.
         return failure('battle_failed', retryable=True, evidence=evidence,
-                       sanity_outcome='refunded' if mission_failed and not cleared else 'charged_or_unknown')
+                       sanity_outcome='refunded' if mission_failed and not cleared and not raid else 'charged_or_unknown')
     if forming and not formed and not battling:
         if schema_failed:
             return failure('copilot_schema_failure', retryable=True, sanity_outcome='not_spent')

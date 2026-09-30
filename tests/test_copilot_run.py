@@ -33,6 +33,13 @@ def events():
             e(10002), {'message': 3, 'details': {'finished_tasks': [6, 7]}}]
 
 
+def raid_confirmation():
+    return {'message': 20002, 'details': {
+        'uuid': 'device', 'taskid': 7, 'taskchain': 'Copilot', 'subtask': 'ProcessTask',
+        'details': {'task': 'RaidConfirm', 'algorithm': 'MatchTemplate', 'action': 'DoNothing',
+                    'result': {'template': 'NormalDifficulty.png', 'score': 0.98}}}}
+
+
 def result(records):
     return terminal_result(records, task_id=7, stage='stage', filename='/run/execution.json')
 
@@ -183,6 +190,43 @@ class CopilotRunTests(unittest.TestCase):
             del records[i]
             self.assertEqual(result(records)['status'], 'failed', i)
         self.assertEqual(result([])['status'], 'failed')
+
+    def test_raid_terminal_requires_bound_confirmation_before_formation(self):
+        def reduce(records):
+            return terminal_result(records, task_id=7, stage='stage',
+                                   filename='/run/execution.json', raid=True)
+        self.assertEqual(reduce(events())['status'], 'failed')
+        records = events()
+        records.insert(2, raid_confirmation())
+        self.assertEqual(reduce(records)['status'], 'success')
+        self.assertTrue(reduce(records)['raid_confirmed'])
+        for changes in [{'taskid': 8}, {'uuid': 'other'}, {'taskchain': 'Custom'}]:
+            changed = copy.deepcopy(records)
+            changed[2]['details'].update(changes)
+            self.assertEqual(reduce(changed)['status'], 'failed')
+        for changes in [{'task': 'ChangeToRaidDifficulty'}, {'algorithm': 'JustReturn'},
+                        {'action': 'ClickSelf'}, {'result': {}},
+                        {'result': {'template': 'RaidDifficulty.png', 'score': 0.98}},
+                        {'result': {'template': 'NormalDifficulty.png', 'score': True}}]:
+            changed = copy.deepcopy(records)
+            changed[2]['details']['details'].update(changes)
+            self.assertEqual(reduce(changed)['status'], 'failed')
+        for index in (0, 1, 3, 4, 5):
+            changed = events()
+            changed.insert(index, raid_confirmation())
+            self.assertEqual(reduce(changed)['status'], 'failed')
+        changed = events()
+        changed.insert(2, {'message': 20001, 'details': {
+            'uuid': 'device', 'taskid': 7, 'taskchain': 'Copilot', 'subtask': 'BattleFormationTask'}})
+        changed.insert(3, raid_confirmation())
+        self.assertEqual(reduce(changed)['status'], 'failed')
+
+    def test_cli_forwards_explicit_raid_authorization(self):
+        with patch('maa_planner.copilot_run.experiment', return_value={'status': 'success'}) as run, \
+             patch('maa_planner.copilot_run.signal.signal'), patch('maa_planner.copilot_run.os.umask'), \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(main(['--project-root', '/fixture', 'MN-EX-7', '--raid']), 0)
+        self.assertTrue(run.call_args.kwargs['raid'])
 
     def test_wrong_task_stage_file_device_cannot_prove_success(self):
         for change in ('task', 'device', 'file', 'stage'):
