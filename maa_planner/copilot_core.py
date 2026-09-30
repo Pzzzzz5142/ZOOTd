@@ -64,18 +64,67 @@ def callbacks_are_fresh(events, *, run_id, started_ns, finished_ns):
     return True
 
 
-def raid_recognized(message, value):
+def raid_recognized(message, value, *, tasks=('RaidConfirm', 'Copilot@RaidConfirm')):
     """MAA's native confirmation observes the button for returning to normal."""
     details = value.get('details', {})
     result = details.get('result', {})
     return (message == 20002 and value.get('subtask') == 'ProcessTask'
-            and details.get('task') in ('RaidConfirm', 'Copilot@RaidConfirm')
+            and details.get('task') in tasks
             and details.get('algorithm') == 'MatchTemplate'
             and details.get('action') == 'DoNothing'
             and isinstance(result, dict)
             and result.get('template') in ('NormalDifficulty.png', 'NormalDifficulty-Chapter15.png')
             and type(result.get('score')) in (int, float)
             and math.isfinite(result['score']) and 0 < result['score'] <= 1)
+
+
+def raid_preflight_complete(events, *, task_id, code):
+    """Authorize dispatch only after target + mode in one completed Custom."""
+    active = None
+    stage = confirmed = completed = finished = False
+    for event in events:
+        msg, value = event['message'], event['details']
+        if (msg in (0, 1, 10000, 10004, 20000, 20004)
+                or value.get('what') in ('GameOffline', 'Disconnect', 'Reconnecting', 'ExceededLimit')
+                or value.get('taskchain') in ('Fight', 'Copilot')):
+            return False
+        key = (value.get('uuid'), value.get('taskid'))
+        if (value.get('taskchain') != 'Custom' or type(key[1]) is not int or key[1] != task_id
+                or not isinstance(key[0], str) or not key[0]):
+            return False
+        if msg == 10001:
+            if active is not None:
+                return False
+            active = key
+        elif key != active or finished:
+            return False
+        if completed and msg != 3:
+            return False
+        detail = value.get('details', {})
+        if msg == 20002:
+            if completed or value.get('first') != ['ZootdRaidPreflight']:
+                return False
+            if (detail.get('task') == 'ZootdRaidPreflight'
+                    and value.get('subtask') == 'ProcessTask'
+                    and detail.get('algorithm') == 'OcrDetect' and detail.get('action') == 'DoNothing'
+                    and detail.get('result', {}).get('text') in (code, code.replace('-', ''))):
+                stage = True
+            if confirmed:
+                return False
+            if raid_recognized(msg, value, tasks=('ZootdRaidConfirmed',)):
+                if not stage:
+                    return False
+                confirmed = True
+        if msg == 10002:
+            if completed or not stage or not confirmed:
+                return False
+            completed = True
+        if msg == 3:
+            if (not completed or value.get('finished_tasks') != [task_id]
+                    or any(type(t) is not int for t in value['finished_tasks'])):
+                return False
+            finished = True
+    return finished
 
 
 def terminal_result(events: list[dict], *, task_id: int, stage: str, filename: str, raid=False) -> dict:
@@ -145,6 +194,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
     callback_failed = threading.Event()
     mutex = threading.Lock()
     chains = []
+    records = []
     sequence = 0
     map_observed = threading.Event()
     home_observed = threading.Event()
@@ -156,9 +206,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             try:
                 value = json.loads(raw)
                 with mutex:
-                    output.write(json.dumps({'run_id': run.name, 'sequence': sequence,
-                                             'recorded_ns': time.monotonic_ns(),
-                                             'message': msg, 'details': value}, ensure_ascii=False) + '\n')
+                    record = {'run_id': run.name, 'sequence': sequence,
+                              'recorded_ns': time.monotonic_ns(), 'message': msg, 'details': value}
+                    output.write(json.dumps(record, ensure_ascii=False) + '\n')
+                    records.append(record)
                     sequence += 1
                     output.flush()
                     if home_recognized(msg, value):
@@ -202,6 +253,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     time.sleep(0.2)
                 with mutex:
                     check((10002, task) in chains and not any(m in (0, 1, 10000, 10004) for m, _ in chains))
+                check(not callback_failed.is_set())
+                return task
 
             navigation_attempt = 0
 
@@ -272,6 +325,16 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             if route.get('navigation_only'):
                 progress['phase'] = 'navigation_complete'
                 return 0
+            if route.get('raid'):
+                # Never enqueue a battle until this separate zero-battle task
+                # has proved the requested panel and actual challenge mode.
+                progress['phase'] = 'raid_preflight'
+                with mutex:
+                    first = len(records)
+                preflight_id = run_task(b'Custom', b'{"task_names":["ZootdRaidPreflight"]}')
+                with mutex:
+                    confirmed = raid_preflight_complete(records[first:], task_id=preflight_id, code=route['code'])
+                check(confirmed)
             progress['phase'] = 'execution'
             params = (run / 'params.json').read_bytes()
             task_id = lib.AsstAppendTask(handle, b'Copilot', params)

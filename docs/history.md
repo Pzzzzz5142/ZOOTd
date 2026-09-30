@@ -82,3 +82,11 @@ MaaCore v6.18.0 下移除固定坐标 OCR 窗口，地图回退使用上游模�
 原作业 SHA-256 为 `aa5240e74091084e4733080fbe691b50a350b1db170ee2d072354d677d09b127`，执行副本为 `7f09ecda58f65d2aaf9cf038ce8220e010a64a53c02b248cf47ebf61dc882955`，原始回调为 `a03e6ce9bfba6db8db2cd7a7c043d52609ed2c19b92f4d2de4bbf6771bcf97d5`。原始文件与最后截图保留在私有 `var/state/copilot/<运行 ID>/`，不提交账号或设备日志；runtime receipt 保持不变。`battle_proof` 按当时契约仍为 `unproven / raid_saved_proxy_not_supported`，不登记普通代理账本。
 
 此项完成 RAID-02 的单关实机验收，仅覆盖主线入口、自有阵容及一次成功战斗。没有验证常驻活动/EX 入口的突袭执行、突袭助战、失败重试/退款或普通模式状态复位，也不证明普通三星/已保存代理能力。
+
+## 2026-09-30：MN-EX-7 未解锁突袭误打普通
+
+这是提交 `2d56d30`、MaaCore v6.18.0 下用户自行启动、随后要求监控的运行 `20260930-173552-d5b332a91237`。授权为突袭、一个候选、一次战斗、20 理智；药和源石禁用，执行作业 46891，Tile 为 `act13d5_ex07#f#`。本轮之前普通关尚未通关，突袭未解锁。
+
+375 条回调中，目标编号 MN-EX-7 已确认。task_id=8 加载突袭 Tile 后，三次点击 `ChangeToRaidDifficulty` 均未切换；序号 178 报 `ExceededLimit`（3/3），没有 `RaidConfirm`，MAA 仍继续编队并完成战斗。序号 352 识别到普通三星 `StageDrops-Stars-3.png`；最后截图显示“左手之战的突袭作战已解锁”，证明本轮打通普通并新解锁突袭。Core 退出 0，ZOOTd 的旧战后校验将整轮记为失败 `navigation_failure`，保留 20 理智预留，但这个检查没有阻止实际普通战斗。原始回调 SHA-256 为 `feb6e71aa573f75b5eea054edd528ccf479185b2053488a1366e39dc0f94c9cc`；原记录保持不变，不追认为突袭成功。
+
+原因是 native ProcessTask 在点击超限且 `exceededNext` 为空时返回成功，Copilot 插件因此继续编队，而旧模式证据只用于战后判定。修复增加独立开战前模式检查，未确认时不追加 Copilot；原生切换超限也必须转入 `RaidConfirm`。修复通过离线拒绝/放行、假 Core dispatch、整轮停止回归及真实 Core 资源加载检查；本次修复没有再发起实机战斗。当前操作规则见[运维手册](operations.md#单次-copilot-通关实验phase-3)。

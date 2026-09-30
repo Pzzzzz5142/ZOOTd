@@ -295,6 +295,16 @@ class RetryIntegrationTests(unittest.TestCase):
         kind = self.outcomes.pop(0)
         if kind == 'interrupt':
             raise KeyboardInterrupt
+        if kind == 'raid_preflight':
+            from tests.test_copilot_preflight import preflight_events
+            records = preflight_events()
+            del records[2]
+            for i, record in enumerate(records):
+                record.update(run_id=run.name, sequence=i, recorded_ns=time.monotonic_ns())
+            (run / 'callbacks.jsonl').write_text('\n'.join(json.dumps(e) for e in records))
+            (run / 'worker-result.json').write_text(json.dumps({
+                'run_id': run.name, 'phase': 'raid_preflight', 'exit_code': 1}))
+            return 1
         records = observations() if kind == 'success' else failed_events('missing' if kind in ('offline', 'timeout', 'old') else kind)
         if params['copilot_list'][0]['is_raid'] and self.confirm_raid:
             records.insert(2, raid_confirmation())
@@ -373,6 +383,21 @@ class RetryIntegrationTests(unittest.TestCase):
         audit = experiment(self.root, 'MN-EX-7', None, raid=True)
         self.assertEqual(audit['status'], 'failed')
         self.assertFalse(audit['attempts'][0]['execution']['raid_confirmed'])
+
+    def test_raid_preflight_failure_stops_without_next_candidate_or_battle_task(self):
+        self.raid_catalog()
+        rows = [dict(candidate(i).to_dict(), stage='act13d5_ex07#f#', difficulty=2) for i in (1, 2)]
+        self.provider.query.return_value = {'candidates': rows, 'page': 1}
+        self.content.update(stage_name='act13d5_ex07', difficulty=2)
+        self.outcomes = ['raid_preflight', 'success']
+        audit = experiment(self.root, 'MN-EX-7', None, raid=True, limits=RetryLimits(2, 2, 36))
+        self.assertEqual(audit['status'], 'failed')
+        self.assertEqual(audit['stop_reason'], 'raid_unconfirmed')
+        self.assertEqual(self.execute.call_count, 1)
+        self.assertEqual(len(audit['attempts']), 1)
+        self.assertEqual(audit['attempts'][0]['worker_phase'], 'raid_preflight')
+        self.assertFalse((self.paths[0] / 'task-id.json').exists())
+        self.assertIn('启动作业前停止', audit['message'])
 
     def test_raid_retry_respects_sanity_budget_after_battle_failure(self):
         self.raid_catalog()

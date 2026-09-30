@@ -107,3 +107,5 @@ Copilot 作业允许空干员列表和空干员组。与 MaaCore 编队行为一
 有实机理由的偏离：普通地图 OCR 使用 `isAscii=false`，防止把“通关 DP-1 解锁”剥成目标编号；锁定提示从游戏前置条件和活动提示表收集。深色字分支来自 DP-1 浅色卡片实机截图：白字掩码无命中，反色后能识别编号。这些证据不证明入口 ROI、EX tab 或所有活动地图均通用。离线测试限制生成任务数、候选列表、地图 OCR 和滑动预算，并拒绝未通过详情页确认的候选；跨入口类别的实机覆盖另行记录，不能以 fixture 代替。
 
 `navigation_cli.py` 提供独立的零战斗验收。操作和限制见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
+
+突袭执行在导航与 Copilot dispatch 之间增加独立 Custom 检查。`ZootdRaidPreflight` 复核目标编号，`ZootdRaidSwitch` 最多点击三次，`ZootdRaidConfirmed` 复用原生 `RaidConfirm` 的模板；此图只有模式切换与识别，不包含编队、开战或补充理智入口。worker 在本次内存回调流中绑定该检查的 task ID、设备 UUID 和 `first`，要求编号 → 模式识别 → TaskChainCompleted → AllTasksCompleted 顺序完整，才调用 `AsstAppendTask(Copilot)`。点击超限及系统错误否决，即使 Core 返回成功终态也不放行。失败阶段 `raid_preflight` 分类为不可重试的 `raid_unconfirmed`，预算预留继续保守保留。运行资源 overlay 同时把原生 `ChangeToRaidDifficulty.exceededNext` 改为 `RaidConfirm`，使 Copilot 内部再次切换时也不能因空后续任务跳过确认；不改写 live runtime。战后同链确认要求仍保留。

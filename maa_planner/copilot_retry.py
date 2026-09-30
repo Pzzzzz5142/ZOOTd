@@ -93,7 +93,8 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     """
     if type(exit_code) is not int or exit_code != 0:
         return failure({'adb': 'adb_failure', 'navigation': 'navigation_failure', 'stage_locked': 'stage_locked',
-                        'stage_not_found_on_map': 'stage_not_found_on_map'}.get(
+                        'stage_not_found_on_map': 'stage_not_found_on_map',
+                        'raid_preflight': 'raid_unconfirmed'}.get(
             worker_phase, 'runtime_failure'))
     if (type(task_id) is not int or task_id < 0 or not callbacks_are_fresh(
             events, run_id=run_id, started_ns=started_ns, finished_ns=finished_ns)):

@@ -50,6 +50,8 @@ def failure_message(result):
         return '通关或已保存代理的证明未完成；请检查战斗结果、客户端代理开关及本次运行记录。'
     if category == 'stage_locked':
         return '目标关卡的前置尚未解锁；请先完成游戏要求的前置关卡。'
+    if category == 'raid_unconfirmed':
+        return '未能确认突袭模式，已在启动作业前停止；请先三星通关普通关卡以解锁突袭，并检查本次截图。'
     if category == 'stage_not_found_on_map':
         return '未在地图上找到并确认目标关卡；已停止扫描，请查看本次地图识别记录。'
     if category == 'navigation_failure':
@@ -321,7 +323,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             worker = decode(receipt.read_bytes())
             if worker.get('run_id') == run.name and worker.get('exit_code') == status:
                 worker_phase = worker.get('phase')
-                if worker_phase in {'runtime', 'adb', 'navigation', 'stage_locked', 'stage_not_found_on_map', 'execution', 'proxy_proof'}:
+                if worker_phase in {'runtime', 'adb', 'navigation', 'stage_locked', 'stage_not_found_on_map',
+                                    'raid_preflight', 'execution', 'proxy_proof'}:
                     audit['worker_phase'] = worker_phase
         fresh = callbacks_are_fresh(events, run_id=run.name, started_ns=started_ns, finished_ns=finished_ns)
         # The battle reducer ends at its own AllTasksCompleted. Later Custom

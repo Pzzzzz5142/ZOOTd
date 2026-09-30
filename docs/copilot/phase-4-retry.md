@@ -62,6 +62,7 @@ copilot_schema_failure
 battle_failed
 
 navigation_failure
+raid_unconfirmed
 runtime_failure
 adb_failure
 
