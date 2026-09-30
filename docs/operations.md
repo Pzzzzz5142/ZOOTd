@@ -312,7 +312,7 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 
 导航不再读取逐关白名单。游戏关卡、分区、活动及常驻活动数据从同一上游 Git revision 获取，保存到 `var/cache/copilot-navigation/catalog.json`，缓存最多使用 6 小时；过期刷新失败则停止，不回退到旧活动窗口。关卡代码支持大小写、空格和连字符的无歧义别名，例如 `nl 9`、`ds1`、`mn ex 7`。普通难度与突袭身份分开；`--raid` 要求游戏数据确有 `FOUR_STAR` 关卡及匹配的普通版本，仅有 EX 编号或手写 `#f#` 不构成授权。使用相同 code 或普通 stageId 选关时，程序按参数解析到对应难度；未加 `--raid` 时拒绝突袭 stageId。当前扩展不涵盖独立的 `TOUGH` 磨难环境。当期活动和分区必须处于开放窗口；常驻活动从其自己的分区数据生成路线，EX 不沿用普通区。`stages.json` 只用于兼容现有刷图身份，不再决定关卡是否存在；执行作业仍要求安装的 Tile 地图与所选难度身份一致。
 
-候选按 [MAA 作业协议](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/docs/zh-cn/protocol/copilot-schema.md) 的 `difficulty` 过滤：普通模式保留未声明、0、1、3，突袭只接受明确声明 2 或 3 的作业，下载后再次核对。PRTS 查询仍使用普通关卡搜索 ID，原作业保留不变；执行副本绑定所选难度的精确 Tile stageId，MAA 参数的 `is_raid` 与本轮授权一致。普通模式会在存在突袭版本的关卡详情页确认/切回普通，避免沿用上次突袭状态；突袭成功还要求同一 Copilot 链在编队前给出原生 `RaidConfirm` 模板识别证据。突袭不支持 `--prove-capability` 或 NL-8 失败注入验收，`battle_proof` 保持 `unproven`，不登记普通代理能力。突袭执行已通过离线验证，实机验收需另行指定关卡并授权。
+候选按 [MAA 作业协议](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/docs/zh-cn/protocol/copilot-schema.md) 的 `difficulty` 过滤：普通模式保留未声明、0、1、3，突袭只接受明确声明 2 或 3 的作业，下载后再次核对。PRTS 查询仍使用普通关卡搜索 ID，原作业保留不变；执行副本绑定所选难度的精确 Tile stageId，MAA 参数的 `is_raid` 与本轮授权一致。普通模式会在存在突袭版本的关卡详情页确认/切回普通，避免沿用上次突袭状态；突袭成功还要求同一 Copilot 链在编队前给出原生 `RaidConfirm` 模板识别证据。突袭不支持 `--prove-capability` 或 NL-8 失败注入验收，`battle_proof` 保持 `unproven`，不登记普通代理能力。突袭执行已通过离线验证及 1-12 自有阵容单场实机验收，覆盖范围见[验收记录](history.md#2026-09-30copilot-突袭实机验收)；其他关卡和入口仍需对应设备证据。
 
 可单独验证导航，不查询作业、不编队、不开战：
 
