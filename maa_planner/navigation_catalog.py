@@ -78,6 +78,7 @@ class NavigationCatalog(StageCatalog):
         self.raid = raid
         self.evidence = evidence or {}
         self.routes = {}
+        self.copilot_aliases = {}
         game, zones, activities, retro = (tables[t] for t in TABLES)
         all_names = {title_text(a['name']) for group in (activities['basicInfo'], retro['retroActList'])
                      for a in group.values() if text(a.get('name'))}
@@ -157,6 +158,12 @@ class NavigationCatalog(StageCatalog):
             # Use existing farm identity only with an exact ID/code binding.
             ids = installed_ids.get(code, set()) & {sid, sid + '_perm'}
             canonical = sid + '_perm' if rid and sid + '_perm' in ids else sid
+            if has_raid and not raid:
+                # PRTS lists both-mode scripts authored with the challenge Tile
+                # ID. This content-only alias must never authorize raid input
+                # in the ordinary navigation CLI; execution still filters
+                # difficulty and binds the exact authorized Tile afterwards.
+                self.copilot_aliases.setdefault((sid + '#f#').casefold(), set()).add(canonical)
             cost = stage.get('apCost')
             require(type(cost) is int and 0 <= cost <= 999, 'Invalid game stage cost.')
             if aid:
@@ -223,6 +230,15 @@ class NavigationCatalog(StageCatalog):
         if require_tiles and not result['tile_available']:
             raise PrtsError('stage_map_missing', 'Installed MAA battle map is missing; update the runtime before execution.')
         return result
+
+    def resolve_copilot(self, value):
+        key = value.strip().casefold() if text(value) else ''
+        matches = self.copilot_aliases.get(key, set()) | self.aliases.get(key, set())
+        if matches:
+            if len(matches) != 1:
+                raise PrtsError('stage_identity', 'Ambiguous copilot stage identity.')
+            return next(iter(matches))
+        return self.resolve(value)
 
 
 def load_navigation(root: Path, *, refresh=False, raid=False):

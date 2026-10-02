@@ -96,6 +96,10 @@ class StageCatalog:
             raise PrtsError("stage_identity", "Unknown or ambiguous stage; use an installed canonical stageId.")
         return next(iter(matches))
 
+    def resolve_copilot(self, value: str) -> str:
+        """Content identity may have catalog-verified difficulty aliases."""
+        return self.resolve(value)
+
 
 def operators(value) -> list[dict]:
     require(isinstance(value, list), "opers must be an array.")
@@ -173,7 +177,7 @@ class PrtsCopilotClient:
         content = decode(row["content"])
         require(isinstance(content, dict) and text(content.get("stage_name")), "Invalid copilot stage.")
         try:
-            actual = self.catalog.resolve(content["stage_name"])
+            actual = self.catalog.resolve_copilot(content["stage_name"])
         except PrtsError:
             raise PrtsError("stage_mismatch", "Copilot stage cannot be resolved.") from None
         if actual != stage:

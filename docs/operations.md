@@ -316,6 +316,8 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 
 候选按 [MAA 作业协议](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/docs/zh-cn/protocol/copilot-schema.md) 的 `difficulty` 过滤：普通模式保留未声明、0、1、3，突袭只接受明确声明 2 或 3 的作业，下载后再次核对。PRTS 查询仍使用普通关卡搜索 ID，原作业保留不变；执行副本绑定所选难度的精确 Tile stageId，MAA 参数的 `is_raid` 与本轮授权一致。普通模式会在存在突袭版本的关卡详情页确认/切回普通，避免沿用上次突袭状态。
 
+PRTS 同一列表中的双模式作业可能使用突袭 Tile ID。仅在游戏数据已确认普通/突袭配对时，作业内容解析可将这个 ID 绑定到同一关卡；仍按 `difficulty` 筛选并绑定授权难度的执行地图。此内容别名不开放普通导航命令的突袭 ID 输入；其他关卡、不存在的突袭版本和歧义身份仍拒绝。
+
 突袭需要先三星通关普通关卡以解锁。启动 Copilot 前，程序先执行独立的零战斗模式检查：在同一完成的 Custom 链内确认目标编号和已经切入突袭的模板，再允许追加作业。入口未解锁、切换点击超限、确认缺失或终态不完整均以 `raid_unconfirmed` 停止，不自动代打普通或换候选；截图保留在本次运行目录。Copilot 内部的切换超限也必须转入 `RaidConfirm`，不能直接当成完成继续编队；战后成功判定仍要求同一 Copilot 链在编队前给出原生确认。突袭不支持 `--prove-capability` 或 NL-8 失败注入验收，`battle_proof` 保持 `unproven`，不登记普通代理能力。1-12 自有阵容单场实机验收的范围见[验收记录](history.md#2026-09-30copilot-突袭实机验收)；MN-EX-7 暴露的旧模式保护缺陷及修复验证范围见[事故记录](history.md#2026-09-30mn-ex-7-未解锁突袭误打普通)。新开战前检查已通过离线回归与真实 Core 资源加载检查，尚未重新执行实机战斗。
 
 可单独验证导航，不查询作业、不编队、不开战：
@@ -339,6 +341,8 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 整轮 `success` 要求至少一个候选产生当次相同任务和设备的加载、编队、战斗、任务链及全部任务完成回调，加上正常进程退出；仅代表执行终态，不写代理能力账本。整轮结果中的 `attempts` 保留所有失败及成功，`stop_reason` 解释停止原因；每次尝试的 `failure.category`、`failure.retryable`、`failure_phase` 与日志用于诊断。不能把失败链发出的 `AllTasksCompleted` 当成功。
 
 Phase 5 的 `battle_proof` 位于各尝试结果：默认 `observed` 只表示当次三星模板观察，`unproven` 表示证据不足，不登记账本。显式证明模式如下：
+
+MAA 跳过战中剧情后可能发出 `SkipThePreBattlePlot` 的 ProcessTask 错误。只有同一已开始战斗链先完成跳过按钮与确认按钮的模板识别和点击，才将其视为已完成剧情跳过的尾部错误；无前置识别、错误身份、乱序、重复尾部错误及其他错误仍拒绝。随后仍必须收到本次完整战斗、三星模板和任务终态，剧情跳过不能代替通关证据。
 
 ```bash
 ./bin/zootd copilot-run NL-8 --profile no-support --prove-capability
