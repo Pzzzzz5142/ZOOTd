@@ -83,6 +83,22 @@ class NavigationTests(unittest.TestCase):
         with self.assertRaises(PrtsError):
             catalog.resolve('act13d5_ex07#f#')
 
+    def test_challenge_content_alias_does_not_authorize_challenge_navigation(self):
+        from maa_planner.prts import PrtsCopilotClient
+        from tests.test_prts import row
+        catalog = self.catalog()
+        self.assertEqual(catalog.resolve_copilot('act13d5_ex07#f#'), 'act13d5_ex07')
+        with self.assertRaises(PrtsError):
+            catalog.route('act13d5_ex07#f#')
+        content = {'stage_name': 'act13d5_ex07#f#', 'difficulty': 3,
+                   'doc': {'title': 'Both modes'}, 'opers': [], 'actions': []}
+        candidate, _ = PrtsCopilotClient(catalog)._parse(row(content=content), 'act13d5_ex07')
+        self.assertEqual(candidate.difficulty, 3)
+        with self.assertRaises(PrtsError):
+            PrtsCopilotClient(catalog)._parse(row(content=content), 'act13side_09_perm')
+        with self.assertRaises(PrtsError):
+            catalog.resolve_copilot('act13side_09#f#')  # No game-owned challenge partner.
+
     def test_raid_identity_is_separate_and_bound_to_normal_search(self):
         normal, raid = self.catalog(), self.catalog(raid=True)
         route = raid.route('mn ex 7', require_tiles=True)
