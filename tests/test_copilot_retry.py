@@ -28,6 +28,10 @@ def stamp(records):
 
 
 def failed_events(kind='missing'):
+    if kind == 'two_star_auxiliary_complete':
+        records = failed_events('two_star_complete')
+        records[3:3] = formation_swipe_events()
+        return stamp(records)
     if kind == 'two_star_complete':
         records = failed_events('two_star')
         completed = records.pop(-3)
@@ -69,6 +73,14 @@ def failed_events(kind='missing'):
     return stamp(records)
 
 
+def formation_swipe_events():
+    return [{'message': message, 'details': {
+        'uuid': 'device', 'taskid': 0, 'taskchain': 'Copilot', 'subtask': 'ProcessTask',
+        'class': 'asst::ProcessTask', 'first': ['BattleQuickFormationSkill-SwipeToTheDown'],
+        'pre_task': '', 'details': {'task': 'BattleQuickFormationSkill-SwipeToTheDown',
+        'algorithm': 'JustReturn', 'action': 'Swipe', 'result': {}}}} for message in (20001, 20002)]
+
+
 def classify(records, **kw):
     context = dict(run_id='attempt-A', started_ns=100, finished_ns=200,
                    task_id=7, stage='stage', filename='/attempt/execution.json', exit_code=0)
@@ -77,6 +89,27 @@ def classify(records, **kw):
 
 
 class RetryClassificationTests(unittest.TestCase):
+    def test_native_auxiliary_swipe_only_ignored_during_bound_formation(self):
+        records = failed_events('two_star_auxiliary_complete')
+        self.assertTrue(classify(records)['retryable'])
+        for field, value in [('uuid', 'other-device'), ('taskid', 8), ('taskid', False),
+                             ('first', ['Other']), ('pre_task', 'Other'), ('class', 'Other')]:
+            changed = copy.deepcopy(records)
+            changed[3]['details'][field] = value
+            self.assertFalse(classify(changed)['retryable'])
+        for field, value in [('action', 'ClickSelf'), ('algorithm', 'MatchTemplate'),
+                             ('result', {'template': 'Other.png'})]:
+            changed = copy.deepcopy(records)
+            changed[3]['details']['details'][field] = value
+            self.assertFalse(classify(changed)['retryable'])
+        changed = copy.deepcopy(records)
+        changed[3]['message'] = 20000
+        self.assertFalse(classify(changed)['retryable'])
+        for index in (0, 2, 5, 7, 9):
+            changed = failed_events('two_star_complete')
+            changed[index:index] = formation_swipe_events()
+            self.assertFalse(classify(stamp(changed))['retryable'])
+
     def test_completed_two_star_clear_retries_with_full_cost_and_bound_evidence(self):
         records = failed_events('two_star_complete')
         outcome = classify(records)
@@ -590,7 +623,7 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertEqual(self.paths, [])
 
     def test_completed_two_star_result_tries_B_without_releasing_sanity(self):
-        self.outcomes = ['two_star_complete', 'success']
+        self.outcomes = ['two_star_auxiliary_complete', 'success']
         result = self.run_experiment(sanity_budget=36)
         self.assertEqual(result['status'], 'success', result)
         self.assertEqual(len(result['attempts']), 2)
