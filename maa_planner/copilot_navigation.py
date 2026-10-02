@@ -101,6 +101,12 @@ def navigation_tasks(route: dict) -> dict:
     # stage/event-specific route. Keep the exact target check afterwards.
     if '-EX-' in code:
         tasks['ZootdZoneTab'] = {'baseTask': 'ClickStageName', 'text': ['EX'],
+                                # EX may be a suffix on a dim English footer.
+                                # Stage-name HSV filtering erases this label;
+                                # restrict raw OCR to the selector bar instead.
+                                'roi': [640, 550, 640, 170], 'specialParams': [],
+                                'isAscii': False, 'fullMatch': False,
+                                'ocrReplace': [['[Ee][Xx]', 'EX']],
                                 'next': find, 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReady']}
         find.insert(find.index('ZootdMapReady'), 'ZootdZoneTab')
