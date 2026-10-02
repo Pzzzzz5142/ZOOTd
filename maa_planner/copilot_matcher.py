@@ -15,6 +15,7 @@ class OperatorIdentity:
     # Explicit 1-based Copilot indices, never inferred from Box dictionary order.
     skills: dict[int, str] = field(default_factory=dict)
     modules: dict[int, str] = field(default_factory=dict)
+    has_no_skills: bool = False  # Only authoritative static data can assert absence.
 
 
 class OperatorCatalog:
@@ -25,6 +26,8 @@ class OperatorCatalog:
         for item in identities:
             if not item.id or not item.name or item.id in ids:
                 raise ValueError("Invalid or duplicate operator identity")
+            if type(item.has_no_skills) is not bool or (item.has_no_skills and item.skills):
+                raise ValueError("Invalid static skill absence")
             ids.add(item.id)
             for mapping in (item.skills, item.modules):
                 if any(type(k) is not int or k < 1 or not isinstance(v, str) or not v
@@ -85,6 +88,13 @@ LIMITS = {'elite': 2, 'level': 90, 'skill_level': 10,
           'module': None, 'module_level': 3, 'potential': 6}
 
 
+def skill_placeholder(spec, identity):
+    """Authors commonly leave skill=1 on operators with no selectable skills."""
+    return (identity is not None and identity.has_no_skills
+            and type(spec.get('skill')) is int and spec['skill'] == 1
+            and spec.get('requirements', {}).get('skill_level', 0) == 0)
+
+
 def match_member(spec: dict, box: OperatorBox, catalog: OperatorCatalog) -> MemberMatch:
     identity = catalog.resolve(spec['name'])
     unknown, failed = [], []
@@ -98,7 +108,9 @@ def match_member(spec: dict, box: OperatorBox, catalog: OperatorCatalog) -> Memb
             valid[key] = value
     skill = spec.get('skill')
     skill_id = identity.skills.get(skill) if identity else None
-    if skill not in (None, 0) and skill_id is None:
+    if skill not in (None, 0) and skill_id is None and not skill_placeholder(spec, identity):
+        unknown.append('skill_identity')
+    if identity is not None and identity.has_no_skills and valid.get('skill_level', 0):
         unknown.append('skill_identity')
     module = valid.get('module', 0)
     module_id = identity.modules.get(module) if identity else None

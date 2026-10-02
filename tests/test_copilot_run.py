@@ -13,6 +13,7 @@ from maa_planner.copilot_core import terminal_result, map_recognized, home_recog
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
 from maa_planner.copilot_run import (bind_formation, device, device_lock, execute, experiment, load_policy,
                                      select_candidate, full_candidate, ExperimentError, main, failure_message, ACCOUNT_NOTICE)
+from maa_planner.copilot_run import semiautomatic_title
 from maa_planner.copilot_static import build_catalog
 from maa_planner.operator_box import Operator, OperatorBox
 from maa_planner.prts import CopilotCandidate, StageCatalog, PrtsCopilotClient
@@ -45,6 +46,27 @@ def result(records):
 
 
 class CopilotRunTests(unittest.TestCase):
+    def test_semiautomatic_tags_do_not_infer_requirements_from_prose(self):
+        for title in ('【自用/半自动/改良】关卡', '半自动', '[半自动] test', '（半自动） test'):
+            self.assertTrue(semiautomatic_title(title))
+        for title in ('全自动', '不需要半自动操作', '自动作业（支持手动调整）'):
+            self.assertFalse(semiautomatic_title(title))
+
+    def test_skillless_static_identity_normalizes_only_the_execution_copy(self):
+        catalog = build_catalog({'char_a': {'name': 'A', 'skills': []}},
+                                {'charEquip': {}, 'equipDict': {}},
+                                {'chars': {'char_a': {'name': 'A'}}})
+        self.assertTrue(catalog.resolve('A').has_no_skills)
+        box = OperatorBox('fixture', 'now', 'private',
+                          {'char_a': Operator('char_a', 0, 30, 6, None, {}, {})})
+        choice = candidate()
+        selected = match_candidate(box, choice, catalog)
+        self.assertEqual(selected.status, 'exact')
+        source = {'opers': copy.deepcopy(choice.operators), 'actions': []}
+        bound = bind_formation(source, selected, catalog)
+        self.assertEqual(bound['opers'][0]['skill'], 0)
+        self.assertEqual(source['opers'][0]['skill'], 1)
+
     def test_two_star_result_is_failure_even_after_complete_core_terminal(self):
         records = events()
         observation = {'message': 20002, 'details': {

@@ -23,7 +23,7 @@ from . import copilot_capability
 from .copilot_retry import RetryLimits, RetryBudget, classify_failure, failure
 from .copilot_navigation import navigation_tasks, copilot_result_tasks
 from .navigation_catalog import load_navigation
-from .copilot_matcher import match_candidate, rank_candidates
+from .copilot_matcher import match_candidate, rank_candidates, skill_placeholder
 from .copilot_static import fetch_catalog
 from .prts import PrtsError, CopilotCandidate, PrtsCopilotClient, decode, operators
 from .runtime_receipt import validate_runtime_receipt
@@ -175,6 +175,11 @@ def difficulty_matches(difficulty, *, raid):
     return difficulty in ((2, 3) if raid else (None, 0, 1, 3))
 
 
+def semiautomatic_title(title):
+    """Exclude an explicit standalone tag; do not infer requirements from prose."""
+    return bool(re.search(r'(?:^|[\s【\[（(/])半自动(?=$|[\s】\]）)/])', title))
+
+
 def bind_formation(content, result, catalog):
     """Constrain every group to the matcher's assignment, retaining action names."""
     content = copy.deepcopy(content)
@@ -195,6 +200,9 @@ def bind_formation(content, result, catalog):
         if len(selected) != 1:
             raise ExperimentError('Ambiguous executable group assignment')
         group['opers'] = selected
+    for spec in content.get('opers', []) + [o for g in content.get('groups', []) for o in g['opers']]:
+        if skill_placeholder(spec, catalog.resolve(spec['name'])):
+            spec['skill'] = 0
     return content
 
 
@@ -252,6 +260,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
     reservation = None
     try:
         content = prts.get(candidate.id, stage=canonical)
+        if semiautomatic_title(content.get('doc', {}).get('title', '')):
+            raise CandidateRejected('Downloaded copilot declares a semiautomatic title')
         full = full_candidate(content, candidate)
         if (full.operators, full.groups, full.difficulty) != (candidate.operators, candidate.groups, candidate.difficulty):
             raise CandidateRejected('Selected candidate changed between query and download')
@@ -377,7 +387,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
                           exc.category if isinstance(exc, PrtsError) else type(exc).__name__)
         if 'failure' not in audit:
             if isinstance(exc, CandidateRejected) or (isinstance(exc, PrtsError) and exc.category == 'copilot_not_found'):
-                audit['failure'] = failure('copilot_schema_failure', retryable=True)
+                audit['failure'] = failure('copilot_schema_failure', retryable=True,
+                                          sanity_outcome='not_spent' if reservation is None else 'charged_or_unknown')
             else:
                 category = ('adb_failure' if phase in {'device', 'reset'} else
                             'unknown_execution_failure' if phase == 'terminal' else 'runtime_failure')
@@ -463,15 +474,20 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             page = prts.query(canonical, limit=50)
             candidates = [CopilotCandidate(**c) for c in page['candidates']
                           if difficulty_matches(c['difficulty'], raid=raid)]
+            if len({c.id for c in candidates}) != len(candidates):
+                raise ExperimentError('Duplicate candidate identity in query snapshot')
+            audit['excluded_candidates'] = [
+                {'copilot_id': c.id, 'reason': 'semiautomatic_title'}
+                for c in candidates if semiautomatic_title(c.title)]
+            candidates = [c for c in candidates if not semiautomatic_title(c.title)]
             selected, ranked = select_candidate(box, candidates, catalog, policy['allow_support'])
             audit['query'] = {k: v for k, v in page.items() if k != 'candidates'}
             audit['ranking'] = [r.to_dict() for r in ranked]
-            if len({c.id for c in candidates}) != len(candidates):
-                raise ExperimentError('Duplicate candidate identity in query snapshot')
             snapshot = {'schema': 1, 'stage': canonical, 'stage_code': code,
                         'authorization': audit['authorization'],
                         'stage_catalog_sha256': audit['stage_catalog_sha256'],
                         'query': page, 'ranking': audit['ranking'], 'box': audit['box'],
+                        'excluded_candidates': audit['excluded_candidates'],
                         'static_sources': audit['static_sources']}
             if acceptance_failure:
                 snapshot['acceptance_check'] = audit['acceptance_check']

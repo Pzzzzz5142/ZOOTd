@@ -23,6 +23,20 @@ def group(*names):
 
 
 class MatcherTests(unittest.TestCase):
+    def test_authoritative_skill_absence_accepts_only_an_unconstrained_default(self):
+        catalog = OperatorCatalog([OperatorIdentity('A', 'A', has_no_skills=True)])
+        for skill in (None, 0, 1):
+            result = match_candidate(self.box, candidate([spec(skill=skill)]), catalog)
+            self.assertEqual(result.status, 'exact')
+        for skill, requirements in [(2, {}), (3, {}), (1, {'skill_level': 1}),
+                                     (0, {'skill_level': 7}), (1, {'skill_level': False})]:
+            result = match_candidate(self.box, candidate([spec(skill=skill, **requirements)]), catalog)
+            self.assertEqual(result.status, 'unknown')
+        partial = OperatorCatalog([OperatorIdentity('A', 'A')])
+        self.assertEqual(match_candidate(self.box, candidate([spec(skill=1)]), partial).status, 'unknown')
+        with self.assertRaises(ValueError):
+            OperatorCatalog([OperatorIdentity('A', 'A', {1: 'sA'}, has_no_skills=True)])
+
     def setUp(self):
         self.catalog = OperatorCatalog([
             OperatorIdentity(name, name, {1: name+'s1', 2: name+'s2', 3: name+'s3'}, {1: name+'x', 2: name+'y'})
