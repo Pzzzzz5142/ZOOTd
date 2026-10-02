@@ -158,12 +158,27 @@ def match_member(spec: dict, box: OperatorBox, catalog: OperatorCatalog) -> Memb
                        False, sorted(set(failed)), sorted(set(unknown)))
 
 
-def _assignment(slots, allowed, *, skip=None, reserved=None):
+def member_preference(spec, box, catalog):
+    """Prefer verified training only among author-approved alternatives."""
+    identity = catalog.resolve(spec['name'])
+    operator = box.operators.get(identity.id) if identity else None
+    if operator is None:
+        return (1, 1, 1)
+    skill = effective_skill_level(operator, identity.skills.get(spec.get('skill')))
+    # Missing mastery does not erase a known base level or imply any mastery.
+    if skill is None:
+        skill = operator.main_skill_level
+    return tuple(-value if type(value) is int else 1
+                 for value in (skill, operator.elite, operator.level))
+
+
+def _assignment(slots, allowed, *, preferences, skip=None, reserved=None):
     """Deterministic augmenting-path bipartite matching, not greedy group choice."""
     owner = {}
 
     def visit(slot, seen):
-        members = sorted(slots[slot], key=lambda m: (m.operator_id or '', m.name))
+        members = sorted(slots[slot], key=lambda m:
+                         (*preferences[(slot, m.name)], m.operator_id or '', m.name))
         for member in members:
             identity = member.operator_id
             if member.status not in allowed:
@@ -186,12 +201,15 @@ def _assignment(slots, allowed, *, skip=None, reserved=None):
 
 def match_candidate(box: OperatorBox, candidate: CopilotCandidate,
                     catalog: OperatorCatalog) -> CompatibilityResult:
-    slots = {f'operator:{i}:{spec["name"]}': [match_member(spec, box, catalog)]
+    specs = {f'operator:{i}:{spec["name"]}': [spec]
              for i, spec in enumerate(candidate.operators)}
-    slots.update({f'group:{i}:{group["name"]}':
-                  [match_member(spec, box, catalog) for spec in group['operators']]
+    specs.update({f'group:{i}:{group["name"]}': group['operators']
                   for i, group in enumerate(candidate.groups) if group['operators']})
-    assignment = _assignment(slots, {'yes'})
+    slots = {slot: [match_member(spec, box, catalog) for spec in members]
+             for slot, members in specs.items()}
+    preferences = {(slot, spec['name']): member_preference(spec, box, catalog)
+                   for slot, members in specs.items() for spec in members}
+    assignment = _assignment(slots, {'yes'}, preferences=preferences)
     if assignment is not None:
         return CompatibilityResult(candidate.id, 'exact', assignment, None, None, slots)
 
@@ -201,7 +219,8 @@ def match_candidate(box: OperatorBox, candidate: CopilotCandidate,
                 if certain and (member.status != 'no' or member.unknown or member.operator_id is None):
                     continue
                 identity = member.operator_id or 'unknown:' + member.name
-                result = _assignment(slots, allowed, skip=slot, reserved=identity)
+                result = _assignment(slots, allowed, preferences=preferences,
+                                     skip=slot, reserved=identity)
                 if result is not None:
                     return result, slot, identity
         return None
@@ -211,7 +230,7 @@ def match_candidate(box: OperatorBox, candidate: CopilotCandidate,
         assignment, slot, identity = supported
         return CompatibilityResult(candidate.id, 'support_one', assignment, slot, identity, slots)
     # Unresolved data can enable a full assignment or one replacement; never call it exact.
-    possible = _assignment(slots, {'yes', 'unknown'})
+    possible = _assignment(slots, {'yes', 'unknown'}, preferences=preferences)
     uncertain_support = support({'yes', 'unknown'}, False)
     has_unknown = any(m.unknown for members in slots.values() for m in members)
     status = 'unknown' if has_unknown and (possible is not None or uncertain_support is not None) else 'incompatible'
