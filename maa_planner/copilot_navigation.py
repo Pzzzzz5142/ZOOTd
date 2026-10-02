@@ -142,3 +142,17 @@ def raid_preflight_tasks(code: str) -> dict:
         # MultiCopilotTaskPlugin fail before BattleFormationTask instead.
         'ChangeToRaidDifficulty': {'exceededNext': ['RaidConfirm'], 'onErrorNext': []},
     }
+
+
+def copilot_result_tasks() -> dict:
+    """Let native Core finish two-star results so bounded retries can classify them."""
+    return {
+        'Copilot@EndOfAction': {
+            'next': ['Copilot@StageDrops-Stars-3', 'Copilot@StageDrops-Stars-Adverse',
+                     'Copilot@StageDrops-Stars-2']},
+        'Copilot@StageDrops-Stars-2': {
+            'algorithm': 'MatchTemplate', 'template': 'StageDrops-Stars-2.png',
+            'templThreshold': 0.8, 'roi': [50, 270, 250, 100], 'action': 'DoNothing',
+            'next': ['Copilot@ClickCornerUntilStartButton'],
+            'sub': [], 'onErrorNext': [], 'exceededNext': []},
+    }

@@ -45,6 +45,18 @@ def result(records):
 
 
 class CopilotRunTests(unittest.TestCase):
+    def test_two_star_result_is_failure_even_after_complete_core_terminal(self):
+        records = events()
+        observation = {'message': 20002, 'details': {
+            'uuid': 'device', 'taskid': 7, 'taskchain': 'Copilot', 'subtask': 'ProcessTask',
+            'first': ['Copilot@WaitUntilEndOfAction'], 'details': {
+                'task': 'StageDrops-Stars-2', 'algorithm': 'MatchTemplate', 'action': 'DoNothing',
+                'result': {'template': 'StageDrops-Stars-2.png', 'score': 0.99}}}}
+        records.insert(-2, observation)
+        outcome = result(records)
+        self.assertEqual(outcome['status'], 'failed')
+        self.assertIn('non_three_star_result', outcome['errors'])
+
     def test_device_waits_for_android_boot_after_adb_connects(self):
         boots = iter(['', '1'])
         def command(args):

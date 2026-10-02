@@ -28,6 +28,13 @@ def stamp(records):
 
 
 def failed_events(kind='missing'):
+    if kind == 'two_star_complete':
+        records = failed_events('two_star')
+        completed = records.pop(-3)
+        completed['message'] = 20002
+        records.insert(5, completed)
+        records[-2]['message'] = 10002
+        return stamp(records)
     records = [event(10001), event(20003, what='CopilotListLoadTaskFileSuccess',
                details={'stage_name': 'stage', 'file_name': '/attempt/execution.json'}),
                event(20001, subtask='BattleFormationTask')]
@@ -70,6 +77,32 @@ def classify(records, **kw):
 
 
 class RetryClassificationTests(unittest.TestCase):
+    def test_completed_two_star_clear_retries_with_full_cost_and_bound_evidence(self):
+        records = failed_events('two_star_complete')
+        outcome = classify(records)
+        self.assertEqual(outcome['category'], 'battle_failed')
+        self.assertTrue(outcome['retryable'])
+        self.assertEqual(outcome['sanity_outcome'], 'charged_or_unknown')
+        for index in range(len(records)):
+            changed = copy.deepcopy(records)
+            del changed[index]
+            self.assertFalse(classify(stamp(changed))['retryable'])
+        for field, value in [('uuid', 'other-device'), ('taskid', 8), ('first', ['Other'])]:
+            changed = copy.deepcopy(records)
+            changed[6]['details'][field] = value
+            self.assertFalse(classify(changed)['retryable'])
+        for field, value in [('action', 'ClickSelf'), ('algorithm', 'JustReturn'),
+                             ('result', {'template': 'StageDrops-Stars-3.png', 'score': 0.99}),
+                             ('result', {'template': 'StageDrops-Stars-2.png', 'score': 0.79})]:
+            changed = copy.deepcopy(records)
+            changed[6]['details']['details'][field] = value
+            self.assertFalse(classify(changed)['retryable'])
+        changed = copy.deepcopy(records)
+        contradictory = copy.deepcopy(records[6])
+        contradictory['details']['details']['task'] = 'StageDrops-Stars-3'
+        changed.insert(-2, contradictory)
+        self.assertFalse(classify(stamp(changed))['retryable'])
+
     def test_explicit_candidate_failures(self):
         for kind, category in [('missing', 'formation_missing_operator'),
                                ('requirement', 'formation_requirement_unsatisfied'),
@@ -555,6 +588,19 @@ class RetryIntegrationTests(unittest.TestCase):
         result = self.run_experiment(sanity_budget=0)
         self.assertEqual(result['stop_reason'], 'budget_exhausted')
         self.assertEqual(self.paths, [])
+
+    def test_completed_two_star_result_tries_B_without_releasing_sanity(self):
+        self.outcomes = ['two_star_complete', 'success']
+        result = self.run_experiment(sanity_budget=36)
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(len(result['attempts']), 2)
+        self.assertEqual(result['attempts'][0]['execution']['errors'], ['non_three_star_result'])
+        self.assertEqual(result['attempts'][0]['failure']['category'], 'battle_failed')
+        self.assertEqual(result['budget']['sanity_reserved'], 36)
+        self.assertEqual(result['budget']['sanity_released'], 0)
+        for path in self.paths:
+            tasks = json.loads((path / 'navigation/resource/tasks/tasks.json').read_text())
+            self.assertIn('Copilot@StageDrops-Stars-2', tasks['Copilot@EndOfAction']['next'])
 
     def test_changed_candidate_skips_without_spending_or_reset(self):
         changed = copy.deepcopy(self.content)
