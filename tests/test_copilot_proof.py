@@ -201,6 +201,41 @@ class CopilotProofTests(unittest.TestCase):
                         {'support_used': None}, {'copilot_id': True}, {'task_id': True}):
             self.assert_unproven(observations(), **changes)
 
+    def test_native_default_id_skill_swipe_is_auxiliary_only_during_formation(self):
+        begin = {'message': 20001, 'details': {'uuid': 'device', 'taskid': 7,
+                 'taskchain': 'Copilot', 'subtask': 'BattleFormationTask'}}
+        swipe = {'message': 20002, 'details': {'uuid': 'device', 'taskid': 0,
+                 'taskchain': 'Copilot', 'subtask': 'ProcessTask', 'class': 'asst::ProcessTask',
+                 'first': ['BattleQuickFormationSkill-SwipeToTheDown'], 'pre_task': '',
+                 'details': {'task': 'BattleQuickFormationSkill-SwipeToTheDown', 'action': 'Swipe',
+                             'algorithm': 'JustReturn', 'result': {}}}}
+        def insert(helper=swipe, index=2, forming=True):
+            records = observations()
+            records[index:index] = ([copy.deepcopy(begin)] if forming else []) + [copy.deepcopy(helper)]
+            return stamp(records)
+        self.assertTrue(prove(insert())['three_star'])
+        self.assert_unproven(insert(forming=False))
+        for index in (0, 1, 3, 4, 5, 6):
+            self.assert_unproven(insert(index=index))
+        for field, value in [('uuid', 'wrong'), ('taskid', 8), ('taskid', True),
+                             ('first', ['OtherTask']), ('subtask', 'BattleProcessTask'),
+                             ('class', 'OtherClass'), ('why', 'error')]:
+            changed = copy.deepcopy(swipe)
+            changed['details'][field] = value
+            self.assert_unproven(insert(changed))
+        for field, value in [('task', 'StageDrops-Stars-3'), ('action', 'ClickSelf'),
+                             ('algorithm', 'MatchTemplate')]:
+            changed = copy.deepcopy(swipe)
+            changed['details']['details'][field] = value
+            self.assert_unproven(insert(changed))
+        for msg in (20000, 20004, 10002, 3):
+            changed = copy.deepcopy(swipe)
+            changed['message'] = msg
+            self.assert_unproven(insert(changed))
+        records = insert()
+        del records[4]  # Auxiliary swipe does not replace formation completion.
+        self.assert_unproven(stamp(records))
+
 
 if __name__ == '__main__':
     unittest.main()

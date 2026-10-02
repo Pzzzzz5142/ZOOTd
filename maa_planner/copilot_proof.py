@@ -129,6 +129,19 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
             continue
         if value.get('taskchain') != 'Copilot':
             continue
+        # The native quick-formation UI creates its skill-list swipe helper
+        # with default task ID 0. It is only auxiliary movement: it cannot
+        # establish load, formation, battle, stars, or task-chain completion.
+        if (phase == 1 and forming and msg in (20001, 20002)
+                and active is not None and value.get('uuid') == active[0]
+                and type(value.get('taskid')) is int and value['taskid'] == 0
+                and value.get('subtask') == 'ProcessTask' and value.get('class') == 'asst::ProcessTask'
+                and value.get('first') == ['BattleQuickFormationSkill-SwipeToTheDown']
+                and value.get('pre_task') == ''
+                and detail.get('task') == 'BattleQuickFormationSkill-SwipeToTheDown'
+                and detail.get('action') == 'Swipe' and detail.get('algorithm') == 'JustReturn'
+                and detail.get('result') == {} and not value.get('why') and not value.get('what')):
+            continue
         if (active is None or active != (value.get('uuid'), value.get('taskid'))
                 or type(value.get('taskid')) is not int):
             return reject('wrong_execution_identity')
