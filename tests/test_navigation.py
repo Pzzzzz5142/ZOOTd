@@ -75,6 +75,9 @@ class NavigationTests(unittest.TestCase):
             self.assertEqual(tasks['ZootdZone']['text'], [zone])
             if '-EX-' in route['code']:
                 self.assertEqual(tasks['ZootdZoneTab']['text'], ['EX'])
+                self.assertEqual(tasks['ZootdZoneTab']['specialParams'], [])
+                self.assertEqual(tasks['ZootdZoneTab']['roi'], [640, 550, 640, 170])
+                self.assertFalse(tasks['ZootdZoneTab']['fullMatch'])
             self.assertEqual(tasks['ZootdStageConfirmed']['next'],
                              ['NormalConfirm', 'ChangeToNormalDifficulty'] if route['has_raid'] else [])
         self.assertEqual(catalog.resolve('MN-EX-7'), 'act13d5_ex07')
