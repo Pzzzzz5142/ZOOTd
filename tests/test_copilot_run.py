@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +14,7 @@ from maa_planner.copilot_core import terminal_result, map_recognized, home_recog
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity, match_candidate
 from maa_planner.copilot_run import (bind_formation, device, device_lock, execute, experiment, load_policy,
                                      select_candidate, full_candidate, ExperimentError, main, failure_message, ACCOUNT_NOTICE)
-from maa_planner.copilot_run import semiautomatic_title
+from maa_planner.copilot_run import semiautomatic_title, filter_candidates
 from maa_planner.copilot_static import build_catalog
 from maa_planner.operator_box import Operator, OperatorBox
 from maa_planner.prts import CopilotCandidate, StageCatalog, PrtsCopilotClient
@@ -46,6 +47,30 @@ def result(records):
 
 
 class CopilotRunTests(unittest.TestCase):
+    def test_candidate_selection_only_narrows_the_validated_query(self):
+        options = [candidate(1), candidate(2), candidate(3)]
+        retained, excluded = filter_candidates(options, excluded_ids={1})
+        self.assertEqual([c.id for c in retained], [2, 3])
+        self.assertEqual(excluded, [{'copilot_id': 1, 'reason': 'user_excluded'}])
+        retained, excluded = filter_candidates(options, copilot_id=2)
+        self.assertEqual([c.id for c in retained], [2])
+        self.assertEqual(len(excluded), 2)
+        with self.assertRaises(ExperimentError):
+            filter_candidates(options, copilot_id=4)
+        options[1] = replace(options[1], title='【半自动】test')
+        retained, excluded = filter_candidates(options, copilot_id=2)
+        self.assertEqual(retained, [])
+        self.assertIn({'copilot_id': 2, 'reason': 'semiautomatic_title'}, excluded)
+
+    def test_candidate_selection_rejects_conflicts_before_device_or_query(self):
+        for selected, excluded in ((1, [1]), (0, []), (None, [-1]), (True, [])):
+            with patch('maa_planner.copilot_run.load_policy', return_value={}), \
+                    patch('maa_planner.copilot_run.device') as device, redirect_stderr(io.StringIO()):
+                with self.assertRaises(ExperimentError):
+                    experiment(Path('/fixture'), 'DV-EX-5', None,
+                               copilot_id=selected, exclude_copilot_ids=excluded)
+                device.assert_not_called()
+
     def test_semiautomatic_tags_do_not_infer_requirements_from_prose(self):
         for title in ('【自用/半自动/改良】关卡', '半自动', '[半自动] test', '（半自动） test'):
             self.assertTrue(semiautomatic_title(title))
@@ -443,7 +468,10 @@ class CopilotRunTests(unittest.TestCase):
                 notice = io.StringIO()
                 with redirect_stderr(notice), patch('builtins.input', side_effect=AssertionError('No confirmation prompt')):
                     audit = experiment(root, 'NL-8', None, prove_capability=proof_mode,
-                                       use_sanity_potion=potion)
+                                       use_sanity_potion=potion, copilot_id=1,
+                                       exclude_copilot_ids=[999])
+                self.assertEqual(audit['authorization']['copilot_id'], 1)
+                self.assertEqual(audit['authorization']['exclude_copilot_ids'], [999])
                 self.assertEqual(audit['authorization']['medicine'], 'as_needed' if potion else 0)
                 self.assertEqual(audit['authorization']['stone'], 0)
                 self.assertEqual(notice.getvalue().strip(), ACCOUNT_NOTICE)

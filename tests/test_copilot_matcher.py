@@ -78,6 +78,28 @@ class MatcherTests(unittest.TestCase):
     def test_group_alternative(self):
         self.assertEqual(self.match(groups=[group('B', 'A')]).status, 'exact')
 
+    def test_group_prefers_trained_alternative_without_relaxing_requirements(self):
+        weak = replace(self.operator, elite=0, level=1, main_skill_level=1, skills={})
+        strong = replace(self.operator, id='B', skills={'Bs1': SkillProgress(0)})
+        self.box = replace(self.box, operators={'A': weak, 'B': strong})
+        choices = {'name': 'puller', 'operators': [spec('A', skill=1), spec('B', skill=1)]}
+        result = self.match(groups=[choices])
+        self.assertEqual(result.assignments, {'group:0:puller': 'B'})
+        # Unknown mastery retains only the known base level as a preference.
+        self.box.operators['B'] = replace(strong, skills=None)
+        self.assertEqual(self.match(groups=[choices]).assignments, result.assignments)
+        # A higher preference cannot turn an unmet encoded requirement into yes.
+        choices['operators'][1]['requirements'] = {'level': 91}
+        self.assertEqual(self.match(groups=[choices]).assignments, {'group:0:puller': 'A'})
+
+    def test_group_training_uses_selected_skill_and_still_reserves_fixed_operators(self):
+        self.box.operators['B'] = replace(self.operator, id='B', skills={'Bs3': SkillProgress(1)})
+        result = self.match(groups=[group('B', 'A')])
+        self.assertEqual(result.assignments, {'group:0:choice': 'A'})
+        result = self.match([spec('A')], [group('B', 'A')])
+        self.assertEqual(result.status, 'exact')
+        self.assertEqual(result.assignments['group:0:choice'], 'B')
+
     def test_global_group_assignment(self):
         self.box.operators['B'] = replace(self.operator, id='B')
         result = self.match(groups=[group('A', 'B'), group('A')])

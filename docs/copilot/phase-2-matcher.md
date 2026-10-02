@@ -25,6 +25,7 @@
 - 模组按指定编号映射后的 canonical ID 检查解锁与等级，要求模组但省略等级时至少为 1。没有模组数据或指定记录时为 unknown；明确锁定/等级不足为不满足。只写 module_level 却未指定模组为 unknown。
 - requirement 使用 [MAA 作业协议](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/docs/zh-cn/protocol/copilot-schema.md) 的 `elite`、`level`、`skill_level`、`module`、`module_level`、`potential`。省略或合法的 0 表示未声明该项约束；未知字段、错误类型（含 bool）、越界值为 unknown，不解析说明文字。
 - 先寻找完全确认满足的全局二分图匹配；失败后仅允许替换一个已确认缺失或练度不足的位置，且助战身份不能与其他位置重复。这样得到的 support_one 仅是静态尝试资格，不证明真实助战可用。未知条件不能通过“借助战”静默消除；若未知数据可能补齐分配则为 unknown，即使允许一次替换仍无法分配则为 incompatible。
+- 替换组在可分配成员中优先已知的所选技能等级、精英化和等级（降序），最后 canonical ID 升序；所选技能专精未知时仅用已知主技能等级排序。偏好不改变成员资格、作者要求或全局去重，不推断文本要求。
 - 排序依次为状态、hot_score、rating_level、rating_ratio、views（均降序），最后 ID 升序；缺失或无效热度按 0，拒绝重复候选 ID。不使用 difficulty 或 LLM 推测成功率。
 - 本阶段仅提供离线 Python API；`copilot-run` 仍属于 Phase 3，不接入已有 query/get 命令、daily、定时器或恢复 controller。
 

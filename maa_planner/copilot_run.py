@@ -180,6 +180,22 @@ def semiautomatic_title(title):
     return bool(re.search(r'(?:^|[\s【\[（(/])半自动(?=$|[\s】\]）)/])', title))
 
 
+def filter_candidates(candidates, *, copilot_id=None, excluded_ids=()):
+    """Selection narrows the fresh, difficulty-filtered query; never bypass it."""
+    if copilot_id is not None and not any(c.id == copilot_id for c in candidates):
+        raise ExperimentError('Selected Copilot ID is absent from the first 50 difficulty-matched results')
+    retained, excluded = [], []
+    for candidate in candidates:
+        reason = ('semiautomatic_title' if semiautomatic_title(candidate.title) else
+                  'user_excluded' if candidate.id in excluded_ids else
+                  'not_selected' if copilot_id is not None and candidate.id != copilot_id else None)
+        if reason:
+            excluded.append({'copilot_id': candidate.id, 'reason': reason})
+        else:
+            retained.append(candidate)
+    return retained, excluded
+
+
 def bind_formation(content, result, catalog):
     """Constrain every group to the matcher's assignment, retaining action names."""
     content = copy.deepcopy(content)
@@ -408,10 +424,19 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
 
 def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None,
                acceptance_failure: bool = False, prove_capability: bool = False, raid: bool = False,
-               use_sanity_potion: bool = False) -> dict:
+               use_sanity_potion: bool = False, copilot_id: int | None = None,
+               exclude_copilot_ids=()) -> dict:
     limits = limits or RetryLimits()
     policy = load_policy(root, profile)
     print(ACCOUNT_NOTICE, file=sys.stderr, flush=True)
+    excluded_ids = set(exclude_copilot_ids)
+    if any(type(value) is not int or value <= 0 for value in excluded_ids) or (
+            copilot_id is not None and (type(copilot_id) is not int or copilot_id <= 0)):
+        raise ExperimentError('Copilot IDs must be positive integers')
+    if copilot_id in excluded_ids:
+        raise ExperimentError('Selected Copilot ID is also excluded')
+    if acceptance_failure and (copilot_id is not None or excluded_ids):
+        raise ExperimentError('Acceptance check does not allow candidate selection overrides')
     if type(use_sanity_potion) is not bool:
         raise ExperimentError('Medicine permission must be an explicit boolean')
     if acceptance_failure and use_sanity_potion:
@@ -433,7 +458,9 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
              'authorization': {'max_candidates': limits.max_candidates, 'max_battles': limits.max_battles,
                                'sanity_budget': limits.sanity_budget,
                                'medicine': 'as_needed' if use_sanity_potion else 0,
-                               'stone': 0, 'raid': raid}}
+                               'stone': 0, 'raid': raid,
+                               'copilot_id': copilot_id,
+                               'exclude_copilot_ids': sorted(excluded_ids)}}
     if acceptance_failure:
         audit['acceptance_check'] = 'injected_formation_failure_then_unmodified_candidate'
     phase = 'readiness'
@@ -476,10 +503,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                           if difficulty_matches(c['difficulty'], raid=raid)]
             if len({c.id for c in candidates}) != len(candidates):
                 raise ExperimentError('Duplicate candidate identity in query snapshot')
-            audit['excluded_candidates'] = [
-                {'copilot_id': c.id, 'reason': 'semiautomatic_title'}
-                for c in candidates if semiautomatic_title(c.title)]
-            candidates = [c for c in candidates if not semiautomatic_title(c.title)]
+            candidates, audit['excluded_candidates'] = filter_candidates(
+                candidates, copilot_id=copilot_id, excluded_ids=excluded_ids)
             selected, ranked = select_candidate(box, candidates, catalog, policy['allow_support'])
             audit['query'] = {k: v for k, v in page.items() if k != 'candidates'}
             audit['ranking'] = [r.to_dict() for r in ranked]
@@ -577,6 +602,10 @@ def main(argv=None):
     parser.add_argument('--max-candidates', type=int, default=1)
     parser.add_argument('--max-battles', type=int, default=1)
     parser.add_argument('--sanity-budget', type=int)
+    parser.add_argument('--copilot-id', type=int,
+                        help='Use only this ID from the first 50 difficulty-matched query results')
+    parser.add_argument('--exclude-copilot-id', type=int, action='append', default=[],
+                        help='Exclude a known unsuitable ID; repeat to exclude more candidates')
     parser.add_argument('--acceptance-formation-failure', action='store_true',
                         help='NL-8 hardware test only: inject an impossible formation level into candidate A')
     parser.add_argument('--prove-capability', action='store_true',
@@ -594,7 +623,8 @@ def main(argv=None):
         result = experiment(args.project_root.resolve(), args.stage, args.profile, limits=limits,
                             acceptance_failure=args.acceptance_formation_failure,
                             prove_capability=args.prove_capability, raid=args.raid,
-                            use_sanity_potion=args.use_sanity_potion)
+                            use_sanity_potion=args.use_sanity_potion,
+                            copilot_id=args.copilot_id, exclude_copilot_ids=args.exclude_copilot_id)
         if result['status'] != 'success':
             print(result.get('message') or failure_message(result), file=sys.stderr)
         print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'failure_phase', 'error', 'message')

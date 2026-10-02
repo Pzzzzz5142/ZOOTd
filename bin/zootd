@@ -295,6 +295,7 @@ Commands:
                         Medicine: --use-sanity-potion explicitly allows medicines only
                         Raid: explicit challenge mode, requires compatible copilot
                         Retry: --max-candidates N --max-battles N --sanity-budget N
+                        Select: --copilot-id ID or repeated --exclude-copilot-id ID
                         Proof: --prove-capability (normal mode, no-support only)
   box-sync [--uid UID]   Experimental: read-only operator Box sync (no game launch)
   doctor                Check dependencies and the promoted runtime receipt
