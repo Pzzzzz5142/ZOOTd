@@ -21,6 +21,7 @@
 - `match_candidate(box, candidate, catalog)` 返回 `CompatibilityResult`；`rank_candidates(box, candidates, catalog)` 返回排序后的结果。结果包含每个位置的成员诊断、canonical ID 分配、助战位置/干员和 `support_needed`；不包含 Box 账号身份。固定位置与 group 都必须各占一个不同干员。
 - `OperatorCatalog` 接受独立静态 `OperatorIdentity`：名称、canonical ID、从 1 开始的技能/模组编号到 canonical ID 的显式映射。`from_battle_data(data, skills=..., modules=...)` 可读取本机 MAA 名称表；本机表不含技能/模组映射，必须由调用方提供经过核对的映射，不能从 Box 字典顺序推断。未知名称、同名歧义、缺失编号映射均保留 unknown；本阶段不下载或维护另一份游戏数据缓存。
 - 精英化、等级、潜能逐项比较下限；技能选择还检查 E0/E1/E2 对应的 1/2/3 技能解锁。技能要求不超过 7 时直接检查主技能等级，超过 7 时按所选 canonical skill 的 `main_skill_level + mastery` 判断。未选技能却要求专精时为 unknown。
+- 静态游戏数据明确声明技能列表为空时，`OperatorIdentity.has_no_skills` 才为 true；普通缺失映射保持 unknown。此类干员未声明技能等级要求时可接受作者默认的 `skill=1` 占位值，执行副本规范为 0；要求不存在的技能或大于 0 的技能等级仍为 unknown。
 - 模组按指定编号映射后的 canonical ID 检查解锁与等级，要求模组但省略等级时至少为 1。没有模组数据或指定记录时为 unknown；明确锁定/等级不足为不满足。只写 module_level 却未指定模组为 unknown。
 - requirement 使用 [MAA 作业协议](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/docs/zh-cn/protocol/copilot-schema.md) 的 `elite`、`level`、`skill_level`、`module`、`module_level`、`potential`。省略或合法的 0 表示未声明该项约束；未知字段、错误类型（含 bool）、越界值为 unknown，不解析说明文字。
 - 先寻找完全确认满足的全局二分图匹配；失败后仅允许替换一个已确认缺失或练度不足的位置，且助战身份不能与其他位置重复。这样得到的 support_one 仅是静态尝试资格，不证明真实助战可用。未知条件不能通过“借助战”静默消除；若未知数据可能补齐分配则为 unknown，即使允许一次替换仍无法分配则为 incompatible。

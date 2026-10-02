@@ -25,7 +25,7 @@ def build_catalog(chars: dict, equips: dict, battle: dict) -> OperatorCatalog:
             if type(index) is int and index > 0:
                 require(index not in modules, 'Ambiguous module display order.')
                 modules[index] = module
-        identities.append(OperatorIdentity(key, row['name'], skills, modules))
+        identities.append(OperatorIdentity(key, row['name'], skills, modules, has_no_skills=not row['skills']))
     return OperatorCatalog(identities)
 
 

@@ -307,6 +307,36 @@ class RetryClassificationTests(unittest.TestCase):
 
 
 class RetryIntegrationTests(unittest.TestCase):
+    def test_semiautomatic_candidate_is_excluded_before_any_device_reservation(self):
+        rows = self.provider.query.return_value['candidates']
+        rows[0]['title'] = '【自用/半自动/改良】test'
+        self.outcomes = ['success']
+        result = self.run_experiment(max_candidates=1, max_battles=1, sanity_budget=18)
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(result['copilot_id'], 2)
+        self.assertEqual(result['excluded_candidates'], [{'copilot_id': 1, 'reason': 'semiautomatic_title'}])
+        self.assertEqual(len(result['attempts']), 1)
+        self.assertEqual(result['budget']['battle_reservations'], 1)
+        self.assertEqual(result['budget']['sanity_reserved'], 18)
+        for row in rows:
+            row['title'] = '【半自动】test'
+        self.paths = []
+        result = self.run_experiment()
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(self.paths, [])
+        self.assertEqual(result['budget']['battle_reservations'], 0)
+
+    def test_downloaded_semiautomatic_title_is_rejected_before_device_use(self):
+        changed = copy.deepcopy(self.content)
+        changed['doc'] = {'title': '【半自动】test'}
+        self.provider.get.side_effect = [changed, self.content]
+        self.outcomes = ['success']
+        result = self.run_experiment(max_battles=1, sanity_budget=18)
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(result['copilot_id'], 2)
+        self.assertEqual(len(self.paths), 1)
+        self.assertEqual(result['attempts'][0]['failure']['sanity_outcome'], 'not_spent')
+
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
