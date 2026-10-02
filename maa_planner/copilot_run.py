@@ -243,7 +243,8 @@ def acceptance_formation_failure(content, box, catalog, battle):
 
 
 def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
-            code, route, budget, get_address, restart, snapshot_sha256, acceptance_failure=False, proof_context=None):
+            code, route, budget, get_address, restart, snapshot_sha256, acceptance_failure=False,
+            proof_context=None, use_sanity_potion=False):
     audit = {'status': 'failed', 'copilot_id': candidate.id, 'run_dir': str(run),
              'snapshot_sha256': snapshot_sha256, 'raid': route['raid'],
              'stage': canonical, 'battle_id': route['battle_id']}
@@ -276,7 +277,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         filename = run / 'execution.json'
         atomic_write_json(filename, content, mode=0o600)
         params = {'copilot_list': [{'filename': str(filename), 'stage_name': code, 'is_raid': route['raid']}],
-                  'formation': True, 'loop_times': 1, 'use_sanity_potion': False,
+                  'formation': True, 'loop_times': 1, 'use_sanity_potion': use_sanity_potion,
                   'add_trust': False, 'ignore_requirements': False,
                   'support_unit_usage': 2 if checked.support_needed else 0}
         if checked.support_needed:
@@ -288,6 +289,11 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         overlay = run / 'navigation/resource/tasks'
         overlay.mkdir(parents=True)
         tasks = navigation_tasks(route)
+        # Medicine permission never authorizes originite, including when the
+        # refill dialog falls back to the stone page after medicines run out.
+        for task in ('UseStone', 'StoneConfirm', 'StoneConfirmWait'):
+            tasks[task] = {'algorithm': 'JustReturn', 'action': 'Stop', 'next': [],
+                           'sub': [], 'onErrorNext': [], 'exceededNext': []}
         atomic_write_json(run / 'navigation.json', route, mode=0o600)
         if proof_context:
             tasks.update(copilot_capability.proof_tasks(code))
@@ -389,10 +395,15 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
 
 
 def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None,
-               acceptance_failure: bool = False, prove_capability: bool = False, raid: bool = False) -> dict:
+               acceptance_failure: bool = False, prove_capability: bool = False, raid: bool = False,
+               use_sanity_potion: bool = False) -> dict:
     limits = limits or RetryLimits()
     policy = load_policy(root, profile)
     print(ACCOUNT_NOTICE, file=sys.stderr, flush=True)
+    if type(use_sanity_potion) is not bool:
+        raise ExperimentError('Medicine permission must be an explicit boolean')
+    if acceptance_failure and use_sanity_potion:
+        raise ExperimentError('The NL-8 acceptance check does not authorize medicines')
     if raid and (prove_capability or acceptance_failure):
         raise ExperimentError('Raid mode does not support saved proxy proof or the NL-8 acceptance check')
     if prove_capability and (policy['allow_support'] or acceptance_failure):
@@ -408,7 +419,9 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
              'policy': policy, 'run_dir': str(run), 'status': 'failed', 'attempts': [],
              'proof_requested': prove_capability, 'account_binding': 'user_managed',
              'authorization': {'max_candidates': limits.max_candidates, 'max_battles': limits.max_battles,
-                               'sanity_budget': limits.sanity_budget, 'medicine': 0, 'stone': 0, 'raid': raid}}
+                               'sanity_budget': limits.sanity_budget,
+                               'medicine': 'as_needed' if use_sanity_potion else 0,
+                               'stone': 0, 'raid': raid}}
     if acceptance_failure:
         audit['acceptance_check'] = 'injected_formation_failure_then_unmodified_candidate'
     phase = 'readiness'
@@ -491,7 +504,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                                       code=code, route=route, budget=budget, get_address=get_address,
                                       restart=dispatched, snapshot_sha256=audit['snapshot_sha256'],
                                       acceptance_failure=acceptance_failure and budget.candidates == 1,
-                                      proof_context=proof_context)
+                                      proof_context=proof_context, use_sanity_potion=use_sanity_potion)
                     dispatched |= 'worker_exit_code' in outcome
                     audit['attempts'].append(outcome)
                     audit['copilot_id'] = candidate.id
@@ -542,6 +555,8 @@ def main(argv=None):
     parser.add_argument('stage')
     parser.add_argument('--raid', action='store_true', help='Explicitly authorize challenge mode (突袭)')
     parser.add_argument('--profile', choices=('no-support', 'allow-support'))
+    parser.add_argument('--use-sanity-potion', action='store_true',
+                        help='Explicitly allow sanity medicines as needed; originite remains forbidden')
     parser.add_argument('--max-candidates', type=int, default=1)
     parser.add_argument('--max-battles', type=int, default=1)
     parser.add_argument('--sanity-budget', type=int)
@@ -561,7 +576,8 @@ def main(argv=None):
     try:
         result = experiment(args.project_root.resolve(), args.stage, args.profile, limits=limits,
                             acceptance_failure=args.acceptance_formation_failure,
-                            prove_capability=args.prove_capability, raid=args.raid)
+                            prove_capability=args.prove_capability, raid=args.raid,
+                            use_sanity_potion=args.use_sanity_potion)
         if result['status'] != 'success':
             print(result.get('message') or failure_message(result), file=sys.stderr)
         print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'failure_phase', 'error', 'message')
