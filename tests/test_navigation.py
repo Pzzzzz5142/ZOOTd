@@ -80,6 +80,9 @@ class NavigationTests(unittest.TestCase):
                 self.assertFalse(tasks['ZootdZoneTab']['fullMatch'])
                 from maa_planner.navigation_vision import normalize
                 self.assertEqual(normalize('RHINE-Ex', tasks['ZootdZoneTab']['ocrReplace']), 'RHINE-EX')
+                self.assertEqual(normalize('巨x', tasks['ZootdZoneTab']['ocrReplace']), 'EX')
+                self.assertEqual(normalize('巨X', tasks['ZootdZoneTab']['ocrReplace']), 'EX')
+                self.assertEqual(normalize('其他巨x文字', tasks['ZootdZoneTab']['ocrReplace']), '其他巨x文字')
             self.assertEqual(tasks['ZootdStageConfirmed']['next'],
                              ['NormalConfirm', 'ChangeToNormalDifficulty'] if route['has_raid'] else [])
         self.assertEqual(catalog.resolve('MN-EX-7'), 'act13d5_ex07')
