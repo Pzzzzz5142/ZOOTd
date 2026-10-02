@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from .copilot_core import callbacks_are_fresh, raid_recognized
+from .copilot_core import callbacks_are_fresh, raid_recognized, two_star_recognized
 
 
 @dataclass(frozen=True)
@@ -85,7 +85,7 @@ def failure(category, *, retryable=False, evidence=None, sanity_outcome='charged
 
 def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                      stage, filename, exit_code, worker_phase=None, raid=False):
-    """Only explicit candidate failures in a fresh, failed Copilot chain retry.
+    """Only explicit candidate failures in a fresh Copilot chain retry.
 
     Informational unmet requirements can be recovered by formation itself; they
     become rejection reasons only with OperatorMissing + TaskChainError and no
@@ -122,7 +122,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     missing = None
     requirements = []
     battle_failed = schema_failed = formation_error = unexpected = False
-    mission_failed = cleared = False
+    mission_failed = cleared = two_star = battle_completed = successful_stars = False
     evidence = []
     for event in events:
         msg, value = event['message'], event['details']
@@ -144,8 +144,15 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 return failure('unknown_execution_failure')
             all_done = True
             continue
-        if msg == 10002 or chain_failed:
+        if chain_failed:
             return failure('unknown_execution_failure')
+        if msg == 10002:
+            # Core can complete its result-page cleanup after a two-star CLEAR.
+            # This is a candidate failure, with the full sanity cost retained.
+            if not (two_star and battle_completed and not mission_failed and not successful_stars):
+                return failure('unknown_execution_failure')
+            chain_failed = True
+            continue
         if msg == 10000:
             chain_failed = True
         if msg == 20003 and what == 'CopilotListLoadTaskFileSuccess':
@@ -168,6 +175,10 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
             if not formed or battling:
                 return failure('unknown_execution_failure')
             battling = True
+        if msg == 20002 and subtask == 'BattleProcessTask':
+            if not battling or battle_completed:
+                return failure('unknown_execution_failure')
+            battle_completed = True
         if msg == 20003 and what == 'BattleFormationOperUnavailable' and subtask == 'BattleFormationTask' and forming and not formed:
             name, kind = detail.get('oper_name'), detail.get('requirement_type')
             if isinstance(name, str) and name and kind in ('elite', 'level', 'skill_level', 'module'):
@@ -188,14 +199,17 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
             result = detail.get('result', {})
             if task in {'StageDrops-Stars-2', 'StageDrops-Stars-3', 'StageDrops-Stars-Adverse'}:
                 cleared = True
+            if task in {'StageDrops-Stars-3', 'StageDrops-Stars-Adverse'}:
+                successful_stars = True
+            if two_star_recognized(msg, value):
+                two_star = battle_failed = True
+                evidence.append({'sequence': event['sequence'], 'task': task})
             if (value.get('first') == ['Copilot@WaitUntilEndOfAction']
                     and isinstance(result, dict)
                     and type(result.get('score')) in (float, int)
                     and math.isfinite(result['score']) and 0 < result['score'] <= 1
-                    and ((task == 'FightMissionFailed' and detail.get('algorithm') == 'OcrDetect'
-                          and detail.get('action') == 'ClickSelf' and result.get('text') == '任务失败')
-                         or (task == 'StageDrops-Stars-2' and detail.get('algorithm') == 'MatchTemplate'
-                             and result.get('template') == 'StageDrops-Stars-2.png'))):
+                    and task == 'FightMissionFailed' and detail.get('algorithm') == 'OcrDetect'
+                    and detail.get('action') == 'ClickSelf' and result.get('text') == '任务失败'):
                 battle_failed = True
                 mission_failed |= task == 'FightMissionFailed'
                 evidence.append({'sequence': event['sequence'], 'task': task})
@@ -215,7 +229,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 unexpected = True
         if msg == 20000 and subtask not in {'BattleFormationTask', 'BattleProcessTask', 'ProcessTask'}:
             unexpected = True
-    if not loaded or not chain_failed or not all_done or unexpected:
+    if not loaded or not chain_failed or not all_done or unexpected or (two_star and successful_stars):
         return failure('unknown_execution_failure')
     if formed and battling and battle_failed:
         # Official CN has refunded failed/abandoned normal operations since
