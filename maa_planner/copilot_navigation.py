@@ -130,9 +130,11 @@ def raid_preflight_tasks(code: str) -> dict:
             'onErrorNext': [], 'exceededNext': []},
         'ZootdRaidConfirmed': {
             'baseTask': 'RaidConfirm', 'action': 'DoNothing', 'sub': [],
+            'template': ['NormalDifficulty.png', 'NormalDifficulty-Chapter15.png'],
             'next': [], 'onErrorNext': [], 'exceededNext': []},
         'ZootdRaidSwitch': {
             'baseTask': 'ChangeToRaidDifficulty', 'maxTimes': 3, 'sub': [],
+            'template': ['RaidDifficulty.png', 'RaidDifficulty-Chapter15.png'],
             'next': ['ZootdRaidConfirmed', 'ZootdRaidSwitch'],
             'onErrorNext': [], 'exceededNext': []},
         # ProcessTask returns true on empty exceededNext, even if the clicks
