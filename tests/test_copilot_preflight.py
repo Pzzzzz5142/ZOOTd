@@ -31,6 +31,35 @@ def confirmed(records):
 
 
 class PreflightEvidenceTests(unittest.TestCase):
+    def test_device_statistics_do_not_replace_or_invalidate_task_evidence(self):
+        for what, stats in [('ScreencapCost', {'avg': 161, 'max': 175, 'min': 150}),
+                            ('EmulatorFPS', {'fps': 60, 'refresh_period_ns': 16666666})]:
+            telemetry = {'message': 2, 'details': {'uuid': 'device', 'what': what, 'details': stats}}
+            for index in range(1, 5):
+                records = preflight_events()
+                records.insert(index, copy.deepcopy(telemetry))
+                self.assertTrue(confirmed(records))
+                for missing in (1, 2, 3, 4):
+                    records = preflight_events()
+                    records[missing] = copy.deepcopy(telemetry)
+                    self.assertFalse(confirmed(records))
+            for index in (0, 5):
+                records = preflight_events()
+                records.insert(index, copy.deepcopy(telemetry))
+                self.assertFalse(confirmed(records))
+            for field, value in [('uuid', 'other-device'), ('taskid', 5), ('taskchain', 'Custom'),
+                                  ('what', 'GameOffline'), ('what', 'OtherStatistics'), ('details', [])]:
+                records = preflight_events()
+                invalid = copy.deepcopy(telemetry)
+                invalid['details'][field] = value
+                records.insert(2, invalid)
+                self.assertFalse(confirmed(records))
+            records = preflight_events()
+            invalid = copy.deepcopy(telemetry)
+            invalid['message'] = 20000
+            records.insert(2, invalid)
+            self.assertFalse(confirmed(records))
+
     def test_requires_stage_mode_chain_and_final_task_list(self):
         self.assertTrue(confirmed(preflight_events()))
         for index in range(5):
@@ -213,12 +242,17 @@ class PreflightDispatchTests(unittest.TestCase):
         self.assert_blocked(records)
 
     def test_confirmed_mode_enqueues_exactly_one_copilot_after_preflight(self):
-        status, receipt, appended, task_file = self.run_worker(preflight_events())
-        self.assertEqual(status, 0)
-        self.assertEqual(receipt['phase'], 'execution')
-        self.assertTrue(task_file)
-        self.assertEqual([kind for kind, _ in appended].count('Copilot'), 1)
-        self.assertEqual(appended[-2], ('Custom', {'task_names': ['ZootdRaidPreflight']}))
+        records = preflight_events()
+        with_stats = copy.deepcopy(records)
+        with_stats.insert(2, {'message': 2, 'details': {
+            'uuid': 'device', 'what': 'ScreencapCost', 'details': {'avg': 161, 'max': 175, 'min': 150}}})
+        for events in (records, with_stats):
+            status, receipt, appended, task_file = self.run_worker(events)
+            self.assertEqual(status, 0)
+            self.assertEqual(receipt['phase'], 'execution')
+            self.assertTrue(task_file)
+            self.assertEqual([kind for kind, _ in appended].count('Copilot'), 1)
+            self.assertEqual(appended[-2], ('Custom', {'task_names': ['ZootdRaidPreflight']}))
 
     def test_normal_and_navigation_only_do_not_require_challenge_mode(self):
         for options in ({'raid': False}, {'navigation_only': True}):
