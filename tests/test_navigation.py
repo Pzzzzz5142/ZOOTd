@@ -131,6 +131,17 @@ class NavigationTests(unittest.TestCase):
         with self.assertRaisesRegex(PrtsError, 'battle map'):
             catalog.route('MN-EX-7', require_tiles=True)
 
+    def test_custom_raid_preflight_explicitly_binds_native_templates(self):
+        tasks = navigation_tasks(self.catalog(raid=True).route('MN-EX-7'))
+        self.assertEqual(tasks['ZootdRaidConfirmed']['template'],
+                         ['NormalDifficulty.png', 'NormalDifficulty-Chapter15.png'])
+        self.assertEqual(tasks['ZootdRaidSwitch']['template'],
+                         ['RaidDifficulty.png', 'RaidDifficulty-Chapter15.png'])
+        self.assertEqual(tasks['ZootdRaidConfirmed']['action'], 'DoNothing')
+        self.assertEqual(tasks['ZootdRaidSwitch']['maxTimes'], 3)
+        self.assertEqual(tasks['ZootdRaidSwitch']['exceededNext'], [])
+        self.assertEqual(tasks['ChangeToRaidDifficulty']['exceededNext'], ['RaidConfirm'])
+
     def test_current_event_raid_keeps_window_and_challenge_cost(self):
         tables, installed, tiles = fixture()
         normal = tables['stage_table']['stages']['future_03']
