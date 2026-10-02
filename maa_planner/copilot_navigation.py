@@ -106,6 +106,7 @@ def navigation_tasks(route: dict) -> dict:
                                 # restrict raw OCR to the selector bar instead.
                                 'roi': [640, 550, 640, 170], 'specialParams': [],
                                 'isAscii': False, 'fullMatch': False,
+                                'ocrReplace': [['[Ee][Xx]', 'EX']],
                                 'next': find, 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReady']}
         find.insert(find.index('ZootdMapReady'), 'ZootdZoneTab')
