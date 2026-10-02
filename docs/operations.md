@@ -306,9 +306,11 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 ./bin/zootd copilot-run NL-8 --profile allow-support
 # 显式授权突袭，可同样选择助战策略和有限重试参数
 ./bin/zootd copilot-run MN-EX-7 --raid --profile allow-support
+# 用户明确允许补药时，按需使用理智药，仍禁止源石
+./bin/zootd copilot-run DV-EX-1 --profile allow-support --use-sanity-potion
 ```
 
-两种助战策略内置，默认 `no-support`，本机可通过忽略的 `var/config/copilot.toml` 设置 `default_profile` 和 `profiles`（见[配置说明](configuration.md)）。命令默认授权普通难度战斗，`--raid` 显式授权突袭，可消耗所选难度的关卡理智；所有理智药和源石禁用；默认不执行第二候选，显式重试参数见下文，不调用自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。PRTS 视频攻略不作为可执行候选。
+两种助战策略内置，默认 `no-support`，本机可通过忽略的 `var/config/copilot.toml` 设置 `default_profile` 和 `profiles`（见[配置说明](configuration.md)）。命令默认授权普通难度战斗，`--raid` 显式授权突袭，可消耗所选难度的关卡理智；默认禁用所有理智药和源石。仅在用户明确允许补药时添加 `--use-sanity-potion`，启用 MAA 原生按需补药（包含普通药，不限制到期天数）；源石入口始终被 Stop overlay 禁用，不能通过参数授权碎石。整轮 `authorization.medicine` 为 `as_needed` 时表示补药授权，不表示已使用数量；理智预算仍限制战斗费用，不限制药品补充的理智。候选数和执行次数限制不变，NL-8 失败注入验收不接受补药。默认不执行第二候选，显式重试参数见下文，不调用自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。PRTS 视频攻略不作为可执行候选。
 
 导航不再读取逐关白名单。游戏关卡、分区、活动及常驻活动数据从同一上游 Git revision 获取，保存到 `var/cache/copilot-navigation/catalog.json`，缓存最多使用 6 小时；过期刷新失败则停止，不回退到旧活动窗口。关卡代码支持大小写、空格和连字符的无歧义别名，例如 `nl 9`、`ds1`、`mn ex 7`。普通难度与突袭身份分开；`--raid` 要求游戏数据确有 `FOUR_STAR` 关卡及匹配的普通版本，仅有 EX 编号或手写 `#f#` 不构成授权。使用相同 code 或普通 stageId 选关时，程序按参数解析到对应难度；未加 `--raid` 时拒绝突袭 stageId。当前扩展不涵盖独立的 `TOUGH` 磨难环境。当期活动和分区必须处于开放窗口；常驻活动从其自己的分区数据生成路线，EX 不沿用普通区。`stages.json` 只用于兼容现有刷图身份，不再决定关卡是否存在；执行作业仍要求安装的 Tile 地图与所选难度身份一致。
 

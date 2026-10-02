@@ -292,6 +292,7 @@ Commands:
                         Navigate to the stage detail panel without starting battle
   copilot-run STAGE [--raid] [--profile no-support|allow-support]
                         Experimental: defaults to one battle; no medicine or stones
+                        Medicine: --use-sanity-potion explicitly allows medicines only
                         Raid: explicit challenge mode, requires compatible copilot
                         Retry: --max-candidates N --max-battles N --sanity-budget N
                         Proof: --prove-capability (normal mode, no-support only)

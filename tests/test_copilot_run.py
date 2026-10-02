@@ -228,6 +228,15 @@ class CopilotRunTests(unittest.TestCase):
             self.assertEqual(main(['--project-root', '/fixture', 'MN-EX-7', '--raid']), 0)
         self.assertTrue(run.call_args.kwargs['raid'])
 
+    def test_cli_requires_explicit_medicine_permission(self):
+        for flags, allowed in (([], False), (['--use-sanity-potion'], True)):
+            with self.subTest(allowed=allowed), \
+                 patch('maa_planner.copilot_run.experiment', return_value={'status': 'success'}) as run, \
+                 patch('maa_planner.copilot_run.signal.signal'), patch('maa_planner.copilot_run.os.umask'), \
+                 redirect_stdout(io.StringIO()):
+                self.assertEqual(main(['--project-root', '/fixture', 'DV-8', *flags]), 0)
+                self.assertIs(run.call_args.kwargs['use_sanity_potion'], allowed)
+
     def test_wrong_task_stage_file_device_cannot_prove_success(self):
         for change in ('task', 'device', 'file', 'stage'):
             records = events()
@@ -333,8 +342,9 @@ class CopilotRunTests(unittest.TestCase):
         self.assertIn('超时', failure_message({'worker_exit_code': 124}))
 
     def test_full_pipeline_binds_parameters_and_rejects_download_drift(self):
-        for drift, proof_mode in ((False, False), (True, False), (False, True)):
-            with self.subTest(drift=drift, proof_mode=proof_mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
+        for drift, proof_mode, potion in ((False, False, False), (True, False, False),
+                                         (False, True, False), (False, False, True), (True, False, True)):
+            with self.subTest(drift=drift, proof_mode=proof_mode, potion=potion), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
                 root = Path(tmp)
                 (root / 'config').mkdir()
                 for name, payload in (
@@ -376,7 +386,11 @@ class CopilotRunTests(unittest.TestCase):
                 def fake_execute(root, run, address):
                     params = json.loads((run / 'params.json').read_text())
                     self.assertEqual(params['loop_times'], 1)
-                    self.assertFalse(params['use_sanity_potion'])
+                    self.assertIs(params['use_sanity_potion'], potion)
+                    tasks = json.loads((run / 'navigation/resource/tasks/tasks.json').read_text())
+                    for task in ('UseStone', 'StoneConfirm', 'StoneConfirmWait'):
+                        self.assertEqual(tasks[task]['action'], 'Stop')
+                        self.assertEqual(tasks[task]['next'], [])
                     self.assertFalse(params['ignore_requirements'])
                     self.assertEqual(params['support_unit_usage'], 0)
                     self.assertEqual(len(params['copilot_list']), 1)
@@ -394,7 +408,10 @@ class CopilotRunTests(unittest.TestCase):
                 mock('execute', side_effect=fake_execute)
                 notice = io.StringIO()
                 with redirect_stderr(notice), patch('builtins.input', side_effect=AssertionError('No confirmation prompt')):
-                    audit = experiment(root, 'NL-8', None, prove_capability=proof_mode)
+                    audit = experiment(root, 'NL-8', None, prove_capability=proof_mode,
+                                       use_sanity_potion=potion)
+                self.assertEqual(audit['authorization']['medicine'], 'as_needed' if potion else 0)
+                self.assertEqual(audit['authorization']['stone'], 0)
                 self.assertEqual(notice.getvalue().strip(), ACCOUNT_NOTICE)
                 self.assertEqual(audit['status'], 'failed' if drift else 'success')
                 if drift:
