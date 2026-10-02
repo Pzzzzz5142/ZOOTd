@@ -148,6 +148,21 @@ def two_star_recognized(message, value):
             and math.isfinite(result['score']) and 0.8 <= result['score'] <= 1)
 
 
+def formation_auxiliary(message, value, *, device_uuid):
+    """Recognize native default-ID skill-list movement, never task evidence."""
+    detail = value.get('details', {})
+    return (isinstance(device_uuid, str) and bool(device_uuid)
+            and message in (20001, 20002) and value.get('uuid') == device_uuid
+            and value.get('taskchain') == 'Copilot'
+            and type(value.get('taskid')) is int and value['taskid'] == 0
+            and value.get('subtask') == 'ProcessTask' and value.get('class') == 'asst::ProcessTask'
+            and value.get('first') == ['BattleQuickFormationSkill-SwipeToTheDown']
+            and value.get('pre_task') == ''
+            and detail.get('task') == 'BattleQuickFormationSkill-SwipeToTheDown'
+            and detail.get('action') == 'Swipe' and detail.get('algorithm') == 'JustReturn'
+            and detail.get('result') == {} and not value.get('why') and not value.get('what'))
+
+
 def terminal_result(events: list[dict], *, task_id: int, stage: str, filename: str, raid=False) -> dict:
     active = None
     loaded = formed = battled = completed = all_done = False

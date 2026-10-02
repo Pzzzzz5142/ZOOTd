@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from .copilot_core import callbacks_are_fresh, raid_recognized, two_star_recognized
+from .copilot_core import callbacks_are_fresh, raid_recognized, two_star_recognized, formation_auxiliary
 
 
 @dataclass(frozen=True)
@@ -133,6 +133,9 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
             if active is not None or type(key[1]) is not int or key[1] != task_id or not isinstance(key[0], str) or not key[0]:
                 return failure('unknown_execution_failure')
             active = key
+        if (active is not None and loaded and forming and not formed and not battling and not chain_failed
+                and formation_auxiliary(msg, value, device_uuid=active[0])):
+            continue
         if active is None or key != active or type(key[1]) is not int:
             return failure('unknown_execution_failure')
         detail = value.get('details', {})
