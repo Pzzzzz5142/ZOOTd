@@ -78,6 +78,11 @@ class NavigationTests(unittest.TestCase):
                 self.assertEqual(tasks['ZootdZoneTab']['specialParams'], [])
                 self.assertEqual(tasks['ZootdZoneTab']['roi'], [640, 550, 640, 170])
                 self.assertFalse(tasks['ZootdZoneTab']['fullMatch'])
+                self.assertTrue(tasks['ZootdZoneTabAscii']['isAscii'])
+                self.assertLess(tasks['ZootdEnter']['next'].index('ZootdZoneTab'),
+                                tasks['ZootdEnter']['next'].index('ZootdZoneTabAscii'))
+                self.assertLess(tasks['ZootdEnter']['next'].index('ZootdZoneTabAscii'),
+                                tasks['ZootdEnter']['next'].index('ZootdMapReady'))
                 from maa_planner.navigation_vision import normalize
                 self.assertEqual(normalize('RHINE-Ex', tasks['ZootdZoneTab']['ocrReplace']), 'RHINE-EX')
                 self.assertEqual(normalize('巨x', tasks['ZootdZoneTab']['ocrReplace']), 'EX')

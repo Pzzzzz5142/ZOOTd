@@ -175,7 +175,12 @@ def navigation_tasks(route: dict) -> dict:
                                 'ocrReplace': [['^巨[Xx]$', 'EX'], ['[Ee][Xx]', 'EX']],
                                 'next': find, 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReady']}
+        # Word OCR can merge the EX lettering with adjacent decorative
+        # icons. The installed character model separates the letters on
+        # this footer; keep the working word path first for older layouts.
+        tasks['ZootdZoneTabAscii'] = {**tasks['ZootdZoneTab'], 'isAscii': True}
         find.insert(find.index('ZootdMapReady'), 'ZootdZoneTab')
+        find.insert(find.index('ZootdMapReady'), 'ZootdZoneTabAscii')
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)
