@@ -230,6 +230,11 @@ def formation_auxiliary(message, value, *, device_uuid):
     if task == 'SupportList-Refresh':
         return (first == refresh and previous == 'SupportList-RefreshAfterCooldown'
                 and action == 'ClickSelf' and result.get('template') == 'SupportList-Refresh.png')
+    if task in ('SupportList-DetailPanel-Flag', 'SupportList-DetailPanel-Confirm'):
+        expected_first = ([task, task + '@LoadingText'] if task.endswith('-Flag') else [task])
+        return (first == expected_first and previous == ''
+                and action == ('DoNothing' if task.endswith('-Flag') else 'ClickSelf')
+                and result.get('template') == 'SupportList-DetailPanel-Flag.png')
     if task in ('SupportList-SelectRole', 'SupportList-RoleSelected'):
         for role in ('Pioneer', 'Warrior', 'Tank', 'Sniper', 'Caster', 'Medic', 'Support', 'Special'):
             selected, select = f'{role}@SupportList-RoleSelected', f'{role}@SupportList-SelectRole'
