@@ -346,6 +346,8 @@ PRTS 同一列表中的双模式作业可能使用突袭 Tile ID。仅在游戏�
 
 `SPECIAL ACCESS CONTENT` 隐藏关详情页使用不同的标题和开始按钮位置。导航须在同一已完成的 Custom 链中依次观察页面标识、可用的“开始行动”按钮和精确关卡编号；单独识别编号或条件按钮不算成功。英文标识使用安装的字符 OCR 模型；StartUp 若将详情页关闭图标识别成公告关闭，关闭后继续检查首页、公告和有限返回。零战斗导航只观察开始按钮。实际执行在该证据成立后，为本轮隔离 Core 调整原生 Copilot 的详情按钮 `StartButton1`、开战前按钮 `BattleStartPre` 和标题识别区域，保留其精确编号校验、开始流程与禁源石保护；不修改 live runtime。
 
+常驻活动中的零理智加密关若仍以 `TOP-SECRET` 隐藏编号，导航最多打开一次可见加密入口并查看条件页，保存本次 `navigation-final.png` 后以 `stage_locked` 停止。匿名入口或条件页不构成目标关卡证明，不追加 Copilot，不点击解密、重构或开始按钮。先依据实际条件补齐访问要求，再重新运行精确编号导航。
+
 允许助战只接纳 `support_one`，不执行 `unknown` 或多名缺失；固定每个 group 的已匹配成员后，由 MaaCore 补齐唯一缺失位置。静态匹配和作者省略的练度要求不保证实际可用或通关，助战实际可用性由设备执行决定。查询页内先 exact、再 support_one，各档按已有评分与 ID 稳定排序；不会扫描全站或人工挑选作业。
 
 每次运行在 `var/state/copilot/<run-id>/` 保存一次 `snapshot.json`（候选页、排序、Box 哈希及静态来源）和整轮 `result.json`。每个候选在 `attempts/<run-id>-NN/` 独立保存 `selection.json`、原始/固定编队后的作业、任务参数、`callbacks.jsonl`、`worker-result.json` 和 `result.json`；失败文件不覆盖。目录私有，不提交。结果记录 Box 哈希和时间而非完整账号数据，保留作业、静态数据、回调哈希。

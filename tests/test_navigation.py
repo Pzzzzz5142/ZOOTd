@@ -278,6 +278,17 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdNavigationLocked']['next'], [])
         self.assertEqual(tasks['ZootdZone']['next'].count('ZootdNavigationLocked'), 1)
 
+    def test_encrypted_zero_cost_entrance_collects_conditions_without_stage_proof(self):
+        route = self.catalog().route('NL-9')
+        self.assertNotIn('ZootdEncryptedEntry', navigation_tasks(route))
+        route['ap_cost'] = 0
+        tasks = navigation_tasks(route)
+        self.assertIn('ZootdEncryptedEntry', tasks['ZootdEnter']['next'])
+        self.assertEqual(tasks['ZootdEncryptedEntry']['maxTimes'], 1)
+        self.assertEqual(tasks['ZootdEncryptedConditions']['text'], ['查看条件'])
+        self.assertEqual(tasks['ZootdEncryptedRecordPage']['action'], 'DoNothing')
+        self.assertEqual(tasks['ZootdEncryptedRecordPage']['next'], [])
+
     def test_snapshot_ttl_integrity_and_single_revision_download(self):
         tables, _, _ = fixture()
         revision = 'a' * 40

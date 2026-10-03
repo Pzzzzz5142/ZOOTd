@@ -305,6 +305,19 @@ class PreflightDispatchTests(unittest.TestCase):
             self.assertNotIn('Copilot', [kind for kind, _ in appended])
             self.assertEqual(self.loaded_tasks, [])
 
+    def test_encrypted_conditions_stop_before_copilot_even_after_completed_custom(self):
+        records = special_events()
+        records[1:4] = [copy.deepcopy(records[1])]
+        records[1]['details']['details'].update(
+            task='ZootdEncryptedRecordPage', result={'text': '加密实验记录03'})
+        status, receipt, appended, task_file = self.run_worker(
+            [], raid=False, navigation_records=records)
+        self.assertEqual(status, 1)
+        self.assertEqual(receipt['phase'], 'stage_locked')
+        self.assertFalse(task_file)
+        self.assertNotIn('Copilot', [kind for kind, _ in appended])
+        self.assertFalse(navigation_complete(records, 'MN-EX-7'))
+
     def test_locked_mode_never_enqueues_copilot_even_with_success_terminal(self):
         records = preflight_events()
         records[2]['details'].update(what='ExceededLimit', details={
