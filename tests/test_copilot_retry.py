@@ -28,6 +28,10 @@ def stamp(records):
 
 
 def failed_events(kind='missing'):
+    if kind == 'zero_star_mission_failed_complete':
+        records = failed_events('zero_star_complete')
+        records.insert(6, copy.deepcopy(failed_events('battle')[5]))
+        return stamp(records)
     if kind == 'zero_star_complete':
         records = failed_events('two_star_complete')
         for record in records:
@@ -175,6 +179,19 @@ class RetryClassificationTests(unittest.TestCase):
                 contradictory['details']['details']['task'] = 'StageDrops-Stars-3'
                 changed.insert(-2, contradictory)
                 self.assertFalse(classify(stamp(changed))['retryable'])
+
+    def test_complete_zero_star_defeat_with_explicit_failure_uses_refund_contract(self):
+        records = failed_events('zero_star_mission_failed_complete')
+        outcome = classify(records)
+        self.assertEqual(outcome['category'], 'battle_failed')
+        self.assertTrue(outcome['retryable'])
+        self.assertEqual(outcome['sanity_outcome'], 'refunded')
+        records.insert(2, raid_confirmation())
+        self.assertEqual(classify(stamp(records), raid=True)['sanity_outcome'], 'charged_or_unknown')
+        records = failed_events('zero_star_mission_failed_complete')
+        records[7]['details']['details'].update(task='StageDrops-Stars-2',
+            result={'template': 'StageDrops-Stars-2.png', 'score': 0.98})
+        self.assertFalse(classify(records)['retryable'])
 
     def test_explicit_candidate_failures(self):
         for kind, category in [('missing', 'formation_missing_operator'),
@@ -727,6 +744,19 @@ class RetryIntegrationTests(unittest.TestCase):
             self.assertIn('Copilot@StageDrops-Stars-0', tasks['Copilot@EndOfAction']['next'])
             template = path / 'navigation/resource/template/StageDrops-Stars-0.png'
             self.assertTrue(template.read_bytes().startswith(b'\x89PNG\r\n\x1a\n'))
+
+    def test_complete_zero_star_mission_failure_retries_with_single_refund(self):
+        self.outcomes = ['zero_star_mission_failed_complete', 'success']
+        self.provider.get.side_effect = [self.content,
+            dict(self.content, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
+        result = self.run_experiment(sanity_budget=18)
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(len(result['attempts']), 2)
+        self.assertEqual(result['attempts'][0]['failure']['category'], 'battle_failed')
+        self.assertEqual(result['attempts'][0]['failure']['sanity_outcome'], 'refunded')
+        self.assertEqual(result['budget']['sanity_reserved'], 18)
+        self.assertEqual(result['budget']['sanity_released'], 18)
+        self.assertEqual(result['budget']['battle_reservations'], 2)
 
     def test_duplicate_failed_execution_skips_before_reservation_and_worker(self):
         self.provider.get.side_effect = [self.content, copy.deepcopy(self.content),
