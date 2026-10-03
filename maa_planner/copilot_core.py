@@ -189,14 +189,22 @@ def raid_preflight_complete(events, *, task_id, code):
 
 
 def two_star_recognized(message, value):
+    return _unsuccessful_stars_recognized(message, value, 2)
+
+
+def zero_star_recognized(message, value):
+    return _unsuccessful_stars_recognized(message, value, 0)
+
+
+def _unsuccessful_stars_recognized(message, value, stars):
     details = value.get('details', {})
     result = details.get('result', {})
     return (message == 20002 and value.get('subtask') == 'ProcessTask'
             and value.get('first') == ['Copilot@WaitUntilEndOfAction']
-            and details.get('task') in ('StageDrops-Stars-2', 'Copilot@StageDrops-Stars-2')
+            and details.get('task') in (f'StageDrops-Stars-{stars}', f'Copilot@StageDrops-Stars-{stars}')
             and details.get('algorithm') == 'MatchTemplate'
             and details.get('action') == 'DoNothing' and isinstance(result, dict)
-            and result.get('template') == 'StageDrops-Stars-2.png'
+            and result.get('template') == f'StageDrops-Stars-{stars}.png'
             and type(result.get('score')) in (int, float)
             and math.isfinite(result['score']) and 0.8 <= result['score'] <= 1)
 
@@ -260,7 +268,7 @@ def terminal_result(events: list[dict], *, task_id: int, stage: str, filename: s
         bound = (active is not None and active == (value.get('uuid'), value.get('taskid'))
                  and value.get('taskchain') == 'Copilot' and not completed)
         detail = value.get('details', {})
-        if bound and battled and two_star_recognized(msg, value):
+        if bound and battled and (two_star_recognized(msg, value) or zero_star_recognized(msg, value)):
             errors.append('non_three_star_result')
         if bound and msg == 20003 and value.get('what') == 'CopilotListLoadTaskFileSuccess':
             loaded = detail.get('stage_name') == stage and detail.get('file_name') == filename

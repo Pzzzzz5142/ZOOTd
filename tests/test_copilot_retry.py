@@ -28,6 +28,14 @@ def stamp(records):
 
 
 def failed_events(kind='missing'):
+    if kind == 'zero_star_complete':
+        records = failed_events('two_star_complete')
+        for record in records:
+            detail = record['details'].get('details', {})
+            if detail.get('task') == 'StageDrops-Stars-2':
+                detail['task'] = 'StageDrops-Stars-0'
+                detail['result']['template'] = 'StageDrops-Stars-0.png'
+        return records
     if kind == 'two_star_auxiliary_complete':
         records = failed_events('two_star_complete')
         records[3:3] = formation_swipe_events()
@@ -138,31 +146,35 @@ class RetryClassificationTests(unittest.TestCase):
             changed[index:index] = formation_swipe_events()
             self.assertFalse(classify(stamp(changed))['retryable'])
 
-    def test_completed_two_star_clear_retries_with_full_cost_and_bound_evidence(self):
-        records = failed_events('two_star_complete')
-        outcome = classify(records)
-        self.assertEqual(outcome['category'], 'battle_failed')
-        self.assertTrue(outcome['retryable'])
-        self.assertEqual(outcome['sanity_outcome'], 'charged_or_unknown')
-        for index in range(len(records)):
-            changed = copy.deepcopy(records)
-            del changed[index]
-            self.assertFalse(classify(stamp(changed))['retryable'])
-        for field, value in [('uuid', 'other-device'), ('taskid', 8), ('first', ['Other'])]:
-            changed = copy.deepcopy(records)
-            changed[6]['details'][field] = value
-            self.assertFalse(classify(changed)['retryable'])
-        for field, value in [('action', 'ClickSelf'), ('algorithm', 'JustReturn'),
-                             ('result', {'template': 'StageDrops-Stars-3.png', 'score': 0.99}),
-                             ('result', {'template': 'StageDrops-Stars-2.png', 'score': 0.79})]:
-            changed = copy.deepcopy(records)
-            changed[6]['details']['details'][field] = value
-            self.assertFalse(classify(changed)['retryable'])
-        changed = copy.deepcopy(records)
-        contradictory = copy.deepcopy(records[6])
-        contradictory['details']['details']['task'] = 'StageDrops-Stars-3'
-        changed.insert(-2, contradictory)
-        self.assertFalse(classify(stamp(changed))['retryable'])
+    def test_completed_unsuccessful_stars_retry_with_full_cost_and_bound_evidence(self):
+        for stars, kind in ((0, 'zero_star_complete'), (2, 'two_star_complete')):
+            with self.subTest(stars=stars):
+                records = failed_events(kind)
+                star_index = next(i for i, e in enumerate(records)
+                                  if e['details'].get('details', {}).get('task') == f'StageDrops-Stars-{stars}')
+                outcome = classify(records)
+                self.assertEqual(outcome['category'], 'battle_failed')
+                self.assertTrue(outcome['retryable'])
+                self.assertEqual(outcome['sanity_outcome'], 'charged_or_unknown')
+                for index in range(len(records)):
+                    changed = copy.deepcopy(records)
+                    del changed[index]
+                    self.assertFalse(classify(stamp(changed))['retryable'])
+                for field, value in [('uuid', 'other-device'), ('taskid', 8), ('first', ['Other'])]:
+                    changed = copy.deepcopy(records)
+                    changed[star_index]['details'][field] = value
+                    self.assertFalse(classify(changed)['retryable'])
+                for field, value in [('action', 'ClickSelf'), ('algorithm', 'JustReturn'),
+                                     ('result', {'template': 'StageDrops-Stars-3.png', 'score': 0.99}),
+                                     ('result', {'template': f'StageDrops-Stars-{stars}.png', 'score': 0.79})]:
+                    changed = copy.deepcopy(records)
+                    changed[star_index]['details']['details'][field] = value
+                    self.assertFalse(classify(changed)['retryable'])
+                changed = copy.deepcopy(records)
+                contradictory = copy.deepcopy(records[star_index])
+                contradictory['details']['details']['task'] = 'StageDrops-Stars-3'
+                changed.insert(-2, contradictory)
+                self.assertFalse(classify(stamp(changed))['retryable'])
 
     def test_explicit_candidate_failures(self):
         for kind, category in [('missing', 'formation_missing_operator'),
@@ -698,6 +710,23 @@ class RetryIntegrationTests(unittest.TestCase):
         for path in self.paths:
             tasks = json.loads((path / 'navigation/resource/tasks/tasks.json').read_text())
             self.assertIn('Copilot@StageDrops-Stars-2', tasks['Copilot@EndOfAction']['next'])
+
+    def test_zero_star_result_retries_with_template_and_full_reservation(self):
+        self.outcomes = ['zero_star_complete', 'success']
+        self.provider.get.side_effect = [self.content,
+            dict(self.content, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
+        result = self.run_experiment(sanity_budget=36)
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(len(result['attempts']), 2)
+        self.assertEqual(result['attempts'][0]['execution']['errors'], ['non_three_star_result'])
+        self.assertEqual(result['attempts'][0]['failure']['category'], 'battle_failed')
+        self.assertEqual(result['budget']['sanity_reserved'], 36)
+        self.assertEqual(result['budget']['sanity_released'], 0)
+        for path in self.paths:
+            tasks = json.loads((path / 'navigation/resource/tasks/tasks.json').read_text())
+            self.assertIn('Copilot@StageDrops-Stars-0', tasks['Copilot@EndOfAction']['next'])
+            template = path / 'navigation/resource/template/StageDrops-Stars-0.png'
+            self.assertTrue(template.read_bytes().startswith(b'\x89PNG\r\n\x1a\n'))
 
     def test_duplicate_failed_execution_skips_before_reservation_and_worker(self):
         self.provider.get.side_effect = [self.content, copy.deepcopy(self.content),

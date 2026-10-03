@@ -158,7 +158,7 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
             return reject('invalid_task')
         task = task.removeprefix('Copilot@')
         if msg == 20002 and ('FightMissionFailed' in task or task in {
-                'StageDrops-Stars-2', 'StageDrops-Stars-Adverse', 'EndOfAction-Sandbox'}):
+                'StageDrops-Stars-0', 'StageDrops-Stars-2', 'StageDrops-Stars-Adverse', 'EndOfAction-Sandbox'}):
             return reject('unsupported_battle_result')
         if msg == 20002 and task == 'StageDrops-Stars-3':
             match = detail.get('result', {})

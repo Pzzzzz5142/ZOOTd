@@ -21,7 +21,7 @@ from .copilot_core import callbacks_are_fresh, terminal_result
 from .copilot_proof import battle_proof
 from . import copilot_capability
 from .copilot_retry import RetryLimits, RetryBudget, classify_failure, failure
-from .copilot_navigation import navigation_tasks, copilot_result_tasks
+from .copilot_navigation import navigation_tasks, copilot_result_tasks, install_copilot_result_resources
 from .navigation_catalog import load_navigation
 from .copilot_matcher import match_candidate, rank_candidates, skill_placeholder
 from .copilot_static import fetch_catalog
@@ -322,6 +322,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         overlay.mkdir(parents=True)
         tasks = navigation_tasks(route)
         tasks.update(copilot_result_tasks())
+        install_copilot_result_resources(overlay.parent)
         # Medicine permission never authorizes originite, including when the
         # refill dialog falls back to the stone page after medicines run out.
         for task in ('UseStone', 'StoneConfirm', 'StoneConfirmWait'):

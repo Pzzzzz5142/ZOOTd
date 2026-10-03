@@ -1,6 +1,9 @@
 """Generate bounded navigation from game metadata, never from a stage whitelist."""
 from __future__ import annotations
 
+from pathlib import Path
+import shutil
+
 
 SPECIAL_PANEL_ROIS = {
     'marker': [45, 150, 225, 45],
@@ -208,14 +211,24 @@ def raid_preflight_tasks(code: str) -> dict:
 
 
 def copilot_result_tasks() -> dict:
-    """Let native Core finish two-star results so bounded retries can classify them."""
-    return {
+    """Finish observed unsuccessful result pages for bounded failure classification."""
+    tasks = {
         'Copilot@EndOfAction': {
             'next': ['Copilot@StageDrops-Stars-3', 'Copilot@StageDrops-Stars-Adverse',
-                     'Copilot@StageDrops-Stars-2']},
-        'Copilot@StageDrops-Stars-2': {
-            'algorithm': 'MatchTemplate', 'template': 'StageDrops-Stars-2.png',
+                     'Copilot@StageDrops-Stars-2', 'Copilot@StageDrops-Stars-0']},
+    }
+    for stars in (0, 2):
+        tasks[f'Copilot@StageDrops-Stars-{stars}'] = {
+            'algorithm': 'MatchTemplate', 'template': f'StageDrops-Stars-{stars}.png',
             'templThreshold': 0.8, 'roi': [50, 270, 250, 100], 'action': 'DoNothing',
             'next': ['Copilot@ClickCornerUntilStartButton'],
-            'sub': [], 'onErrorNext': [], 'exceededNext': []},
-    }
+            'sub': [], 'onErrorNext': [], 'exceededNext': []}
+    return tasks
+
+
+def install_copilot_result_resources(resource_dir: Path) -> None:
+    """Install our zero-star glyph template only in the disposable run overlay."""
+    target = resource_dir / 'template'
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(Path(__file__).with_name('resources') / 'StageDrops-Stars-0.png',
+                    target / 'StageDrops-Stars-0.png')
