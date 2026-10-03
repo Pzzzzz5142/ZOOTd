@@ -500,6 +500,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.provider.query.return_value = {'candidates': [dict(candidate(i).to_dict(), difficulty=3)
                                                          for i in (1, 2)], 'page': 1}
         self.provider.get.return_value = dict(self.content, stage_name='act13d5_ex07', difficulty=3)
+        self.provider.get.side_effect = [self.provider.get.return_value,
+            dict(self.provider.get.return_value, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
         self.outcomes = ['battle', 'success']
         audit = experiment(self.root, 'MN-EX-7', None, raid=True, limits=RetryLimits(2, 2, 18))
         self.assertEqual(audit['status'], 'failed')
@@ -601,6 +603,8 @@ class RetryIntegrationTests(unittest.TestCase):
 
     def test_failed_battle_then_success_needs_only_one_clear_sanity_budget(self):
         self.outcomes = ['battle', 'success']
+        self.provider.get.side_effect = [self.content,
+            dict(self.content, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
         result = self.run_experiment(sanity_budget=18)
         self.assertEqual(result['status'], 'success', result)
         self.assertEqual(len(result['attempts']), 2)
@@ -654,6 +658,8 @@ class RetryIntegrationTests(unittest.TestCase):
 
     def test_completed_two_star_result_tries_B_without_releasing_sanity(self):
         self.outcomes = ['two_star_auxiliary_complete', 'success']
+        self.provider.get.side_effect = [self.content,
+            dict(self.content, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
         result = self.run_experiment(sanity_budget=36)
         self.assertEqual(result['status'], 'success', result)
         self.assertEqual(len(result['attempts']), 2)
@@ -664,6 +670,42 @@ class RetryIntegrationTests(unittest.TestCase):
         for path in self.paths:
             tasks = json.loads((path / 'navigation/resource/tasks/tasks.json').read_text())
             self.assertIn('Copilot@StageDrops-Stars-2', tasks['Copilot@EndOfAction']['next'])
+
+    def test_duplicate_failed_execution_skips_before_reservation_and_worker(self):
+        self.provider.get.side_effect = [self.content, copy.deepcopy(self.content),
+            dict(self.content, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
+        self.outcomes = ['battle', 'success']
+        result = self.run_experiment()
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual([a['copilot_id'] for a in result['attempts']], [1, 2, 3])
+        first, duplicate, third = result['attempts']
+        self.assertEqual(first['failure']['category'], 'battle_failed')
+        self.assertEqual(duplicate['failure']['category'], 'duplicate_execution')
+        self.assertEqual(duplicate['duplicate_of'], 1)
+        self.assertEqual(first['execution_sha256'], duplicate['execution_sha256'])
+        self.assertNotEqual(first['execution_sha256'], third['execution_sha256'])
+        self.assertEqual(duplicate['failure']['sanity_outcome'], 'not_spent')
+        self.assertNotIn('sanity_settlement', duplicate)
+        self.assertNotIn('worker_exit_code', duplicate)
+        self.assertEqual(len(self.paths), 2)
+        self.assertEqual(result['budget']['battle_reservations'], 2)
+        self.assertEqual(result['budget']['candidates_considered'], 3)
+        self.assertEqual(third['reset_strategy'], 'fresh_core_startup_navigation')
+
+    def test_duplicate_guard_is_bounded_to_the_current_snapshot(self):
+        self.outcomes = ['battle']
+        first = self.run_experiment()
+        self.assertEqual(first['status'], 'failed')
+        self.assertEqual(first['stop_reason'], 'candidates_exhausted')
+        self.assertEqual(first['budget']['battle_reservations'], 1)
+        self.assertEqual(first['budget']['candidates_considered'], 3)
+        self.assertEqual(len(self.paths), 1)
+        self.outcomes = ['success']
+        self.paths = []
+        second = self.run_experiment()
+        self.assertEqual(second['status'], 'success', second)
+        self.assertEqual(len(second['attempts']), 1)
+        self.assertEqual(len(self.paths), 1)
 
     def test_changed_candidate_skips_without_spending_or_reset(self):
         changed = copy.deepcopy(self.content)
