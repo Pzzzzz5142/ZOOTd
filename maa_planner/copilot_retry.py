@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import math
 
-from .copilot_core import callbacks_are_fresh, raid_recognized, two_star_recognized, formation_auxiliary
+from .copilot_core import callbacks_are_fresh, raid_recognized, two_star_recognized, zero_star_recognized, formation_auxiliary
 
 
 @dataclass(frozen=True)
@@ -122,7 +122,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     missing = None
     requirements = []
     battle_failed = schema_failed = formation_error = unexpected = False
-    mission_failed = cleared = two_star = battle_completed = successful_stars = False
+    mission_failed = cleared = unsuccessful_stars = battle_completed = successful_stars = False
     evidence = []
     for event in events:
         msg, value = event['message'], event['details']
@@ -150,9 +150,9 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
         if chain_failed:
             return failure('unknown_execution_failure')
         if msg == 10002:
-            # Core can complete its result-page cleanup after a two-star CLEAR.
+            # Core can complete its cleanup after a zero/two-star result.
             # This is a candidate failure, with the full sanity cost retained.
-            if not (two_star and battle_completed and not mission_failed and not successful_stars):
+            if not (unsuccessful_stars and battle_completed and not mission_failed and not successful_stars):
                 return failure('unknown_execution_failure')
             chain_failed = True
             continue
@@ -204,8 +204,8 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 cleared = True
             if task in {'StageDrops-Stars-3', 'StageDrops-Stars-Adverse'}:
                 successful_stars = True
-            if two_star_recognized(msg, value):
-                two_star = battle_failed = True
+            if two_star_recognized(msg, value) or zero_star_recognized(msg, value):
+                unsuccessful_stars = battle_failed = True
                 evidence.append({'sequence': event['sequence'], 'task': task})
             if (value.get('first') == ['Copilot@WaitUntilEndOfAction']
                     and isinstance(result, dict)
@@ -232,11 +232,13 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 unexpected = True
         if msg == 20000 and subtask not in {'BattleFormationTask', 'BattleProcessTask', 'ProcessTask'}:
             unexpected = True
-    if not loaded or not chain_failed or not all_done or unexpected or (two_star and successful_stars):
+    if not loaded or not chain_failed or not all_done or unexpected or (unsuccessful_stars and successful_stars):
         return failure('unknown_execution_failure')
     if formed and battling and battle_failed:
         # Official CN has refunded failed/abandoned normal operations since
-        # 2025-08-02. A two-star CLEAR still costs sanity. Never infer a refund
+        # 2025-08-02. A two-star CLEAR still costs sanity. A zero-star glyph
+        # alone does not prove the explicit mission-failure refund contract.
+        # Never infer a refund
         # from generic worker/task failure or absence of a successful terminal.
         # Challenge refunds have no independent evidence contract here, so
         # keep their full reservation even after an explicit mission failure.
