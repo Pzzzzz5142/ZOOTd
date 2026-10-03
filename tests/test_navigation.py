@@ -79,6 +79,8 @@ class NavigationTests(unittest.TestCase):
                 self.assertEqual(tasks['ZootdZoneTab']['roi'], [640, 550, 640, 170])
                 self.assertFalse(tasks['ZootdZoneTab']['fullMatch'])
                 self.assertTrue(tasks['ZootdZoneTabAscii']['isAscii'])
+                for task in ('ZootdZoneTab', 'ZootdZoneTabAscii'):
+                    self.assertEqual(tasks[task]['next'], ['ZootdStage', 'ZootdMapReady'])
                 self.assertLess(tasks['ZootdEnter']['next'].index('ZootdZoneTab'),
                                 tasks['ZootdEnter']['next'].index('ZootdZoneTabAscii'))
                 self.assertLess(tasks['ZootdEnter']['next'].index('ZootdZoneTabAscii'),

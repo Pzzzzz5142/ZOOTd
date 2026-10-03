@@ -173,7 +173,10 @@ def navigation_tasks(route: dict) -> dict:
                                 'roi': [640, 550, 640, 170], 'specialParams': [],
                                 'isAscii': False, 'fullMatch': False,
                                 'ocrReplace': [['^巨[Xx]$', 'EX'], ['[Ee][Xx]', 'EX']],
-                                'next': find, 'maxTimes': 2,
+                                # Selected tabs remain visible. Re-clicking
+                                # their animated/decorative OCR boxes can hit
+                                # a neighbor. Search this map after one click.
+                                'next': ['ZootdStage', 'ZootdMapReady'], 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReady']}
         # Word OCR can merge the EX lettering with adjacent decorative
         # icons. The installed character model separates the letters on
