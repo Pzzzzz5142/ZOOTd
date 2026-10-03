@@ -346,6 +346,8 @@ class NavigationCliTests(unittest.TestCase):
                     tasks = json.loads((run / 'navigation/resource/tasks/tasks.json').read_text())
                     self.assertTrue((run / 'navigation/resource/template/StageZone-EX.png')
                                     .read_bytes().startswith(b'\x89PNG\r\n\x1a\n'))
+                    self.assertEqual(tasks['ExpiringMedicineConfirm']['algorithm'], 'JustReturn')
+                    self.assertEqual(tasks['ExpiringMedicineConfirm']['action'], 'Stop')
                     for name in ('StartButton1', 'StartButton2', 'MedicineConfirm', 'StoneConfirm'):
                         self.assertEqual(tasks[name]['action'], 'Stop')
                     self.assertFalse((run / 'params.json').exists())

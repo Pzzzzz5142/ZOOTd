@@ -69,6 +69,11 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
             audit['runtime'] = validate_runtime_receipt(root)
             tasks = navigation_tasks(route)
             tasks.update(PROXY_RESOURCE)
+            # Legacy refill alias is absent from current native tasks. Keep
+            # its fail-closed stop without inventing a nonexistent template
+            # when the navigation overlay has its own template directory.
+            tasks['ExpiringMedicineConfirm'] = {**tasks['ExpiringMedicineConfirm'],
+                                                'algorithm': 'JustReturn'}
             atomic_write_json(run / 'navigation/resource/tasks/tasks.json', tasks, mode=0o600)
             install_navigation_resources(run / 'navigation/resource')
             with device(root, run) as address:
