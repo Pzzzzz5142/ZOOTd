@@ -237,5 +237,41 @@ class CopilotProofTests(unittest.TestCase):
         self.assert_unproven(stamp(records))
 
 
+def support_helpers():
+    records = []
+    for task, first, previous, action, algorithm, result in [
+            ('SupportList-SelectRole', ['Pioneer@SupportList-RoleSelected', 'Pioneer@SupportList-SelectRole'],
+             '', 'ClickSelf', 'MatchTemplate', {'template': 'Pioneer@SupportList-SelectRole.png', 'score': .98}),
+            ('SupportList-RoleSelected', ['Pioneer@SupportList-RoleSelected', 'Pioneer@SupportList-SelectRole'],
+             'Pioneer@SupportList-SelectRole', 'DoNothing', 'MatchTemplate',
+             {'template': 'Pioneer@SupportList-RoleSelected.png', 'score': .98}),
+            ('SupportList-MoveToHead', ['SupportList-MoveToHead'], '', 'Swipe', 'JustReturn', {}),
+            ('SupportList-MoveRight', ['SupportList-MoveRight'], '', 'Swipe', 'JustReturn', {}),
+            ('SupportList-RefreshAfterCooldown', ['SupportList-RefreshAfterCooldown'], '', 'DoNothing', 'JustReturn', {}),
+            ('SupportList-Refresh', ['SupportList-RefreshAfterCooldown'], 'SupportList-RefreshAfterCooldown',
+             'ClickSelf', 'MatchTemplate', {'template': 'SupportList-Refresh.png', 'score': .98}),
+            ('Stop', ['SupportList-RefreshAfterCooldown'], 'SupportList-Refresh', 'Stop', 'JustReturn', {})]:
+        for message in ((20001,) if action == 'Stop' else (20001, 20002)):
+            records.append({'message': message, 'details': {
+                'uuid': 'device', 'taskid': 0, 'taskchain': 'Copilot', 'subtask': 'ProcessTask',
+                'class': 'asst::ProcessTask', 'first': first, 'pre_task': previous,
+                'details': {'task': task, 'action': action, 'algorithm': algorithm, 'result': result}}})
+    return records
+
+
+class SupportHelperProofTests(unittest.TestCase):
+    def test_support_helpers_cannot_replace_bound_formation_or_battle(self):
+        records = observations()
+        records[2:2] = [{'message': 20001, 'details': {
+            'uuid': 'device', 'taskid': 7, 'taskchain': 'Copilot', 'subtask': 'BattleFormationTask'}}] + support_helpers()
+        self.assertTrue(prove(stamp(records))['three_star'])
+        for index in (0, 1, 3, 4, 5, 6):
+            changed = observations()
+            changed[index:index] = support_helpers()
+            self.assertFalse(prove(stamp(changed))['three_star'])
+        del records[16]  # Actual formation completion is still required.
+        self.assertFalse(prove(stamp(records))['three_star'])
+
+
 if __name__ == '__main__':
     unittest.main()

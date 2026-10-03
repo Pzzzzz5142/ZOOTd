@@ -202,18 +202,41 @@ def two_star_recognized(message, value):
 
 
 def formation_auxiliary(message, value, *, device_uuid):
-    """Recognize native default-ID skill-list movement, never task evidence."""
+    """Recognize native default-ID formation UI helpers, never task evidence."""
     detail = value.get('details', {})
-    return (isinstance(device_uuid, str) and bool(device_uuid)
+    if not (isinstance(device_uuid, str) and bool(device_uuid)
             and message in (20001, 20002) and value.get('uuid') == device_uuid
             and value.get('taskchain') == 'Copilot'
             and type(value.get('taskid')) is int and value['taskid'] == 0
             and value.get('subtask') == 'ProcessTask' and value.get('class') == 'asst::ProcessTask'
-            and value.get('first') == ['BattleQuickFormationSkill-SwipeToTheDown']
-            and value.get('pre_task') == ''
-            and detail.get('task') == 'BattleQuickFormationSkill-SwipeToTheDown'
-            and detail.get('action') == 'Swipe' and detail.get('algorithm') == 'JustReturn'
-            and detail.get('result') == {} and not value.get('why') and not value.get('what'))
+            and not value.get('why') and not value.get('what')):
+        return False
+    task, first, previous = detail.get('task'), value.get('first'), value.get('pre_task')
+    action, algorithm, result = detail.get('action'), detail.get('algorithm'), detail.get('result')
+    if task in {'BattleQuickFormationSkill-SwipeToTheDown', 'SupportList-MoveToHead', 'SupportList-MoveRight'}:
+        return (first == [task] and previous == '' and action == 'Swipe'
+                and algorithm == 'JustReturn' and result == {})
+    refresh = ['SupportList-RefreshAfterCooldown']
+    if task == 'SupportList-RefreshAfterCooldown':
+        return (first == refresh and previous == '' and action == 'DoNothing'
+                and algorithm == 'JustReturn' and result == {})
+    if task == 'Stop':
+        return (message == 20001 and first == refresh and previous == 'SupportList-Refresh'
+                and action == 'Stop' and algorithm == 'JustReturn' and result == {})
+    if (algorithm != 'MatchTemplate' or not isinstance(result, dict)
+            or type(result.get('score')) not in (int, float)
+            or not math.isfinite(result['score']) or not 0 < result['score'] <= 1):
+        return False
+    if task == 'SupportList-Refresh':
+        return (first == refresh and previous == 'SupportList-RefreshAfterCooldown'
+                and action == 'ClickSelf' and result.get('template') == 'SupportList-Refresh.png')
+    if task in ('SupportList-SelectRole', 'SupportList-RoleSelected'):
+        for role in ('Pioneer', 'Warrior', 'Tank', 'Sniper', 'Caster', 'Medic', 'Support', 'Special'):
+            selected, select = f'{role}@SupportList-RoleSelected', f'{role}@SupportList-SelectRole'
+            if first == [selected, select]:
+                return (previous in ('', select) and result.get('template') == f'{role}@{task}.png'
+                        and action == ('ClickSelf' if task == 'SupportList-SelectRole' else 'DoNothing'))
+    return False
 
 
 def terminal_result(events: list[dict], *, task_id: int, stage: str, filename: str, raid=False) -> dict:

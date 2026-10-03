@@ -14,7 +14,7 @@ from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity
 from maa_planner.operator_box import OperatorBox, Operator
 from maa_planner.prts import PrtsError
 from tests.test_copilot_run import candidate, raid_confirmation
-from tests.test_copilot_proof import observations
+from tests.test_copilot_proof import observations, support_helpers
 
 
 def event(msg, **kw):
@@ -89,6 +89,34 @@ def classify(records, **kw):
 
 
 class RetryClassificationTests(unittest.TestCase):
+    def test_native_support_search_allows_only_proven_formation_failure_retry(self):
+        records = failed_events('missing')
+        records[3:3] = support_helpers()
+        outcome = classify(stamp(records))
+        self.assertEqual(outcome['category'], 'formation_missing_operator')
+        self.assertTrue(outcome['retryable'])
+        self.assertEqual(outcome['sanity_outcome'], 'not_spent')
+        for index in range(3, 3 + len(support_helpers())):
+            for field, value in [('uuid', 'other'), ('taskid', 8), ('class', 'Other'), ('why', 'error')]:
+                changed = copy.deepcopy(records)
+                changed[index]['details'][field] = value
+                self.assertFalse(classify(stamp(changed))['retryable'])
+            for field, value in [('task', 'StageDrops-Stars-3'), ('action', 'Wrong'), ('algorithm', 'Wrong')]:
+                changed = copy.deepcopy(records)
+                changed[index]['details']['details'][field] = value
+                self.assertFalse(classify(stamp(changed))['retryable'])
+        for field, value in [('template', 'Warrior@SupportList-SelectRole.png'), ('score', float('nan'))]:
+            changed = copy.deepcopy(records)
+            changed[3]['details']['details']['result'][field] = value
+            self.assertFalse(classify(stamp(changed))['retryable'])
+        for index in (0, 2, 6, 7):
+            changed = failed_events('missing')
+            changed[index:index] = support_helpers()
+            self.assertFalse(classify(stamp(changed))['retryable'])
+        changed = failed_events('formation')
+        changed[3:3] = support_helpers()
+        self.assertFalse(classify(stamp(changed))['retryable'])
+
     def test_native_auxiliary_swipe_only_ignored_during_bound_formation(self):
         records = failed_events('two_star_auxiliary_complete')
         self.assertTrue(classify(records)['retryable'])
