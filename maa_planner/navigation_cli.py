@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from .copilot_core import callbacks_are_fresh, map_recognized, special_panel_complete
-from .copilot_navigation import navigation_tasks
+from .copilot_navigation import navigation_tasks, install_navigation_resources
 from .copilot_run import command, device, device_lock, execute
 from .navigation_catalog import load_navigation
 from .prts import PrtsError
@@ -70,6 +70,7 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
             tasks = navigation_tasks(route)
             tasks.update(PROXY_RESOURCE)
             atomic_write_json(run / 'navigation/resource/tasks/tasks.json', tasks, mode=0o600)
+            install_navigation_resources(run / 'navigation/resource')
             with device(root, run) as address:
                 start = time.monotonic_ns()
                 exit_code = execute(root, run, address)
