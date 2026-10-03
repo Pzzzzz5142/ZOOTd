@@ -71,6 +71,7 @@ def navigation_tasks(route: dict) -> dict:
     tasks['ZootdSpecialPanel']['isAscii'] = True
     tasks['ZootdSpecialStart']['ocrReplace'] = [[r'^[+＋]开始行动$', '开始行动']]
     tasks['ZootdSpecialStageConfirmed']['isAscii'] = True
+    tasks['ZootdSpecialStageConfirmed']['baseTask'] = 'ClickedCorrectStage'
     # Native CloseAnno can match the special panel's close icon. After the
     # click, retain announcement/home checks and also resume bounded return.
     tasks['StartUp@CloseAnno'] = {

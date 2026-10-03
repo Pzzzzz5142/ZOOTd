@@ -216,6 +216,7 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdSpecialStageConfirmed']['text'], ['NL-9', 'NL9'])
         self.assertTrue(tasks['ZootdSpecialPanel']['isAscii'])
         self.assertTrue(tasks['ZootdSpecialStageConfirmed']['isAscii'])
+        self.assertEqual(tasks['ZootdSpecialStageConfirmed']['baseTask'], 'ClickedCorrectStage')
         from maa_planner.navigation_vision import normalize
         replacements = tasks['ZootdSpecialStart']['ocrReplace']
         self.assertEqual(normalize('+开始行动', replacements), '开始行动')
