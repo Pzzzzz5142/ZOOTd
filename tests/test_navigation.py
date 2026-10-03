@@ -215,6 +215,12 @@ class NavigationTests(unittest.TestCase):
             self.assertTrue(tasks[name]['fullMatch'])
         self.assertEqual(tasks['ZootdSpecialStageConfirmed']['text'], ['NL-9', 'NL9'])
         self.assertTrue(tasks['ZootdSpecialPanel']['isAscii'])
+        self.assertTrue(tasks['ZootdSpecialStageConfirmed']['isAscii'])
+        from maa_planner.navigation_vision import normalize
+        replacements = tasks['ZootdSpecialStart']['ocrReplace']
+        self.assertEqual(normalize('+开始行动', replacements), '开始行动')
+        self.assertEqual(normalize('+查看条件', replacements), '+查看条件')
+        self.assertEqual(normalize('未解锁+开始行动', replacements), '未解锁+开始行动')
         self.assertEqual(tasks['StartUp@CloseAnno']['baseTask'], 'CloseAnno')
         self.assertEqual(tasks['StartUp@CloseAnno']['template'], 'CloseAnno.png')
         self.assertEqual(tasks['StartUp@CloseAnno']['next'][-1], 'StartUp@ReturnButtons#next')

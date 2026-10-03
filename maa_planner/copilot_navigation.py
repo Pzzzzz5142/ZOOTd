@@ -68,6 +68,8 @@ def navigation_tasks(route: dict) -> dict:
     # The small English strip needs the installed character OCR model.
     # Word OCR repeatedly read it as SPELAccEsSCNTEN on the real panel.
     tasks['ZootdSpecialPanel']['isAscii'] = True
+    tasks['ZootdSpecialStart']['ocrReplace'] = [[r'^[+＋]开始行动$', '开始行动']]
+    tasks['ZootdSpecialStageConfirmed']['isAscii'] = True
     # Native CloseAnno can match the special panel's close icon. After the
     # click, retain announcement/home checks and also resume bounded return.
     tasks['StartUp@CloseAnno'] = {
