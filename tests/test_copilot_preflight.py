@@ -293,6 +293,7 @@ class PreflightDispatchTests(unittest.TestCase):
                 self.assertEqual(appended[-1][0], 'Copilot')
                 self.assertEqual(self.loaded_tasks, [(len(appended) - 1, {
                     'StartButton1': {'roi': [775, 560, 415, 60]},
+                    'BattleStartPre': {'roi': [775, 560, 415, 60]},
                     'ClickedCorrectStage': {'roi': [770, 145, 250, 90]}})])
         for index in (1, 2, 3):
             changed = special_events()
