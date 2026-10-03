@@ -84,7 +84,7 @@ class PreflightEvidenceTests(unittest.TestCase):
         for what, stats in [('ScreencapCost', {'avg': 161, 'max': 175, 'min': 150}),
                             ('EmulatorFPS', {'fps': 60, 'refresh_period_ns': 16666666})]:
             telemetry = {'message': 2, 'details': {'uuid': 'device', 'what': what, 'details': stats}}
-            for index in range(1, 5):
+            for index in range(1, 6):
                 records = preflight_events()
                 records.insert(index, copy.deepcopy(telemetry))
                 self.assertTrue(confirmed(records))
@@ -92,17 +92,18 @@ class PreflightEvidenceTests(unittest.TestCase):
                     records = preflight_events()
                     records[missing] = copy.deepcopy(telemetry)
                     self.assertFalse(confirmed(records))
-            for index in (0, 5):
+            for index in (0,):
                 records = preflight_events()
                 records.insert(index, copy.deepcopy(telemetry))
                 self.assertFalse(confirmed(records))
             for field, value in [('uuid', 'other-device'), ('taskid', 5), ('taskchain', 'Custom'),
                                   ('what', 'GameOffline'), ('what', 'OtherStatistics'), ('details', [])]:
-                records = preflight_events()
-                invalid = copy.deepcopy(telemetry)
-                invalid['details'][field] = value
-                records.insert(2, invalid)
-                self.assertFalse(confirmed(records))
+                for index in (2, 5):
+                    records = preflight_events()
+                    invalid = copy.deepcopy(telemetry)
+                    invalid['details'][field] = value
+                    records.insert(index, invalid)
+                    self.assertFalse(confirmed(records))
             records = preflight_events()
             invalid = copy.deepcopy(telemetry)
             invalid['message'] = 20000
