@@ -208,6 +208,12 @@ class NavigationTests(unittest.TestCase):
                            ('ZootdStagePanel', 'ClickedCorrectStageOrSwipe')]:
             self.assertEqual(tasks[name]['baseTask'], base)
         self.assertEqual(tasks['ZootdStagePanel']['action'], 'DoNothing')
+        self.assertIn('ZootdSpecialPanel', tasks['ZootdStage']['next'])
+        for name in ('ZootdSpecialPanel', 'ZootdSpecialStart', 'ZootdSpecialStageConfirmed'):
+            self.assertEqual(tasks[name]['algorithm'], 'OcrDetect')
+            self.assertEqual(tasks[name]['action'], 'DoNothing')
+            self.assertTrue(tasks[name]['fullMatch'])
+        self.assertEqual(tasks['ZootdSpecialStageConfirmed']['text'], ['NL-9', 'NL9'])
         self.assertFalse(tasks['ZootdStage']['isAscii'])
         self.assertEqual(tasks['ZootdStage']['specialParams'], [])
         self.assertEqual(tasks['StartUp@ReturnButtons']['next'][0], 'StartUp@ReturnButton')

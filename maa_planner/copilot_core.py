@@ -45,6 +45,59 @@ def map_recognized(message, value, code):
             and result.get('text') in (code, code.replace('-', '')))
 
 
+def special_panel_complete(events, *, task_id, code):
+    """Require marker, available start and exact title in one finished Custom."""
+    active = None
+    observed = 0
+    completed = finished = False
+    expected = [('ZootdSpecialPanel', ('SPECIAL ACCESS CONTENT',)),
+                ('ZootdSpecialStart', ('开始行动',)),
+                ('ZootdSpecialStageConfirmed', (code, code.replace('-', '')))]
+    for event in events:
+        msg, value = event['message'], event['details']
+        if (msg in (0, 1, 10000, 10004, 20000, 20004)
+                or value.get('what') in ('GameOffline', 'Disconnect', 'Reconnecting', 'ExceededLimit')
+                or value.get('taskchain') in ('Fight', 'Copilot')):
+            return False
+        if (msg == 2 and active is not None and not finished
+                and value.get('uuid') == active[0]
+                and value.get('what') in ('ScreencapCost', 'EmulatorFPS')
+                and set(value) == {'uuid', 'what', 'details'}
+                and isinstance(value['details'], dict)):
+            continue
+        key = (value.get('uuid'), value.get('taskid'))
+        if (value.get('taskchain') != 'Custom' or type(key[1]) is not int or key[1] != task_id
+                or not isinstance(key[0], str) or not key[0]):
+            return False
+        if msg == 10001:
+            if active is not None:
+                return False
+            active = key
+        elif key != active or finished:
+            return False
+        if completed and msg != 3:
+            return False
+        detail = value.get('details', {})
+        if msg == 20002 and detail.get('task') in {name for name, _ in expected}:
+            if (observed >= len(expected) or value.get('first') != ['ZootdNavigate']
+                    or value.get('subtask') != 'ProcessTask'
+                    or detail.get('task') != expected[observed][0]
+                    or detail.get('algorithm') != 'OcrDetect' or detail.get('action') != 'DoNothing'
+                    or detail.get('result', {}).get('text') not in expected[observed][1]):
+                return False
+            observed += 1
+        if msg == 10002:
+            if observed != len(expected) or completed:
+                return False
+            completed = True
+        if msg == 3:
+            if (not completed or value.get('finished_tasks') != [task_id]
+                    or any(type(t) is not int for t in value['finished_tasks'])):
+                return False
+            finished = True
+    return finished
+
+
 def callbacks_are_fresh(events, *, run_id, started_ns, finished_ns):
     if (not isinstance(events, list) or not events or not isinstance(run_id, str) or not run_id
             or type(started_ns) is not int or type(finished_ns) is not int
@@ -295,10 +348,13 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 return task
 
             navigation_attempt = 0
+            special_panel_observed = False
 
             def navigate():
-                nonlocal navigation_attempt
+                nonlocal navigation_attempt, special_panel_observed
                 navigation_attempt += 1
+                special_panel_observed = False
+                from .copilot_navigation import STAGE_PANEL_TASKS
                 from .navigation_vision import scan_map
                 import cv2
                 import numpy as np
@@ -319,14 +375,27 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     return image
 
                 def click_and_confirm(rect):
+                    nonlocal special_panel_observed
                     map_observed.clear()
+                    special_panel_observed = False
                     overlay({
                         'ZootdNavigate': {'algorithm': 'JustReturn', 'next': ['ZootdVisionClick']},
                         'ZootdVisionClick': {'algorithm': 'JustReturn', 'action': 'ClickRect',
                                             'specificRect': rect, 'postDelay': 700,
-                                            'next': ['ZootdStagePanel', 'ZootdMapReady']}})
-                    run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
+                                            'next': STAGE_PANEL_TASKS}})
+                    confirm_navigation()
                     return map_observed.is_set()
+
+                def confirm_navigation():
+                    nonlocal special_panel_observed
+                    with mutex:
+                        first = len(records)
+                    task_id = run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
+                    with mutex:
+                        special_panel_observed = special_panel_complete(
+                            records[first:], task_id=task_id, code=route['code'])
+                    if special_panel_observed:
+                        map_observed.set()
 
                 def swipe(index):
                     # Reuse installed MAA swipe geometry. Move right once, then
@@ -339,7 +408,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 map_observed.clear()
                 locked_observed.clear()
                 check(lib.AsstLoadResource(str(run / 'navigation').encode()))
-                run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
+                confirm_navigation()
                 if locked_observed.is_set():
                     progress['phase'] = 'stage_locked'
                     raise RuntimeError('Stage prerequisite is locked')
@@ -373,6 +442,12 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 with mutex:
                     confirmed = raid_preflight_complete(records[first:], task_id=preflight_id, code=route['code'])
                 check(confirmed)
+            if special_panel_observed:
+                from .copilot_navigation import special_panel_execution_tasks
+                overlay = run / 'special-panel-overlay/resource/tasks'
+                overlay.mkdir(parents=True)
+                (overlay / 'tasks.json').write_text(json.dumps(special_panel_execution_tasks()))
+                check(lib.AsstLoadResource(str(overlay.parent.parent).encode()))
             progress['phase'] = 'execution'
             params = (run / 'params.json').read_bytes()
             task_id = lib.AsstAppendTask(handle, b'Copilot', params)

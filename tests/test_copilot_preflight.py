@@ -6,8 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from maa_planner.copilot_core import raid_preflight_complete, worker
+from maa_planner.copilot_core import raid_preflight_complete, special_panel_complete, worker
 from maa_planner.copilot_navigation import navigation_tasks
+from maa_planner.navigation_cli import navigation_complete
 from maa_planner.copilot_retry import classify_failure
 from maa_planner.copilot_run import failure_message
 
@@ -28,6 +29,54 @@ def preflight_events():
 
 def confirmed(records):
     return raid_preflight_complete(records, task_id=5, code='MN-EX-7')
+
+
+def special_events():
+    def event(message, **value):
+        return {'message': message, 'details': {
+            'uuid': 'device', 'taskid': 5, 'taskchain': 'Custom', **value}}
+    records = [event(10001)]
+    for task, text in [('ZootdSpecialPanel', 'SPECIAL ACCESS CONTENT'),
+                       ('ZootdSpecialStart', '开始行动'),
+                       ('ZootdSpecialStageConfirmed', 'MN-EX-7')]:
+        records.append(event(20002, first=['ZootdNavigate'], subtask='ProcessTask', details={
+            'task': task, 'algorithm': 'OcrDetect', 'action': 'DoNothing', 'result': {'text': text}}))
+    return records + [event(10002), event(3, finished_tasks=[5])]
+
+
+class SpecialPanelEvidenceTests(unittest.TestCase):
+    def test_requires_ordered_layout_start_title_and_full_terminal(self):
+        records = special_events()
+        self.assertTrue(special_panel_complete(records, task_id=5, code='MN-EX-7'))
+        self.assertTrue(navigation_complete(records, 'MN-EX-7'))
+        for index in range(len(records)):
+            changed = copy.deepcopy(records)
+            del changed[index]
+            self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
+            self.assertFalse(navigation_complete(changed, 'MN-EX-7'))
+        for index, field, value in [(1, 'result', {'text': 'OTHER PANEL'}),
+                                    (2, 'action', 'ClickSelf'), (2, 'result', {'text': '查看条件'}),
+                                    (3, 'result', {'text': 'MN-EX-70'}),
+                                    (3, 'algorithm', 'JustReturn')]:
+            changed = copy.deepcopy(records)
+            changed[index]['details']['details'][field] = value
+            self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
+            self.assertFalse(navigation_complete(changed, 'MN-EX-7'))
+        for index in range(len(records)):
+            for field, value in [('uuid', 'other'), ('taskid', 6), ('taskchain', 'Copilot')]:
+                changed = copy.deepcopy(records)
+                changed[index]['details'][field] = value
+                self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
+                self.assertFalse(navigation_complete(changed, 'MN-EX-7'))
+        changed = copy.deepcopy(records)
+        changed[1], changed[2] = changed[2], changed[1]
+        self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
+        changed = copy.deepcopy(records)
+        changed[3]['details']['first'] = ['OldNavigation']
+        self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
+        changed = copy.deepcopy(records)
+        changed.insert(3, {'message': 20003, 'details': {'what': 'ExceededLimit'}})
+        self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
 
 
 class PreflightEvidenceTests(unittest.TestCase):
@@ -143,9 +192,11 @@ class Function:
 
 
 class FakeCore:
-    def __init__(self, records):
+    def __init__(self, records, navigation_records=None):
         self.records = records
+        self.navigation_records = navigation_records
         self.appended = []
+        self.loaded_tasks = []
         self.AsstCreateEx = Function(self.create)
         self.AsstAppendTask = Function(self.append)
         self.AsstStart = Function(self.start)
@@ -154,6 +205,13 @@ class FakeCore:
         for name in ('AsstSetUserDir', 'AsstLoadResource', 'AsstSetInstanceOption', 'AsstConnect',
                      'AsstStop', 'AsstAsyncScreencap', 'AsstGetImage'):
             setattr(self, name, Function(lambda *_: 1))
+        self.AsstLoadResource = Function(self.load)
+
+    def load(self, directory):
+        tasks = Path(directory.decode()) / 'resource/tasks/tasks.json'
+        if tasks.exists():
+            self.loaded_tasks.append((len(self.appended), json.loads(tasks.read_text())))
+        return 1
 
     def create(self, callback, _):
         self.callback = callback
@@ -170,6 +228,15 @@ class FakeCore:
 
     def start(self, _):
         kind, params = self.appended[-1]
+        if params.get('task_names') == ['ZootdNavigate'] and self.navigation_records is not None:
+            for record in self.navigation_records:
+                value = copy.deepcopy(record['details'])
+                if value.get('taskid') == 5:
+                    value['taskid'] = len(self.appended)
+                if value.get('finished_tasks') == [5]:
+                    value['finished_tasks'] = [len(self.appended)]
+                self.callback(record['message'], json.dumps(value).encode(), None)
+            return 1
         if params.get('task_names') == ['ZootdRaidPreflight']:
             for record in self.records:
                 value = copy.deepcopy(record['details'])
@@ -193,7 +260,7 @@ class FakeCore:
 
 
 class PreflightDispatchTests(unittest.TestCase):
-    def run_worker(self, records, *, raid=True, navigation_only=False):
+    def run_worker(self, records, *, raid=True, navigation_only=False, navigation_records=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = root / 'attempt'
@@ -201,15 +268,41 @@ class PreflightDispatchTests(unittest.TestCase):
             (run / 'navigation.json').write_text(json.dumps({
                 'code': 'MN-EX-7', 'raid': raid, 'navigation_only': navigation_only}))
             (run / 'params.json').write_text('{"copilot_list":[]}')
-            lib = FakeCore(records)
+            lib = FakeCore(records, navigation_records=navigation_records)
             with patch('maa_planner.copilot_core.C.CDLL', return_value=lib), \
                     patch('maa_planner.copilot_core.launch_game'), \
                     patch('maa_planner.copilot_core.signal.signal'), \
+                    patch('maa_planner.navigation_vision.scan_map', return_value=False), \
                     patch('maa_planner.copilot_core.subprocess.run', return_value=
                           subprocess.CompletedProcess([], 0, stdout=b'')):
                 status = worker(root, run, 'device')
+            self.loaded_tasks = lib.loaded_tasks
             receipt = json.loads((run / 'worker-result.json').read_text())
             return status, receipt, lib.appended, (run / 'task-id.json').exists()
+
+    def test_special_panel_adapts_native_checks_only_after_complete_navigation(self):
+        for navigation_only in (False, True):
+            status, receipt, appended, task_file = self.run_worker(
+                [], raid=False, navigation_only=navigation_only, navigation_records=special_events())
+            self.assertEqual(status, 0)
+            if navigation_only:
+                self.assertFalse(task_file)
+                self.assertEqual(self.loaded_tasks, [])
+            else:
+                self.assertTrue(task_file)
+                self.assertEqual(appended[-1][0], 'Copilot')
+                self.assertEqual(self.loaded_tasks, [(len(appended) - 1, {
+                    'StartButton1': {'roi': [775, 560, 415, 60]},
+                    'ClickedCorrectStage': {'roi': [770, 145, 250, 90]}})])
+        for index in (1, 2, 3):
+            changed = special_events()
+            del changed[index]
+            status, _, appended, task_file = self.run_worker(
+                [], raid=False, navigation_records=changed)
+            self.assertEqual(status, 1)
+            self.assertFalse(task_file)
+            self.assertNotIn('Copilot', [kind for kind, _ in appended])
+            self.assertEqual(self.loaded_tasks, [])
 
     def test_locked_mode_never_enqueues_copilot_even_with_success_terminal(self):
         records = preflight_events()

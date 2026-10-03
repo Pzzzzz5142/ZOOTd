@@ -7,7 +7,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .copilot_core import callbacks_are_fresh, map_recognized
+from .copilot_core import callbacks_are_fresh, map_recognized, special_panel_complete
 from .copilot_navigation import navigation_tasks
 from .copilot_run import command, device, device_lock, execute
 from .navigation_catalog import load_navigation
@@ -21,7 +21,8 @@ def navigation_complete(events, code):
     """Bind target OCR to the same completed Custom chain and final task list."""
     active = completed = None
     matched = finished = False
-    for event in events:
+    chain_start = 0
+    for index, event in enumerate(events):
         msg, value = event['message'], event['details']
         if (msg in (0, 1, 10000, 10004) or value.get('what') == 'GameOffline'
                 or value.get('taskchain') in ('Fight', 'Copilot')):
@@ -32,6 +33,7 @@ def navigation_complete(events, code):
             finished = False
             active = key if value.get('taskchain') == 'Custom' else None
             matched = False
+            chain_start = index
         if (active is not None and key == active and value.get('first') == ['ZootdNavigate']
                 and map_recognized(msg, value, code)):
             matched = True
@@ -39,6 +41,9 @@ def navigation_complete(events, code):
             completed = active
         if msg == 3 and completed is not None:
             finished = completed[1] in value.get('finished_tasks', [])
+        if (msg == 3 and active is not None and special_panel_complete(
+                events[chain_start:index + 1], task_id=active[1], code=code)):
+            finished = True
     return finished
 
 

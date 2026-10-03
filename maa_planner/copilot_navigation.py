@@ -2,6 +2,22 @@
 from __future__ import annotations
 
 
+SPECIAL_PANEL_ROIS = {
+    'marker': [45, 150, 225, 45],
+    'start': [775, 560, 415, 60],
+    'title': [770, 145, 250, 90],
+}
+STAGE_PANEL_TASKS = ['ZootdStagePanel', 'ZootdSpecialPanel', 'ZootdMapReady']
+
+
+def special_panel_execution_tasks() -> dict:
+    """Adapt native Copilot only after a completed special-panel observation."""
+    # MultiCopilotTaskPlugin checks these native ROIs independently of our
+    # Custom graph. Keep its exact title check and all native button edges.
+    return {'StartButton1': {'roi': SPECIAL_PANEL_ROIS['start']},
+            'ClickedCorrectStage': {'roi': SPECIAL_PANEL_ROIS['title']}}
+
+
 def navigation_tasks(route: dict) -> dict:
     code = route['code']
 
@@ -27,7 +43,7 @@ def navigation_tasks(route: dict) -> dict:
         # '通关DP-1解锁' to DP-1 and click the locked successor.
         'ZootdStage': {'baseTask': 'ClickStageName', 'text': [code],
                       'isAscii': False, 'specialParams': [],
-                      'next': ['ZootdStagePanel', 'ZootdStage'],
+                      'next': ['ZootdStagePanel', 'ZootdSpecialPanel', 'ZootdStage'],
                       'maxTimes': 6, 'exceededNext': []},
         'ZootdStagePanel': {'baseTask': 'ClickedCorrectStageOrSwipe',
                             'action': 'DoNothing', 'sub': [], 'reduceOtherTimes': [],
@@ -36,6 +52,15 @@ def navigation_tasks(route: dict) -> dict:
             'baseTask': 'ClickedCorrectStage', 'text': [code, code.replace('-', '')],
             'action': 'DoNothing', 'next': [], 'sub': [], 'onErrorNext': [],
             'exceededNext': [], 'fullMatch': True},
+        # This detail layout has no map behind its title. Prove its marker
+        # and available start button before accepting the exact stage code.
+        # These are observations only, including in zero-battle navigation.
+        'ZootdSpecialPanel': ocr(['SPECIAL ACCESS CONTENT'], ['ZootdSpecialStart'],
+                                 roi=SPECIAL_PANEL_ROIS['marker'], click=False),
+        'ZootdSpecialStart': ocr(['开始行动'], ['ZootdSpecialStageConfirmed'],
+                                 roi=SPECIAL_PANEL_ROIS['start'], click=False),
+        'ZootdSpecialStageConfirmed': ocr([code, code.replace('-', '')], [],
+                                          roi=SPECIAL_PANEL_ROIS['title'], click=False),
         'ZootdZone': {**ocr(route['zone_names'], find), 'maxTimes': 1,
                      'exceededNext': ['ZootdStage', 'ZootdMapReady']},
         'ZootdMapReady': {'algorithm': 'JustReturn', 'next': []},
@@ -44,6 +69,7 @@ def navigation_tasks(route: dict) -> dict:
         # The detail panel remembers challenge mode from a previous run.
         # Native recognition/switching finishes before ordinary execution.
         tasks['ZootdStageConfirmed']['next'] = ['NormalConfirm', 'ChangeToNormalDifficulty']
+        tasks['ZootdSpecialStageConfirmed']['next'] = ['NormalConfirm', 'ChangeToNormalDifficulty']
     if route.get('raid'):
         tasks.update(raid_preflight_tasks(code))
     # Keep native return recognition first. Some event panels texture the
