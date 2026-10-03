@@ -15,6 +15,7 @@ def special_panel_execution_tasks() -> dict:
     # MultiCopilotTaskPlugin checks these native ROIs independently of our
     # Custom graph. Keep its exact title check and all native button edges.
     return {'StartButton1': {'roi': SPECIAL_PANEL_ROIS['start']},
+            'BattleStartPre': {'roi': SPECIAL_PANEL_ROIS['start']},
             'ClickedCorrectStage': {'roi': SPECIAL_PANEL_ROIS['title']}}
 
 
