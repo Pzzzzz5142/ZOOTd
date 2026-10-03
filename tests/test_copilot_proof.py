@@ -250,6 +250,10 @@ def support_helpers():
             ('SupportList-RefreshAfterCooldown', ['SupportList-RefreshAfterCooldown'], '', 'DoNothing', 'JustReturn', {}),
             ('SupportList-Refresh', ['SupportList-RefreshAfterCooldown'], 'SupportList-RefreshAfterCooldown',
              'ClickSelf', 'MatchTemplate', {'template': 'SupportList-Refresh.png', 'score': .98}),
+            ('SupportList-DetailPanel-Flag', ['SupportList-DetailPanel-Flag', 'SupportList-DetailPanel-Flag@LoadingText'],
+             '', 'DoNothing', 'MatchTemplate', {'template': 'SupportList-DetailPanel-Flag.png', 'score': .98}),
+            ('SupportList-DetailPanel-Confirm', ['SupportList-DetailPanel-Confirm'],
+             '', 'ClickSelf', 'MatchTemplate', {'template': 'SupportList-DetailPanel-Flag.png', 'score': .98}),
             ('Stop', ['SupportList-RefreshAfterCooldown'], 'SupportList-Refresh', 'Stop', 'JustReturn', {})]:
         for message in ((20001,) if action == 'Stop' else (20001, 20002)):
             records.append({'message': message, 'details': {
@@ -269,7 +273,8 @@ class SupportHelperProofTests(unittest.TestCase):
             changed = observations()
             changed[index:index] = support_helpers()
             self.assertFalse(prove(stamp(changed))['three_star'])
-        del records[16]  # Actual formation completion is still required.
+        del records[next(i for i, event in enumerate(records) if event['message'] == 20002
+                         and event['details'].get('subtask') == 'BattleFormationTask')]
         self.assertFalse(prove(stamp(records))['three_star'])
 
 
