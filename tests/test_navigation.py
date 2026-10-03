@@ -78,12 +78,12 @@ class NavigationTests(unittest.TestCase):
                 self.assertEqual(tasks['ZootdZoneTab']['specialParams'], [])
                 self.assertEqual(tasks['ZootdZoneTab']['roi'], [640, 550, 640, 170])
                 self.assertFalse(tasks['ZootdZoneTab']['fullMatch'])
-                self.assertTrue(tasks['ZootdZoneTabAscii']['isAscii'])
-                for task in ('ZootdZoneTab', 'ZootdZoneTabAscii'):
+                self.assertNotIn('ZootdZoneTabAscii', tasks)
+                for task in ('ZootdZoneTab', 'ZootdZoneTabGlyph'):
                     self.assertEqual(tasks[task]['next'], ['ZootdStage', 'ZootdMapReady'])
-                self.assertLess(tasks['ZootdEnter']['next'].index('ZootdZoneTab'),
-                                tasks['ZootdEnter']['next'].index('ZootdZoneTabAscii'))
-                self.assertLess(tasks['ZootdEnter']['next'].index('ZootdZoneTabAscii'),
+                self.assertLess(tasks['ZootdEnter']['next'].index('ZootdZoneTabGlyph'),
+                                tasks['ZootdEnter']['next'].index('ZootdZoneTab'))
+                self.assertLess(tasks['ZootdEnter']['next'].index('ZootdZoneTabGlyph'),
                                 tasks['ZootdEnter']['next'].index('ZootdMapReady'))
                 from maa_planner.navigation_vision import normalize
                 self.assertEqual(normalize('RHINE-Ex', tasks['ZootdZoneTab']['ocrReplace']), 'RHINE-EX')
@@ -344,6 +344,8 @@ class NavigationCliTests(unittest.TestCase):
                 mock('device', side_effect=fake_device)
                 def execute(root, run, address):
                     tasks = json.loads((run / 'navigation/resource/tasks/tasks.json').read_text())
+                    self.assertTrue((run / 'navigation/resource/template/StageZone-EX.png')
+                                    .read_bytes().startswith(b'\x89PNG\r\n\x1a\n'))
                     for name in ('StartButton1', 'StartButton2', 'MedicineConfirm', 'StoneConfirm'):
                         self.assertEqual(tasks[name]['action'], 'Stop')
                     self.assertFalse((run / 'params.json').exists())

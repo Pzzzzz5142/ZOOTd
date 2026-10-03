@@ -178,12 +178,16 @@ def navigation_tasks(route: dict) -> dict:
                                 # a neighbor. Search this map after one click.
                                 'next': ['ZootdStage', 'ZootdMapReady'], 'maxTimes': 2,
                                 'exceededNext': ['ZootdStage', 'ZootdMapReady']}
-        # Word OCR can merge the EX lettering with adjacent decorative
-        # icons. The installed character model separates the letters on
-        # this footer; keep the working word path first for older layouts.
-        tasks['ZootdZoneTabAscii'] = {**tasks['ZootdZoneTab'], 'isAscii': True}
+        # OCR boxes may merge the neighboring icons, making ClickSelf
+        # randomly hit another zone. Prefer a glyph-only template box.
+        tasks['ZootdZoneTabGlyph'] = {
+            'algorithm': 'MatchTemplate', 'template': 'StageZone-EX.png',
+            'templThreshold': 0.8, 'maskRange': [180, 255],
+            'roi': [640, 550, 640, 170], 'action': 'ClickSelf', 'postDelay': 1000,
+            'next': ['ZootdStage', 'ZootdMapReady'], 'maxTimes': 1,
+            'exceededNext': ['ZootdStage', 'ZootdMapReady']}
+        find.insert(find.index('ZootdMapReady'), 'ZootdZoneTabGlyph')
         find.insert(find.index('ZootdMapReady'), 'ZootdZoneTab')
-        find.insert(find.index('ZootdMapReady'), 'ZootdZoneTabAscii')
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)
@@ -240,3 +244,11 @@ def install_copilot_result_resources(resource_dir: Path) -> None:
     target.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(Path(__file__).with_name('resources') / 'StageDrops-Stars-0.png',
                     target / 'StageDrops-Stars-0.png')
+
+
+def install_navigation_resources(resource_dir: Path) -> None:
+    """Keep navigation UI glyphs in the run overlay, away from live runtime."""
+    target = resource_dir / 'template'
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(Path(__file__).with_name('resources') / 'StageZone-EX.png',
+                    target / 'StageZone-EX.png')
