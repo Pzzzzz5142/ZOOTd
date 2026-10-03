@@ -123,6 +123,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     requirements = []
     battle_failed = schema_failed = formation_error = unexpected = False
     mission_failed = cleared = unsuccessful_stars = battle_completed = successful_stars = False
+    zero_stars = False
     evidence = []
     for event in events:
         msg, value = event['message'], event['details']
@@ -152,7 +153,8 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
         if msg == 10002:
             # Core can complete its cleanup after a zero/two-star result.
             # This is a candidate failure, with the full sanity cost retained.
-            if not (unsuccessful_stars and battle_completed and not mission_failed and not successful_stars):
+            if not (unsuccessful_stars and battle_completed and not successful_stars
+                    and (not mission_failed or zero_stars)):
                 return failure('unknown_execution_failure')
             chain_failed = True
             continue
@@ -206,6 +208,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 successful_stars = True
             if two_star_recognized(msg, value) or zero_star_recognized(msg, value):
                 unsuccessful_stars = battle_failed = True
+                zero_stars |= zero_star_recognized(msg, value)
                 evidence.append({'sequence': event['sequence'], 'task': task})
             if (value.get('first') == ['Copilot@WaitUntilEndOfAction']
                     and isinstance(result, dict)
