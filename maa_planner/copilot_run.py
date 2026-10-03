@@ -268,7 +268,7 @@ def acceptance_formation_failure(content, box, catalog, battle):
 
 def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             code, route, budget, get_address, restart, snapshot_sha256, acceptance_failure=False,
-            proof_context=None, use_sanity_potion=False):
+            proof_context=None, use_sanity_potion=False, failed_executions=None):
     audit = {'status': 'failed', 'copilot_id': candidate.id, 'run_dir': str(run),
              'snapshot_sha256': snapshot_sha256, 'raid': route['raid'],
              'stage': canonical, 'battle_id': route['battle_id']}
@@ -302,6 +302,12 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         audit['execution_sha256'] = sha256_bytes(canonical_json(content))
         filename = run / 'execution.json'
         atomic_write_json(filename, content, mode=0o600)
+        if failed_executions and audit['execution_sha256'] in failed_executions:
+            phase = 'duplicate_execution'
+            audit['duplicate_of'] = failed_executions[audit['execution_sha256']]
+            audit['failure'] = failure('duplicate_execution', retryable=True,
+                                       sanity_outcome='not_spent')
+            raise CandidateRejected('Identical bound execution already failed a battle in this snapshot')
         params = {'copilot_list': [{'filename': str(filename), 'stage_name': code, 'is_raid': route['raid']}],
                   'formation': True, 'loop_times': 1, 'use_sanity_potion': use_sanity_potion,
                   'add_trust': False, 'ignore_requirements': False,
@@ -526,6 +532,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             if acceptance_failure and (len(choices) < 2 or choices[0].status != 'exact'):
                 raise ExperimentError('Acceptance check needs two candidates, with an exact first candidate')
             phase = 'attempts'
+            failed_executions = {}
             with ExitStack() as stack:
                 address = None
                 dispatched = False
@@ -546,10 +553,14 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                                       code=code, route=route, budget=budget, get_address=get_address,
                                       restart=dispatched, snapshot_sha256=audit['snapshot_sha256'],
                                       acceptance_failure=acceptance_failure and budget.candidates == 1,
-                                      proof_context=proof_context, use_sanity_potion=use_sanity_potion)
+                                      proof_context=proof_context, use_sanity_potion=use_sanity_potion,
+                                      failed_executions=failed_executions)
                     dispatched |= 'worker_exit_code' in outcome
                     audit['attempts'].append(outcome)
                     audit['copilot_id'] = candidate.id
+                    if (outcome.get('failure', {}).get('category') == 'battle_failed'
+                            and outcome['failure'].get('retryable')):
+                        failed_executions[outcome['execution_sha256']] = candidate.id
                     if outcome['status'] == 'success':
                         audit['status'] = 'success'
                         audit['stop_reason'] = 'success'
