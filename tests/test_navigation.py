@@ -208,6 +208,22 @@ class NavigationTests(unittest.TestCase):
                            ('ZootdStagePanel', 'ClickedCorrectStageOrSwipe')]:
             self.assertEqual(tasks[name]['baseTask'], base)
         self.assertEqual(tasks['ZootdStagePanel']['action'], 'DoNothing')
+        self.assertIn('ZootdSpecialPanel', tasks['ZootdStage']['next'])
+        for name in ('ZootdSpecialPanel', 'ZootdSpecialStart', 'ZootdSpecialStageConfirmed'):
+            self.assertEqual(tasks[name]['algorithm'], 'OcrDetect')
+            self.assertEqual(tasks[name]['action'], 'DoNothing')
+            self.assertTrue(tasks[name]['fullMatch'])
+        self.assertEqual(tasks['ZootdSpecialStageConfirmed']['text'], ['NL-9', 'NL9'])
+        self.assertTrue(tasks['ZootdSpecialPanel']['isAscii'])
+        self.assertTrue(tasks['ZootdSpecialStageConfirmed']['isAscii'])
+        from maa_planner.navigation_vision import normalize
+        replacements = tasks['ZootdSpecialStart']['ocrReplace']
+        self.assertEqual(normalize('+开始行动', replacements), '开始行动')
+        self.assertEqual(normalize('+查看条件', replacements), '+查看条件')
+        self.assertEqual(normalize('未解锁+开始行动', replacements), '未解锁+开始行动')
+        self.assertEqual(tasks['StartUp@CloseAnno']['baseTask'], 'CloseAnno')
+        self.assertEqual(tasks['StartUp@CloseAnno']['template'], 'CloseAnno.png')
+        self.assertEqual(tasks['StartUp@CloseAnno']['next'][-1], 'StartUp@ReturnButtons#next')
         self.assertFalse(tasks['ZootdStage']['isAscii'])
         self.assertEqual(tasks['ZootdStage']['specialParams'], [])
         self.assertEqual(tasks['StartUp@ReturnButtons']['next'][0], 'StartUp@ReturnButton')
