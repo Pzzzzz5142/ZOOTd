@@ -71,6 +71,7 @@ def navigation_tasks(route: dict) -> dict:
     # Native CloseAnno can match the special panel's close icon. After the
     # click, retain announcement/home checks and also resume bounded return.
     tasks['StartUp@CloseAnno'] = {
+        'baseTask': 'CloseAnno', 'template': 'CloseAnno.png',
         'next': ['StartUp@MainThemes#next', 'StartUp@CloseAnnos#next',
                  'StartUp@ReturnButtons#next']}
     if route.get('has_raid') and not route.get('raid'):

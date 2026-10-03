@@ -215,6 +215,8 @@ class NavigationTests(unittest.TestCase):
             self.assertTrue(tasks[name]['fullMatch'])
         self.assertEqual(tasks['ZootdSpecialStageConfirmed']['text'], ['NL-9', 'NL9'])
         self.assertTrue(tasks['ZootdSpecialPanel']['isAscii'])
+        self.assertEqual(tasks['StartUp@CloseAnno']['baseTask'], 'CloseAnno')
+        self.assertEqual(tasks['StartUp@CloseAnno']['template'], 'CloseAnno.png')
         self.assertEqual(tasks['StartUp@CloseAnno']['next'][-1], 'StartUp@ReturnButtons#next')
         self.assertFalse(tasks['ZootdStage']['isAscii'])
         self.assertEqual(tasks['ZootdStage']['specialParams'], [])
