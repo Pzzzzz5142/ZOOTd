@@ -142,8 +142,9 @@ def raid_preflight_complete(events, *, task_id, code):
                 or value.get('taskchain') in ('Fight', 'Copilot')):
             return False
         # Native device statistics have no task identity and can arrive between
-        # Custom callbacks. They cannot establish stage, mode or completion.
-        if (msg == 2 and active is not None and not finished
+        # Custom callbacks or just after their terminal. They cannot establish
+        # stage, mode or completion, and remain bound to the same device.
+        if (msg == 2 and active is not None
                 and value.get('uuid') == active[0]
                 and value.get('what') in ('ScreencapCost', 'EmulatorFPS')
                 and set(value) == {'uuid', 'what', 'details'}
