@@ -319,6 +319,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
     home_observed = threading.Event()
     locked_observed = threading.Event()
     encrypted_observed = threading.Event()
+    reconstruction_observed = threading.Event()
     with (run / 'callbacks.jsonl').open('x') as output:
         @callback_type
         def callback(msg, raw, _):
@@ -345,6 +346,13 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                             and value['details'].get('algorithm') == 'OcrDetect'
                             and value['details'].get('action') == 'DoNothing'):
                         encrypted_observed.set()
+                    if (msg == 20002 and value.get('taskchain') == 'Custom'
+                            and value.get('subtask') == 'ProcessTask'
+                            and value.get('details', {}).get('task') == 'ZootdEncryptedReconstruct'
+                            and value['details'].get('algorithm') == 'OcrDetect'
+                            and value['details'].get('action') == 'ClickSelf'
+                            and value['details'].get('result', {}).get('text') == '事件重构'):
+                        reconstruction_observed.set()
                     if msg in (0, 1, 10000, 10002, 10004):
                         chains.append((msg, value.get('taskid')))
             except Exception:
@@ -443,9 +451,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 map_observed.clear()
                 locked_observed.clear()
                 encrypted_observed.clear()
+                reconstruction_observed.clear()
                 check(lib.AsstLoadResource(str(run / 'navigation').encode()))
                 confirm_navigation()
-                if locked_observed.is_set() or encrypted_observed.is_set():
+                if locked_observed.is_set() or (encrypted_observed.is_set() and not reconstruction_observed.is_set()):
                     progress['phase'] = 'stage_locked'
                     raise RuntimeError('Stage prerequisite is locked')
                 if not map_observed.is_set():

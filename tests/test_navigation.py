@@ -216,6 +216,7 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdSpecialStageConfirmed']['text'], ['NL-9', 'NL9'])
         self.assertTrue(tasks['ZootdSpecialPanel']['isAscii'])
         self.assertTrue(tasks['ZootdSpecialStageConfirmed']['isAscii'])
+        self.assertEqual(tasks['ZootdSpecialStageConfirmed']['baseTask'], 'ClickedCorrectStage')
         from maa_planner.navigation_vision import normalize
         replacements = tasks['ZootdSpecialStart']['ocrReplace']
         self.assertEqual(normalize('+开始行动', replacements), '开始行动')
@@ -287,7 +288,11 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdEncryptedEntry']['maxTimes'], 1)
         self.assertEqual(tasks['ZootdEncryptedConditions']['text'], ['查看条件'])
         self.assertEqual(tasks['ZootdEncryptedRecordPage']['action'], 'DoNothing')
-        self.assertEqual(tasks['ZootdEncryptedRecordPage']['next'], [])
+        self.assertEqual(tasks['ZootdEncryptedRecordPage']['next'],
+                         ['ZootdEncryptedReconstruct', 'ZootdEncryptedBlocked'])
+        self.assertEqual(tasks['ZootdEncryptedReconstruct']['text'], ['事件重构'])
+        self.assertEqual(tasks['ZootdEncryptedReconstruct']['maxTimes'], 1)
+        self.assertEqual(tasks['ZootdEncryptedBlocked']['next'], [])
 
     def test_snapshot_ttl_integrity_and_single_revision_download(self):
         tables, _, _ = fixture()
