@@ -325,6 +325,27 @@ class PreflightDispatchTests(unittest.TestCase):
         records[2]['message'] = 20003
         self.assert_blocked(records)
 
+    def test_reconstruction_click_alone_never_authorizes_copilot(self):
+        records = special_events()
+        page = copy.deepcopy(records[1])
+        page['details']['details'].update(task='ZootdEncryptedRecordPage', result={'text': '加密实验记录04'})
+        click = copy.deepcopy(page)
+        click['details']['details'].update(task='ZootdEncryptedReconstruct', action='ClickSelf',
+                                           result={'text': '事件重构'})
+        records[1:1] = [page, click]
+        for navigation_only in (False, True):
+            status, _, appended, task_file = self.run_worker(
+                [], raid=False, navigation_only=navigation_only, navigation_records=records)
+            self.assertEqual(status, 0)
+            self.assertEqual(task_file, not navigation_only)
+        for index in (3, 4, 5):
+            changed = copy.deepcopy(records)
+            del changed[index]
+            status, _, appended, task_file = self.run_worker([], raid=False, navigation_records=changed)
+            self.assertEqual(status, 1)
+            self.assertFalse(task_file)
+            self.assertNotIn('Copilot', [kind for kind, _ in appended])
+
     def assert_blocked(self, records):
         status, receipt, appended, task_file = self.run_worker(records)
         self.assertEqual(status, 1)

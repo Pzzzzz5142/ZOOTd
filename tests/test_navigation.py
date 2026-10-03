@@ -287,7 +287,11 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdEncryptedEntry']['maxTimes'], 1)
         self.assertEqual(tasks['ZootdEncryptedConditions']['text'], ['查看条件'])
         self.assertEqual(tasks['ZootdEncryptedRecordPage']['action'], 'DoNothing')
-        self.assertEqual(tasks['ZootdEncryptedRecordPage']['next'], [])
+        self.assertEqual(tasks['ZootdEncryptedRecordPage']['next'],
+                         ['ZootdEncryptedReconstruct', 'ZootdEncryptedBlocked'])
+        self.assertEqual(tasks['ZootdEncryptedReconstruct']['text'], ['事件重构'])
+        self.assertEqual(tasks['ZootdEncryptedReconstruct']['maxTimes'], 1)
+        self.assertEqual(tasks['ZootdEncryptedBlocked']['next'], [])
 
     def test_snapshot_ttl_integrity_and_single_revision_download(self):
         tables, _, _ = fixture()

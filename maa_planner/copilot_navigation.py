@@ -110,7 +110,8 @@ def navigation_tasks(route: dict) -> dict:
         })
         if route.get('ap_cost') == 0:
             # Encrypted zero-cost stages hide their code until extra objectives
-            # are met. Collect conditions and stop before execution; an
+            # are met. Collect conditions; the available reconstruction button
+            # may unlock access but still requires exact detail proof. An
             # anonymous entrance never constitutes target-stage proof.
             tasks.update({
                 'ZootdEncryptedEntry': {**ocr(['TOP-SECRET'],
@@ -122,8 +123,13 @@ def navigation_tasks(route: dict) -> dict:
                                              roi=SPECIAL_PANEL_ROIS['marker'], click=False), 'isAscii': True},
                 'ZootdEncryptedConditions': ocr(['查看条件'], ['ZootdEncryptedRecordPage'],
                                                 roi=[30, 550, 225, 100]),
-                'ZootdEncryptedRecordPage': {**ocr(['加密实验记录', '解密实验记录', '重构事件'], [], click=False),
+                'ZootdEncryptedRecordPage': {**ocr(['加密实验记录', '解密实验记录', '重构事件'],
+                                                  ['ZootdEncryptedReconstruct', 'ZootdEncryptedBlocked'], click=False),
                                               'fullMatch': False},
+                'ZootdEncryptedReconstruct': {**ocr(['事件重构'], STAGE_PANEL_TASKS,
+                                                   roi=[180, 590, 900, 90]),
+                                              'postDelay': 2000, 'maxTimes': 1, 'exceededNext': []},
+                'ZootdEncryptedBlocked': {'algorithm': 'JustReturn', 'next': []},
             })
             find.insert(find.index('ZootdMapReady'), 'ZootdEncryptedEntry')
     elif route['kind'] == 'main':
