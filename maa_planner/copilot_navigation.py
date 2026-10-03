@@ -108,6 +108,24 @@ def navigation_tasks(route: dict) -> dict:
                                    ['ZootdActivity', 'ZootdListScan'], 45, []),
             'ZootdEnter': ocr(['进入活动', '前往章节'], find, roi=[940, 540, 340, 180]),
         })
+        if route.get('ap_cost') == 0:
+            # Encrypted zero-cost stages hide their code until extra objectives
+            # are met. Collect conditions and stop before execution; an
+            # anonymous entrance never constitutes target-stage proof.
+            tasks.update({
+                'ZootdEncryptedEntry': {**ocr(['TOP-SECRET'],
+                                             ['ZootdEncryptedConditions', 'ZootdEncryptedRecordPage', 'ZootdEncryptedPanel'],
+                                             roi=[0, 440, 1280, 140]),
+                                        'isAscii': True, 'fullMatch': False,
+                                        'maxTimes': 1, 'exceededNext': []},
+                'ZootdEncryptedPanel': {**ocr(['SPECIAL ACCESS CONTENT'], ['ZootdEncryptedConditions'],
+                                             roi=SPECIAL_PANEL_ROIS['marker'], click=False), 'isAscii': True},
+                'ZootdEncryptedConditions': ocr(['查看条件'], ['ZootdEncryptedRecordPage'],
+                                                roi=[30, 550, 225, 100]),
+                'ZootdEncryptedRecordPage': {**ocr(['加密实验记录', '解密实验记录', '重构事件'], [], click=False),
+                                              'fullMatch': False},
+            })
+            find.insert(find.index('ZootdMapReady'), 'ZootdEncryptedEntry')
     elif route['kind'] == 'main':
         chapter = route.get('chapter')
         if type(chapter) is not int:
