@@ -65,6 +65,14 @@ def navigation_tasks(route: dict) -> dict:
                      'exceededNext': ['ZootdStage', 'ZootdMapReady']},
         'ZootdMapReady': {'algorithm': 'JustReturn', 'next': []},
     }
+    # The small English strip needs the installed character OCR model.
+    # Word OCR repeatedly read it as SPELAccEsSCNTEN on the real panel.
+    tasks['ZootdSpecialPanel']['isAscii'] = True
+    # Native CloseAnno can match the special panel's close icon. After the
+    # click, retain announcement/home checks and also resume bounded return.
+    tasks['StartUp@CloseAnno'] = {
+        'next': ['StartUp@MainThemes#next', 'StartUp@CloseAnnos#next',
+                 'StartUp@ReturnButtons#next']}
     if route.get('has_raid') and not route.get('raid'):
         # The detail panel remembers challenge mode from a previous run.
         # Native recognition/switching finishes before ordinary execution.
