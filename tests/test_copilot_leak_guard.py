@@ -133,6 +133,10 @@ class LeakGuardTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdAbortZeroStars']['maxTimes'], 3)
         self.assertEqual(tasks['ZootdAbortReturn']['maxTimes'], 3)
         self.assertEqual(tasks['ZootdAbortReturn']['postDelay'], 1000)
+        self.assertEqual(tasks['ZootdAbortMapStage']['text'], ['MN-EX-7', 'MNEX7'])
+        self.assertEqual(tasks['ZootdAbortMapStage']['maxTimes'], 1)
+        self.assertEqual(tasks['ZootdAbortMapStage']['next'], ['ZootdAbortStagePanel'])
+        self.assertTrue(tasks['ZootdAbortMapStage']['fullMatch'])
         self.assertTrue(all(t['onErrorNext'] == [] and t['exceededNext'] == [] for t in tasks.values()))
 
     def test_repeated_zero_page_cleanup_is_bounded_and_unknown_inputs_reject(self):
@@ -158,6 +162,27 @@ class LeakGuardTests(unittest.TestCase):
             for i, row in enumerate(rows):
                 row.update(sequence=i, recorded_ns=100+i)
             self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+
+    def test_exact_map_reopen_requires_detail_and_only_one_click(self):
+        receipt = self.receipt()
+        original = {'run_id': self.run.name, 'message': 20002, 'details': {
+            'uuid': 'device', 'taskid': 8, 'taskchain': 'Custom', 'subtask': 'ProcessTask',
+            'first': ['ZootdLeakAbort'], 'details': {'task': 'ZootdAbortMapStage',
+            'algorithm': 'OcrDetect', 'action': 'ClickSelf',
+            'result': {'text': 'MN-EX-7', 'score': .99}}}}
+        for repetitions, text, expected in [(1, 'MN-EX-7', 'verified'),
+                                            (2, 'MN-EX-7', 'unproven'),
+                                            (1, 'MN-EX-8', 'unproven')]:
+            rows = self.records()
+            extra = copy.deepcopy(original)
+            extra['details']['details']['result']['text'] = text
+            rows[11:11] = [copy.deepcopy(extra) for _ in range(repetitions)]
+            for i, row in enumerate(rows):
+                row.update(sequence=i, recorded_ns=100+i)
+            self.assertEqual(self.prove(rows, receipt)['status'], expected)
+        rows = self.records()
+        rows[11] = copy.deepcopy(original)  # Map code does not replace panel proof.
+        self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
 
     def test_worker_stops_copilot_before_enqueuing_native_abandonment(self):
         images = self.images
