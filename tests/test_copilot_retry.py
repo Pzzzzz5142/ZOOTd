@@ -187,7 +187,7 @@ class RetryClassificationTests(unittest.TestCase):
         self.assertTrue(outcome['retryable'])
         self.assertEqual(outcome['sanity_outcome'], 'refunded')
         records.insert(2, raid_confirmation())
-        self.assertEqual(classify(stamp(records), raid=True)['sanity_outcome'], 'charged_or_unknown')
+        self.assertEqual(classify(stamp(records), raid=True)['sanity_outcome'], 'refunded')
         records = failed_events('zero_star_mission_failed_complete')
         records[7]['details']['details'].update(task='StageDrops-Stars-2',
             result={'template': 'StageDrops-Stars-2.png', 'score': 0.98})
@@ -316,13 +316,13 @@ class RetryClassificationTests(unittest.TestCase):
         records = stamp(failed_events('battle')+[event(20003, what='GameOffline')])
         self.assertEqual(classify(records)['sanity_outcome'], 'charged_or_unknown')
 
-    def test_raid_failure_keeps_sanity_and_requires_mode_evidence(self):
+    def test_raid_explicit_failure_refunds_and_requires_mode_evidence(self):
         records = failed_events('battle')
         records.insert(2, raid_confirmation())
         outcome = classify(stamp(records), raid=True)
         self.assertEqual(outcome['category'], 'battle_failed')
         self.assertTrue(outcome['retryable'])
-        self.assertEqual(outcome['sanity_outcome'], 'charged_or_unknown')
+        self.assertEqual(outcome['sanity_outcome'], 'refunded')
         self.assertFalse(classify(failed_events('battle'), raid=True)['retryable'])
         records = failed_events('missing')
         records.insert(2, raid_confirmation())
@@ -364,6 +364,32 @@ class RetryClassificationTests(unittest.TestCase):
 
 
 class RetryIntegrationTests(unittest.TestCase):
+    def test_verified_leak_abort_retries_with_refund_without_claiming_clear(self):
+        self.outcomes = ['two_star_complete', 'success']
+        self.provider.get.side_effect = [self.content,
+            dict(self.content, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
+        original = self.fake_execute
+        def execute_abort(root, run, address):
+            status = original(root, run, address)
+            if len(self.paths) == 1:
+                (run / 'worker-result.json').write_text(json.dumps({
+                    'run_id': run.name, 'phase': 'battle_aborted', 'exit_code': status}))
+            return status
+        self.execute.side_effect = execute_abort
+        with patch('maa_planner.copilot_run.abort_proof', return_value={
+                'status': 'verified', 'reason': 'leak_abandoned', 'evidence': [], 'sanity_outcome': 'refunded'}) as proof:
+            audit = self.run_experiment(sanity_budget=18)
+        self.assertEqual(audit['status'], 'success', audit)
+        self.assertEqual(audit['budget']['sanity_reserved'], 18)
+        self.assertEqual(audit['attempts'][0]['status'], 'failed')
+        self.assertEqual(audit['attempts'][0]['sanity_settlement']['released'], 18)
+        self.assertFalse(audit['attempts'][0]['battle_proof']['three_star'])
+        proof.assert_called_once()
+        params = json.loads((self.paths[0] / 'params.json').read_text())
+        self.assertTrue(params['abort_on_leak'])
+        tasks = json.loads((self.paths[0] / 'navigation/resource/tasks/tasks.json').read_text())
+        self.assertEqual(tasks['Copilot@StageDrops-Stars-2']['action'], 'Stop')
+
     def test_semiautomatic_candidate_is_excluded_before_any_device_reservation(self):
         rows = self.provider.query.return_value['candidates']
         rows[0]['title'] = '【自用/半自动/改良】test'
@@ -552,7 +578,7 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertFalse((self.paths[0] / 'task-id.json').exists())
         self.assertIn('启动作业前停止', audit['message'])
 
-    def test_raid_retry_respects_sanity_budget_after_battle_failure(self):
+    def test_raid_retry_releases_budget_after_proven_battle_failure(self):
         self.raid_catalog()
         self.provider.query.return_value = {'candidates': [dict(candidate(i).to_dict(), difficulty=3)
                                                          for i in (1, 2)], 'page': 1}
@@ -561,10 +587,10 @@ class RetryIntegrationTests(unittest.TestCase):
             dict(self.provider.get.return_value, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
         self.outcomes = ['battle', 'success']
         audit = experiment(self.root, 'MN-EX-7', None, raid=True, limits=RetryLimits(2, 2, 18))
-        self.assertEqual(audit['status'], 'failed')
-        self.assertEqual(len(self.paths), 1)
+        self.assertEqual(audit['status'], 'success', audit)
+        self.assertEqual(len(self.paths), 2)
         self.assertEqual(audit['budget']['sanity_reserved'], 18)
-        self.assertEqual(audit['attempts'][-1]['failure']['category'], 'budget_exhausted')
+        self.assertEqual(audit['attempts'][0]['sanity_settlement']['released'], 18)
 
     def test_raid_cannot_request_normal_proxy_proof_or_acceptance_check(self):
         for options in ({'prove_capability': True}, {'acceptance_failure': True}):
