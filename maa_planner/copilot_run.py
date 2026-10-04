@@ -26,6 +26,7 @@ from .copilot_navigation import navigation_tasks, copilot_result_tasks, zero_res
 from .navigation_catalog import load_navigation
 from .copilot_matcher import match_candidate, rank_candidates, skill_placeholder
 from .copilot_static import fetch_catalog
+from .copilot_local import LocalCopilotClient
 from .prts import PrtsError, CopilotCandidate, PrtsCopilotClient, decode, operators
 from .runtime_receipt import validate_runtime_receipt
 from .skland import SklandBoxProvider, SklandClient
@@ -249,6 +250,11 @@ class CandidateRejected(ExperimentError):
     """A validated candidate is unusable; no device action has happened."""
 
 
+def copilot_source(client):
+    value = getattr(client, 'source', None)
+    return copy.deepcopy(value) if isinstance(value, dict) else {'kind': 'prts'}
+
+
 def acceptance_formation_failure(content, box, catalog, battle):
     """Explicit hardware test: an impossible low-rarity level, never fake callbacks."""
     changed = copy.deepcopy(content)
@@ -275,6 +281,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
     audit = {'status': 'failed', 'copilot_id': candidate.id, 'run_dir': str(run),
              'snapshot_sha256': snapshot_sha256, 'raid': route['raid'],
              'stage': canonical, 'battle_id': route['battle_id']}
+    audit['source'] = copilot_source(prts)
     phase = 'download_recheck'
     reservation = None
     try:
@@ -455,11 +462,14 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
 def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None,
                acceptance_failure: bool = False, prove_capability: bool = False, raid: bool = False,
                use_sanity_potion: bool = False, copilot_id: int | None = None,
-               exclude_copilot_ids=()) -> dict:
+               exclude_copilot_ids=(), copilot_file: Path | None = None) -> dict:
     limits = limits or RetryLimits()
     policy = load_policy(root, profile)
     print(ACCOUNT_NOTICE, file=sys.stderr, flush=True)
     excluded_ids = set(exclude_copilot_ids)
+    if copilot_file is not None and (copilot_id is not None or excluded_ids
+                                    or acceptance_failure or prove_capability):
+        raise ExperimentError('Local copilot cannot combine with remote ID selection, acceptance or capability proof')
     if any(type(value) is not int or value <= 0 for value in excluded_ids) or (
             copilot_id is not None and (type(copilot_id) is not int or copilot_id <= 0)):
         raise ExperimentError('Copilot IDs must be positive integers')
@@ -490,7 +500,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                                'medicine': 'as_needed' if use_sanity_potion else 0,
                                'stone': 0, 'raid': raid,
                                'copilot_id': copilot_id,
-                               'exclude_copilot_ids': sorted(excluded_ids)}}
+                               'exclude_copilot_ids': sorted(excluded_ids),
+                               'copilot_file': str(copilot_file) if copilot_file is not None else None}}
     if acceptance_failure:
         audit['acceptance_check'] = 'injected_formation_failure_then_unmodified_candidate'
     phase = 'readiness'
@@ -527,7 +538,9 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             phase = 'static_catalog'
             catalog, audit['static_sources'] = fetch_catalog(decode((root / 'var/data/resource/battle_data.json').read_bytes()))
             phase = 'query_match'
-            prts = PrtsCopilotClient(stages)
+            prts = (PrtsCopilotClient(stages) if copilot_file is None else
+                    LocalCopilotClient(stages, copilot_file, snapshot=run / 'source-file.json'))
+            audit['source'] = copilot_source(prts)
             page = prts.query(canonical, limit=50)
             candidates = [CopilotCandidate(**c) for c in page['candidates']
                           if difficulty_matches(c['difficulty'], raid=raid)]
@@ -542,6 +555,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                         'authorization': audit['authorization'],
                         'stage_catalog_sha256': audit['stage_catalog_sha256'],
                         'query': page, 'ranking': audit['ranking'], 'box': audit['box'],
+                        'source': audit['source'],
                         'excluded_candidates': audit['excluded_candidates'],
                         'static_sources': audit['static_sources']}
             if acceptance_failure:
@@ -549,7 +563,7 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
             atomic_write_json(run / 'snapshot.json', snapshot, mode=0o600)
             audit['snapshot_sha256'] = sha256_bytes(canonical_json(snapshot))
             if selected is None:
-                raise ExperimentError('No executable candidate in the first 50 results under this policy')
+                raise ExperimentError('No executable candidate in the selected source under this policy')
 
             choices = [r for r in ranked if r.status == 'exact' or
                        (policy['allow_support'] and r.status == 'support_one')]
@@ -639,6 +653,8 @@ def main(argv=None):
     parser.add_argument('--sanity-budget', type=int)
     parser.add_argument('--copilot-id', type=int,
                         help='Use only this ID from the first 50 difficulty-matched query results')
+    parser.add_argument('--copilot-file', type=Path,
+                        help='Explicit local full copilot JSON; same matching, navigation, budgets and proof')
     parser.add_argument('--exclude-copilot-id', type=int, action='append', default=[],
                         help='Exclude a known unsuitable ID; repeat to exclude more candidates')
     parser.add_argument('--acceptance-formation-failure', action='store_true',
@@ -659,10 +675,11 @@ def main(argv=None):
                             acceptance_failure=args.acceptance_formation_failure,
                             prove_capability=args.prove_capability, raid=args.raid,
                             use_sanity_potion=args.use_sanity_potion,
-                            copilot_id=args.copilot_id, exclude_copilot_ids=args.exclude_copilot_id)
+                            copilot_id=args.copilot_id, exclude_copilot_ids=args.exclude_copilot_id,
+                            copilot_file=args.copilot_file)
         if result['status'] != 'success':
             print(result.get('message') or failure_message(result), file=sys.stderr)
-        print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'failure_phase', 'error', 'message')
+        print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'source', 'failure_phase', 'error', 'message')
                           if k in result}, ensure_ascii=False))
         return 0 if result['status'] == 'success' else 1
     except ExperimentError as exc:

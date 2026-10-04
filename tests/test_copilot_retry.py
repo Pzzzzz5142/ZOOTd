@@ -699,6 +699,53 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(result))
         self.assertFalse((self.root / 'var/state/planner/capabilities.json').exists())
 
+    def test_explicit_local_source_uses_same_budget_navigation_and_battle_proof(self):
+        content = dict(self.content, doc={'title': 'Local strategy'}, difficulty=3)
+        source = self.root / 'local.json'
+        source.write_text(json.dumps(content))
+        self.outcomes = ['success']
+        result = experiment(self.root, 'NL-8', None, copilot_file=source)
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(result['source']['kind'], 'local')
+        self.assertEqual(result['budget']['sanity_reserved'], 18)
+        self.assertEqual(result['budget']['battle_reservations'], 1)
+        self.assertEqual(len(result['attempts']), 1)
+        self.assertEqual(result['attempts'][0]['source'], result['source'])
+        self.assertTrue(result['attempts'][0]['battle_proof']['three_star'])
+        self.assertEqual(Path(result['source']['snapshot']).read_bytes(), source.read_bytes())
+        self.provider.query.assert_not_called()
+        self.provider.get.assert_not_called()
+        self.execute.assert_called_once()
+
+    def test_local_source_cannot_bypass_difficulty_or_owned_requirements(self):
+        source = self.root / 'local.json'
+        for changes in ({'difficulty': 2}, {'opers': [dict(self.content['opers'][0], skill=3)]}):
+            with self.subTest(changes=changes):
+                source.write_text(json.dumps(dict(self.content, doc={'title': 'Local strategy'}, **changes)))
+                result = experiment(self.root, 'NL-8', None, copilot_file=source)
+                self.assertEqual(result['status'], 'failed')
+                self.assertEqual(result['budget']['sanity_reserved'], 0)
+                self.dev.assert_not_called()
+                self.execute.assert_not_called()
+
+    def test_local_file_changed_after_matching_stops_before_battle_reservation(self):
+        from maa_planner.copilot_local import LocalCopilotClient
+        source = self.root / 'local.json'
+        source.write_text(json.dumps(dict(self.content, doc={'title': 'Local strategy'})))
+        original_get = LocalCopilotClient.get
+
+        def changed(client, *args, **kwargs):
+            source.write_text(source.read_text() + '\n')
+            return original_get(client, *args, **kwargs)
+
+        with patch.object(LocalCopilotClient, 'get', changed):
+            result = experiment(self.root, 'NL-8', None, copilot_file=source)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['attempts'][0]['failure_phase'], 'download_recheck')
+        self.assertEqual(result['budget']['battle_reservations'], 0)
+        self.assertEqual(result['budget']['sanity_reserved'], 0)
+        self.execute.assert_not_called()
+
     def test_failed_battle_then_success_needs_only_one_clear_sanity_budget(self):
         self.outcomes = ['battle', 'success']
         self.provider.get.side_effect = [self.content,
