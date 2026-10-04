@@ -99,11 +99,11 @@ def abort_tasks(code):
         'ZootdAbortStageConfirmed': {'baseTask': 'ClickedCorrectStage', 'action': 'DoNothing',
                                     'text': [code, code.replace('-', '')], 'next': []},
         'ZootdAbortFailureScreen': {'baseTask': 'FightMissionFailed', 'preDelay': 0,
-                                   'maxTimes': 1, 'next': cleanup},
+                                   'maxTimes': 2, 'postDelay': 1000, 'next': cleanup},
         'ZootdAbortZeroStars': {'algorithm': 'MatchTemplate', 'template': 'StageDrops-Stars-0.png',
                                'roi': [50, 270, 250, 100], 'action': 'DoNothing',
-                               'maxTimes': 1, 'next': ['ZootdAbortReturn']},
-        'ZootdAbortReturn': {'baseTask': 'ClickCorner', 'maxTimes': 3, 'postDelay': 500,
+                               'maxTimes': 3, 'next': ['ZootdAbortReturn']},
+        'ZootdAbortReturn': {'baseTask': 'ClickCorner', 'maxTimes': 3, 'postDelay': 1000,
                             'next': cleanup},
         'ZootdAbortLoading': {'baseTask': 'LoadingIcon', 'template': 'LoadingIcon.png',
                              'action': 'DoNothing', 'maxTimes': 30, 'postDelay': 500, 'next': cleanup},
@@ -164,6 +164,17 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                 ('ZootdAbortAbandon', 'MatchTemplate', 'ClickSelf'),
                 ('ZootdAbortStagePanel', 'OcrDetect', 'DoNothing'),
                 ('ZootdAbortStageConfirmed', 'OcrDetect', 'DoNothing')]
+    cleanup_signatures = {
+        'ZootdLeakAbort': ('JustReturn', 'DoNothing', 1),
+        'ZootdAbortFailureScreen': ('OcrDetect', 'ClickSelf', 2),
+        'ZootdAbortZeroStars': ('MatchTemplate', 'DoNothing', 3),
+        'ZootdAbortReturn': ('JustReturn', 'ClickRect', 3),
+        'ZootdAbortLoading': ('MatchTemplate', 'DoNothing', 30),
+    }
+    signatures = {name: (algorithm, action) for name, algorithm, action in expected[1:]}
+    signatures.update({name: ('MatchTemplate', 'DoNothing') for name in ('ZootdAbortRed', 'ZootdAbortBlue')})
+    signatures.update({name: item[:2] for name, item in cleanup_signatures.items()})
+    cleanup_counts = {}
     for event in events:
         msg, value = event['message'], event['details']
         detail = value.get('details', {})
@@ -217,7 +228,7 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                 stopped = True
         elif value.get('taskchain') == 'Custom' and value.get('taskid') == abort_id:
             if (not stopped or value.get('uuid') != uuid or done
-                    or completed and msg != 3 or msg == 20000):
+                    or completed and msg != 3 or msg == 20000 or value.get('what') == 'ExceededLimit'):
                 return rejected
             if msg == 10001:
                 if custom:
@@ -225,6 +236,32 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                 custom = True
             elif not custom:
                 return rejected
+            if msg in (20001, 20002):
+                task = detail.get('task')
+                if (value.get('first') != ['ZootdLeakAbort'] or value.get('subtask') != 'ProcessTask'
+                        or task not in signatures
+                        or (detail.get('algorithm'), detail.get('action')) != signatures[task]):
+                    return rejected
+                if task in cleanup_signatures and len(observed) != (0 if task == 'ZootdLeakAbort' else 3):
+                    return rejected
+                if task in cleanup_signatures and msg == 20002:
+                    cleanup_counts[task] = cleanup_counts.get(task, 0) + 1
+                    if cleanup_counts[task] > cleanup_signatures[task][2]:
+                        return rejected
+                    result = detail.get('result', {})
+                    if task in ('ZootdLeakAbort', 'ZootdAbortReturn'):
+                        if result != {}:
+                            return rejected
+                    else:
+                        score = result.get('score')
+                        if type(score) not in (int, float) or not math.isfinite(score) or not 0 < score <= 1:
+                            return rejected
+                        if task == 'ZootdAbortFailureScreen' and result.get('text') != '任务失败':
+                            return rejected
+                        templates = {'ZootdAbortZeroStars': 'StageDrops-Stars-0.png',
+                                     'ZootdAbortLoading': 'LoadingIcon.png'}
+                        if task in templates and (result.get('template') != templates[task] or score < .8):
+                            return rejected
             if msg == 20002 and detail.get('task') in {
                     'ZootdAbortRed', 'ZootdAbortBlue', *(e[0] for e in expected[1:])}:
                 if len(observed) >= len(expected):
