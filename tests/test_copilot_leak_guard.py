@@ -128,8 +128,11 @@ class LeakGuardTests(unittest.TestCase):
         tasks = abort_tasks('MN-EX-7')
         self.assertEqual(tasks['ZootdAbortStagePanel']['action'], 'DoNothing')
         self.assertEqual(tasks['ZootdAbortAbandon']['template'], 'NormalBattleAbandon.png')
-        self.assertNotIn('Stars-2', json.dumps(tasks))
-        self.assertNotIn('Stars-3', json.dumps(tasks))
+        for stars in ('2', '3', 'Adverse'):
+            self.assertEqual(tasks['ZootdAbortStars-' + stars]['action'], 'Stop')
+            self.assertEqual(tasks['ZootdAbortStars-' + stars]['next'], [])
+        self.assertEqual(tasks['ZootdLeakAbort']['next'][:3],
+                         ['ZootdAbortStars-3', 'ZootdAbortStars-Adverse', 'ZootdAbortStars-2'])
         self.assertEqual(tasks['ZootdAbortZeroStars']['maxTimes'], 3)
         self.assertEqual(tasks['ZootdAbortReturn']['maxTimes'], 3)
         self.assertEqual(tasks['ZootdAbortReturn']['postDelay'], 1000)
@@ -184,11 +187,67 @@ class LeakGuardTests(unittest.TestCase):
         rows[11] = copy.deepcopy(original)  # Map code does not replace panel proof.
         self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
 
+    def raced_defeat_records(self, prefix=0, zero=False):
+        rows = self.records()
+        failure = copy.deepcopy(rows[11])
+        failure['details']['details'] = {
+            'task': 'ZootdAbortZeroStars' if zero else 'ZootdAbortFailureScreen',
+            'algorithm': 'MatchTemplate' if zero else 'OcrDetect',
+            'action': 'DoNothing' if zero else 'ClickSelf',
+            'result': dict({'template': 'StageDrops-Stars-0.png'} if zero else {'text': '任务失败'}, score=.99)}
+        rows = rows[:8+prefix] + [failure] + rows[11:]
+        for i, row in enumerate(rows):
+            row.update(sequence=i, recorded_ns=100+i)
+        return rows
+
+    def test_native_defeat_can_race_before_hp_gear_or_abandon_observation(self):
+        receipt = self.receipt()
+        for prefix in range(3):
+            for zero in (False, True):
+                with self.subTest(prefix=prefix, zero=zero):
+                    proof = self.prove(self.raced_defeat_records(prefix, zero), receipt)
+                    self.assertEqual(proof['status'], 'verified')
+                    self.assertEqual(proof['reason'], 'leak_raced_to_defeat')
+                    self.assertEqual(proof['sanity_outcome'], 'refunded')
+                    self.assertIn('ZootdAbortZeroStars' if zero else 'ZootdAbortFailureScreen',
+                                  [x['task'] for x in proof['evidence']])
+
+    def test_raced_defeat_requires_witness_failure_and_exact_complete_return(self):
+        receipt = self.receipt()
+        for index in [0, 1, 2, 3, 4, 6, 8, 9, 10, 11, 12]:
+            rows = self.raced_defeat_records()
+            rows.pop(index)
+            for i, row in enumerate(rows):
+                row['sequence'] = i
+            with self.subTest(missing=index):
+                self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+        for field, value in [('score', .79), ('text', '任务成功')]:
+            rows = self.raced_defeat_records()
+            rows[8]['details']['details']['result'][field] = value
+            self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+        rows = self.raced_defeat_records(zero=True)
+        rows[8]['details']['details']['result']['template'] = 'StageDrops-Stars-2.png'
+        self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+        rows = self.raced_defeat_records()
+        rows[8]['details']['uuid'] = 'other'
+        self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+        for message in (20001, 20002):
+            rows = self.raced_defeat_records()
+            extra = copy.deepcopy(self.records()[9])
+            extra['message'] = message  # A gear click after defeat is not a return action.
+            rows.insert(9, extra)
+            for i, row in enumerate(rows):
+                row.update(sequence=i, recorded_ns=100+i)
+            self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+        (self.run / 'leak-guard/leak.png').write_bytes((self.run / 'leak-guard/baseline.png').read_bytes())
+        self.assertEqual(self.prove(self.raced_defeat_records(), receipt)['status'], 'unproven')
+
     def test_worker_stops_copilot_before_enqueuing_native_abandonment(self):
         images = self.images
         class GuardCore(FakeCore):
-            def __init__(self):
+            def __init__(self, late=False):
                 super().__init__([])
+                self.late = late
                 self.running = False
                 self.frame = 0
                 self.AsstRunning = Function(lambda *_: int(self.running))
@@ -203,6 +262,14 @@ class LeakGuardTests(unittest.TestCase):
                     self.running = True
                     return 1
                 self.running = False
+                if self.late and self.appended[-1] == ('Custom', {'task_names': ['ZootdLeakAbort']}):
+                    self.emit(10001)
+                    self.emit(20001, subtask='ProcessTask', first=['ZootdLeakAbort'], details={
+                        'task': 'ZootdAbortStars-2', 'algorithm': 'MatchTemplate', 'action': 'Stop',
+                        'result': {'template': 'StageDrops-Stars-2.png', 'score': .99}})
+                    self.emit(10002)
+                    self.emit(3, finished_tasks=[len(self.appended)])
+                    return 1
                 return super().start(handle)
             def image(self, handle, buffer, size):
                 flag = 'BattleHpFlag' if self.frame == 0 else 'BattleHpFlag2'
@@ -215,21 +282,24 @@ class LeakGuardTests(unittest.TestCase):
                     self.emit(10004)
                 self.running = False
                 return 1
-        (self.run / 'navigation.json').write_text(json.dumps({'code': 'MN-EX-7', 'raid': False}))
-        (self.run / 'params.json').write_text(json.dumps({'abort_on_leak': True}))
-        core = GuardCore()
-        with patch('maa_planner.copilot_core.C.CDLL', return_value=core), \
-                patch('maa_planner.copilot_core.launch_game'), \
-                patch('maa_planner.copilot_core.signal.signal'), \
-                patch('maa_planner.copilot_core.subprocess.run', return_value=subprocess.CompletedProcess([], 0, stdout=b'')):
-            self.assertEqual(worker(self.root, self.run, 'device'), 0)
-        receipt = json.loads((self.run / 'worker-result.json').read_text())
-        self.assertEqual(receipt['phase'], 'battle_aborted')
-        self.assertEqual(core.appended[-1], ('Custom', {'task_names': ['ZootdLeakAbort']}))
-        events = [json.loads(line) for line in (self.run / 'callbacks.jsonl').read_text().splitlines()]
-        stopped = next(i for i, row in enumerate(events) if row['message'] == 10004)
-        self.assertEqual(events[stopped + 1]['details']['taskchain'], 'Custom')
-        self.assertTrue((self.run / 'leak-guard/leak.png').exists())
+        for late in (False, True):
+            run = self.root / ('late-result' if late else 'native-abandon')
+            run.mkdir()
+            (run / 'navigation.json').write_text(json.dumps({'code': 'MN-EX-7', 'raid': False}))
+            (run / 'params.json').write_text(json.dumps({'abort_on_leak': True}))
+            core = GuardCore(late)
+            with patch('maa_planner.copilot_core.C.CDLL', return_value=core), \
+                    patch('maa_planner.copilot_core.launch_game'), \
+                    patch('maa_planner.copilot_core.signal.signal'), \
+                    patch('maa_planner.copilot_core.subprocess.run', return_value=subprocess.CompletedProcess([], 0, stdout=b'')):
+                self.assertEqual(worker(self.root, run, 'device'), 1 if late else 0)
+            receipt = json.loads((run / 'worker-result.json').read_text())
+            self.assertEqual(receipt['phase'], 'imperfect_result' if late else 'battle_aborted')
+            self.assertEqual(core.appended[-1], ('Custom', {'task_names': ['ZootdLeakAbort']}))
+            events = [json.loads(line) for line in (run / 'callbacks.jsonl').read_text().splitlines()]
+            stopped = next(i for i, row in enumerate(events) if row['message'] == 10004)
+            self.assertEqual(events[stopped + 1]['details']['taskchain'], 'Custom')
+            self.assertTrue((run / 'leak-guard/leak.png').exists())
 
     def test_late_two_star_stop_is_never_reported_as_worker_success(self):
         class LateCore(FakeCore):

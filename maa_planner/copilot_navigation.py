@@ -250,11 +250,15 @@ def copilot_result_tasks() -> dict:
 
 
 def zero_result_recovery_tasks() -> dict:
-    """Clear only a stranded zero-star result before native StartUp."""
+    """Clear explicit defeat/zero-star pages before native StartUp."""
     tasks = {
         'ZootdRecoverZeroResult': {'algorithm': 'JustReturn',
             'next': ['ZootdRecoverThreeStars', 'ZootdRecoverAdverseStars',
-                     'ZootdRecoverTwoStars', 'ZootdRecoverZeroStars', 'ZootdRecoverNoZero']},
+                     'ZootdRecoverTwoStars', 'ZootdRecoverFailure',
+                     'ZootdRecoverZeroStars', 'ZootdRecoverNoZero']},
+        'ZootdRecoverFailure': {'baseTask': 'FightMissionFailed', 'maxTimes': 1,
+            'preDelay': 0, 'postDelay': 1000,
+            'next': ['ZootdRecoverZeroStars', 'ZootdRecoverNoZero']},
         'ZootdRecoverNoZero': {'algorithm': 'JustReturn', 'next': []},
         'ZootdRecoverClearZero': {'baseTask': 'ClickCorner', 'maxTimes': 3, 'postDelay': 1000,
             'next': ['ZootdRecoverZeroStars', 'ZootdRecoverNoZero']},
