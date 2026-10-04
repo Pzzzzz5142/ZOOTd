@@ -400,6 +400,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 check(lib.AsstSetInstanceOption(handle, key, value))
             progress['phase'] = 'adb'
             check(lib.AsstConnect(handle, b'/usr/bin/adb', address.encode(), b'General'))
+            intentional_stop_task_id = None
             def run_task(kind, params):
                 task = lib.AsstAppendTask(handle, kind, params)
                 check(task)
@@ -408,7 +409,10 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     check(not callback_failed.is_set())
                     time.sleep(0.2)
                 with mutex:
-                    check((10002, task) in chains and not any(m in (0, 1, 10000, 10004) for m, _ in chains))
+                    check((10002, task) in chains and not any(
+                        m in (0, 1, 10000, 10004)
+                        and (m, identity) != (10004, intentional_stop_task_id)
+                        for m, identity in chains))
                 check(not callback_failed.is_set())
                 return task
 
@@ -547,7 +551,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                             deadline = time.monotonic() + 10
                             while True:
                                 with mutex:
-                                    stopped = any(e['message'] == 10003
+                                    stopped = any(e['message'] == 10004
                                                   and e['details'].get('taskchain') == 'Copilot'
                                                   and e['details'].get('taskid') == task_id
                                                   and e['details'].get('uuid') == witness['uuid']
@@ -556,6 +560,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                                     break
                                 check(time.monotonic() < deadline and not callback_failed.is_set())
                                 time.sleep(.05)
+                            intentional_stop_task_id = task_id
                             overlay = run / 'leak-abort-overlay/resource/tasks'
                             overlay.mkdir(parents=True)
                             (overlay / 'tasks.json').write_text(json.dumps(abort_tasks(route['code'])))
