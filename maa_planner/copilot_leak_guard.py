@@ -7,6 +7,7 @@ import time
 
 from .copilot_core import callbacks_are_fresh, formation_auxiliary
 from .navigation_vision import resource_file
+from .copilot_navigation import zero_result_friend_tasks
 
 
 class LeakRecognizer:
@@ -107,7 +108,7 @@ def abort_tasks(code):
                                    'maxTimes': 2, 'postDelay': 1000, 'next': cleanup},
         'ZootdAbortZeroStars': {'algorithm': 'MatchTemplate', 'template': 'StageDrops-Stars-0.png',
                                'roi': [50, 270, 250, 100], 'action': 'DoNothing',
-                               'maxTimes': 3, 'next': ['ZootdAbortReturn']},
+                               'maxTimes': 3, 'next': ['ZootdAbortFriendPrompt', 'ZootdAbortReturn']},
         'ZootdAbortReturn': {'baseTask': 'ClickCorner', 'maxTimes': 3, 'postDelay': 1000,
                             'next': cleanup},
         'ZootdAbortLoading': {'baseTask': 'LoadingIcon', 'template': 'LoadingIcon.png',
@@ -126,6 +127,7 @@ def abort_tasks(code):
         tasks['ZootdAbortStars-' + stars] = {
             'algorithm': 'MatchTemplate', 'template': f'StageDrops-Stars-{stars}.png',
             'templThreshold': .8, 'roi': [50, 270, 250, 100], 'action': 'Stop', 'next': []}
+    tasks.update(zero_result_friend_tasks('ZootdAbort', ['ZootdAbortReturn']))
     for task in tasks.values():
         task.update(sub=[], onErrorNext=[], exceededNext=[])
     return tasks
@@ -186,6 +188,8 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
         'ZootdAbortReturn': ('JustReturn', 'ClickRect', 3),
         'ZootdAbortLoading': ('MatchTemplate', 'DoNothing', 30),
         'ZootdAbortMapStage': ('OcrDetect', 'ClickSelf', 1),
+        'ZootdAbortFriendPrompt': ('OcrDetect', 'DoNothing', 1),
+        'ZootdAbortFriendCancel': ('MatchTemplate', 'ClickSelf', 1),
     }
     signatures = {name: (algorithm, action) for name, algorithm, action in expected[1:]}
     signatures.update({name: ('MatchTemplate', 'DoNothing') for name in ('ZootdAbortRed', 'ZootdAbortBlue')})
@@ -194,6 +198,7 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
     cleanup_counts = {}
     defeat = False
     defeat_evidence = []
+    friend_prompt = False
     for event in events:
         msg, value = event['message'], event['details']
         detail = value.get('details', {})
@@ -267,6 +272,9 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                     name = expected[len(observed)][0]
                     if task not in ('ZootdAbortRed', 'ZootdAbortBlue') if name == 'hp' else task != name:
                         return rejected
+                if task.startswith('ZootdAbortFriend') and (cleanup_counts.get('ZootdAbortZeroStars', 0) < 1
+                        or task == 'ZootdAbortFriendCancel' and not friend_prompt):
+                    return rejected
                 defeat_signal = task in ('ZootdAbortFailureScreen', 'ZootdAbortZeroStars') and not defeat and len(observed) < 3
                 if task in cleanup_signatures:
                     phase = 0 if task == 'ZootdLeakAbort' else len(expected) - 2
@@ -287,6 +295,12 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                         if task == 'ZootdAbortFailureScreen' and (result.get('text') != '任务失败' or score < .8):
                             return rejected
                         if task == 'ZootdAbortMapStage' and result.get('text') not in (code, code.replace('-', '')):
+                            return rejected
+                        if task == 'ZootdAbortFriendPrompt':
+                            if result.get('text') != '是否添加为好友' or score < .8:
+                                return rejected
+                            friend_prompt = True
+                        if task == 'ZootdAbortFriendCancel' and (result.get('template') != 'StageResult-FriendCancel.png' or score < .9):
                             return rejected
                         templates = {'ZootdAbortZeroStars': 'StageDrops-Stars-0.png',
                                      'ZootdAbortLoading': 'LoadingIcon.png'}
