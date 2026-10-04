@@ -85,13 +85,17 @@ class LeakGuard:
 
 def abort_tasks(code):
     """Bounded native abandonment; no start, refill or successful-result action."""
-    cleanup = ['ZootdAbortStagePanel', 'ZootdAbortFailureScreen',
+    result_guards = ['ZootdAbortStars-3', 'ZootdAbortStars-Adverse', 'ZootdAbortStars-2']
+    failure_results = ['ZootdAbortFailureScreen', 'ZootdAbortZeroStars']
+    failed = result_guards + failure_results
+    cleanup = result_guards + ['ZootdAbortStagePanel', 'ZootdAbortFailureScreen',
                'ZootdAbortZeroStars', 'ZootdAbortLoading', 'ZootdAbortMapStage']
     tasks = {
-        'ZootdLeakAbort': {'algorithm': 'JustReturn', 'next': ['ZootdAbortRed', 'ZootdAbortBlue']},
+        'ZootdLeakAbort': {'algorithm': 'JustReturn',
+                          'next': result_guards + ['ZootdAbortRed', 'ZootdAbortBlue'] + failure_results},
         'ZootdAbortGear': {'baseTask': 'RoguelikeBattleExitBegin',
                            'template': 'RoguelikeBattleExitBegin.png', 'maxTimes': 1,
-                           'postDelay': 200, 'next': ['ZootdAbortAbandon']},
+                           'postDelay': 200, 'next': ['ZootdAbortAbandon'] + failed},
         'ZootdAbortAbandon': {'baseTask': 'NormalBattleAbandon', 'template': 'NormalBattleAbandon.png',
                               'maxTimes': 1, 'postDelay': 500, 'next': cleanup},
         'ZootdAbortStagePanel': {'baseTask': 'StartButton1', 'action': 'DoNothing',
@@ -116,7 +120,12 @@ def abort_tasks(code):
     }
     for name, template in [('ZootdAbortRed', 'BattleHpFlag2'), ('ZootdAbortBlue', 'BattleHpFlag')]:
         tasks[name] = {'baseTask': template, 'template': template + '.png',
-                       'action': 'DoNothing', 'templThreshold': .9, 'next': ['ZootdAbortGear']}
+                       'action': 'DoNothing', 'templThreshold': .9,
+                       'next': ['ZootdAbortGear'] + failed}
+    for stars in ('3', 'Adverse', '2'):
+        tasks['ZootdAbortStars-' + stars] = {
+            'algorithm': 'MatchTemplate', 'template': f'StageDrops-Stars-{stars}.png',
+            'templThreshold': .8, 'roi': [50, 270, 250, 100], 'action': 'Stop', 'next': []}
     for task in tasks.values():
         task.update(sub=[], onErrorNext=[], exceededNext=[])
     return tasks
@@ -180,8 +189,11 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
     }
     signatures = {name: (algorithm, action) for name, algorithm, action in expected[1:]}
     signatures.update({name: ('MatchTemplate', 'DoNothing') for name in ('ZootdAbortRed', 'ZootdAbortBlue')})
+    primary_tasks = set(signatures)
     signatures.update({name: item[:2] for name, item in cleanup_signatures.items()})
     cleanup_counts = {}
+    defeat = False
+    defeat_evidence = []
     for event in events:
         msg, value = event['message'], event['details']
         detail = value.get('details', {})
@@ -249,8 +261,17 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                         or task not in signatures
                         or (detail.get('algorithm'), detail.get('action')) != signatures[task]):
                     return rejected
-                if task in cleanup_signatures and len(observed) != (0 if task == 'ZootdLeakAbort' else 3):
-                    return rejected
+                if task in primary_tasks:
+                    if len(observed) >= len(expected):
+                        return rejected
+                    name = expected[len(observed)][0]
+                    if task not in ('ZootdAbortRed', 'ZootdAbortBlue') if name == 'hp' else task != name:
+                        return rejected
+                defeat_signal = task in ('ZootdAbortFailureScreen', 'ZootdAbortZeroStars') and not defeat and len(observed) < 3
+                if task in cleanup_signatures:
+                    phase = 0 if task == 'ZootdLeakAbort' else len(expected) - 2
+                    if len(observed) != phase and not defeat_signal:
+                        return rejected
                 if task in cleanup_signatures and msg == 20002:
                     cleanup_counts[task] = cleanup_counts.get(task, 0) + 1
                     if cleanup_counts[task] > cleanup_signatures[task][2]:
@@ -263,7 +284,7 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                         score = result.get('score')
                         if type(score) not in (int, float) or not math.isfinite(score) or not 0 < score <= 1:
                             return rejected
-                        if task == 'ZootdAbortFailureScreen' and result.get('text') != '任务失败':
+                        if task == 'ZootdAbortFailureScreen' and (result.get('text') != '任务失败' or score < .8):
                             return rejected
                         if task == 'ZootdAbortMapStage' and result.get('text') not in (code, code.replace('-', '')):
                             return rejected
@@ -271,8 +292,14 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                                      'ZootdAbortLoading': 'LoadingIcon.png'}
                         if task in templates and (result.get('template') != templates[task] or score < .8):
                             return rejected
-            if msg == 20002 and detail.get('task') in {
-                    'ZootdAbortRed', 'ZootdAbortBlue', *(e[0] for e in expected[1:])}:
+                    if defeat_signal:
+                        # The game may finish a real defeat before the native
+                        # stop unwinds. Require fresh defeat plus exact return,
+                        # without inventing a gear/abandon click that did not run.
+                        expected = expected[:len(observed)] + expected[3:]
+                        defeat = True
+                        defeat_evidence.append({'sequence': event['sequence'], 'task': task})
+            if msg == 20002 and detail.get('task') in primary_tasks:
                 if len(observed) >= len(expected):
                     return rejected
                 name, algorithm, action = expected[len(observed)]
@@ -306,5 +333,6 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                 done = True
         elif battling and value.get('taskchain'):
             return rejected
-    return ({'status': 'verified', 'reason': 'leak_abandoned', 'evidence': observed,
+    return ({'status': 'verified', 'reason': 'leak_raced_to_defeat' if defeat else 'leak_abandoned',
+             'evidence': sorted(observed + defeat_evidence, key=lambda e: e['sequence']),
              'sanity_outcome': 'refunded'} if done else rejected)

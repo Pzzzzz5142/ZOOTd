@@ -584,6 +584,19 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                             check(lib.AsstLoadResource(str(overlay.parent.parent).encode()))
                             witness['abort_task_id'] = run_task(
                                 b'Custom', b'{"task_names":["ZootdLeakAbort"]}')
+                            with mutex:
+                                late_two_stars = any(e['message'] == 20001
+                                    and e['details'].get('taskchain') == 'Custom'
+                                    and e['details'].get('taskid') == witness['abort_task_id']
+                                    and e['details'].get('uuid') == witness['uuid']
+                                    and e['details'].get('first') == ['ZootdLeakAbort']
+                                    and e['details'].get('details', {}).get('task') == 'ZootdAbortStars-2'
+                                    and e['details'].get('details', {}).get('action') == 'Stop'
+                                    and e['details'].get('details', {}).get('result', {}).get('template') == 'StageDrops-Stars-2.png'
+                                    for e in records)
+                            if late_two_stars:
+                                progress['phase'] = 'imperfect_result'
+                                return 1
                             progress['phase'] = 'battle_aborted'
                             return 0
                 time.sleep(.1 if leak_guard is not None else .2)

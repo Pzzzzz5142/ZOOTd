@@ -296,17 +296,20 @@ class NavigationTests(unittest.TestCase):
                 self.assertEqual((destination / 'template' / name).read_bytes(),
                                  (Path(__file__).parents[1] / 'maa_planner/resources' / name).read_bytes())
 
-    def test_stranded_result_recovery_clears_only_zero_and_stops_at_two(self):
+    def test_stranded_result_recovery_clears_defeat_and_zero_and_stops_at_two(self):
         from maa_planner.copilot_navigation import zero_result_recovery_tasks
         tasks = zero_result_recovery_tasks()
         self.assertEqual(tasks['ZootdRecoverZeroResult']['next'], [
             'ZootdRecoverThreeStars', 'ZootdRecoverAdverseStars', 'ZootdRecoverTwoStars',
-            'ZootdRecoverZeroStars', 'ZootdRecoverNoZero'])
+            'ZootdRecoverFailure', 'ZootdRecoverZeroStars', 'ZootdRecoverNoZero'])
         self.assertEqual(tasks['ZootdRecoverZeroStars']['next'], ['ZootdRecoverClearZero'])
         self.assertEqual(tasks['ZootdRecoverTwoStars']['action'], 'Stop')
         self.assertEqual(tasks['ZootdRecoverTwoStars']['next'], [])
         self.assertEqual(tasks['ZootdRecoverClearZero']['maxTimes'], 3)
         self.assertEqual(tasks['ZootdRecoverClearZero']['baseTask'], 'ClickCorner')
+        self.assertEqual(tasks['ZootdRecoverFailure']['baseTask'], 'FightMissionFailed')
+        self.assertEqual(tasks['ZootdRecoverFailure']['maxTimes'], 1)
+        self.assertEqual(tasks['ZootdRecoverFailure']['next'], ['ZootdRecoverZeroStars', 'ZootdRecoverNoZero'])
         self.assertTrue(all(t['onErrorNext'] == [] and t['exceededNext'] == [] for t in tasks.values()))
 
     def test_event_lock_texts_follow_game_prerequisite_graph(self):
