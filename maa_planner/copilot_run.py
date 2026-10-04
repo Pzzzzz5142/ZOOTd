@@ -19,6 +19,7 @@ from pathlib import Path
 from .box_cli import load_secret
 from .copilot_core import callbacks_are_fresh, terminal_result
 from .copilot_proof import battle_proof
+from .copilot_leak_guard import abort_proof
 from . import copilot_capability
 from .copilot_retry import RetryLimits, RetryBudget, classify_failure, failure
 from .copilot_navigation import navigation_tasks, copilot_result_tasks, install_copilot_result_resources, install_navigation_resources
@@ -310,6 +311,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             raise CandidateRejected('Identical bound execution already failed a battle in this snapshot')
         params = {'copilot_list': [{'filename': str(filename), 'stage_name': code, 'is_raid': route['raid']}],
                   'formation': True, 'loop_times': 1, 'use_sanity_potion': use_sanity_potion,
+                  'abort_on_leak': not route['raid'],
                   'add_trust': False, 'ignore_requirements': False,
                   'support_unit_usage': 2 if checked.support_needed else 0}
         if checked.support_needed:
@@ -322,6 +324,10 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         overlay.mkdir(parents=True)
         tasks = navigation_tasks(route)
         tasks.update(copilot_result_tasks())
+        if params['abort_on_leak']:
+            # A late two-star screen cannot be refunded by withholding a click.
+            # Still stop there instead of advancing its settlement or retrying.
+            tasks['Copilot@StageDrops-Stars-2'].update(action='Stop', next=[])
         install_copilot_result_resources(overlay.parent)
         install_navigation_resources(overlay.parent)
         # Medicine permission never authorizes originite, including when the
@@ -359,13 +365,14 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         events = [decode(line) for line in raw.splitlines()]
         task_id = decode((run / 'task-id.json').read_bytes()) if (run / 'task-id.json').exists() else None
         worker_phase = None
+        worker = {}
         receipt = run / 'worker-result.json'
         if receipt.exists():
             worker = decode(receipt.read_bytes())
             if worker.get('run_id') == run.name and worker.get('exit_code') == status:
                 worker_phase = worker.get('phase')
                 if worker_phase in {'runtime', 'adb', 'navigation', 'stage_locked', 'stage_not_found_on_map',
-                                    'raid_preflight', 'execution', 'proxy_proof'}:
+                                    'raid_preflight', 'execution', 'proxy_proof', 'abort_cleanup', 'battle_aborted'}:
                     audit['worker_phase'] = worker_phase
         fresh = callbacks_are_fresh(events, run_id=run.name, started_ns=started_ns, finished_ns=finished_ns)
         # The battle reducer ends at its own AllTasksCompleted. Later Custom
@@ -389,6 +396,17 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             started_ns=started_ns, finished_ns=finished_ns, exit_code=status,
             support_used=checked.support_needed, raid=route['raid'])
         if status != 0 or result['status'] != 'success':
+            if worker_phase == 'battle_aborted':
+                audit['early_abort'] = abort_proof(
+                    events, worker, run=run,
+                    resources=[root / p / 'resource' for p in ('var/data', 'var/data/MaaResource', 'var/data/cache')],
+                    started_ns=started_ns, finished_ns=finished_ns, task_id=task_id,
+                    stage=content['stage_name'], code=code, filename=str(filename),
+                    exit_code=status, raid=route['raid'])
+                if audit['early_abort']['status'] == 'verified':
+                    audit['failure'] = failure('battle_failed', retryable=True,
+                        evidence=audit['early_abort']['evidence'], sanity_outcome='refunded')
+                    raise ExperimentError('Leaking normal battle abandoned before settlement')
             audit['failure'] = classify_failure(
                 events, run_id=run.name, started_ns=started_ns, finished_ns=finished_ns,
                 task_id=task_id, stage=content['stage_name'], filename=str(filename),

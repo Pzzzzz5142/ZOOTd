@@ -329,6 +329,8 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
     locked_observed = threading.Event()
     encrypted_observed = threading.Event()
     reconstruction_observed = threading.Event()
+    leak_guard = None
+    imperfect_result = threading.Event()
     with (run / 'callbacks.jsonl').open('x') as output:
         @callback_type
         def callback(msg, raw, _):
@@ -342,6 +344,17 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     records.append(record)
                     sequence += 1
                     output.flush()
+                    if leak_guard is not None:
+                        leak_guard.observe(msg, value)
+                        detail = value.get('details', {})
+                        if (msg == 20001 and value.get('taskchain') == 'Copilot'
+                                and value.get('taskid') == leak_guard.task_id
+                                and value.get('uuid') == leak_guard.uuid
+                                and detail.get('task') == 'StageDrops-Stars-2'
+                                and detail.get('action') == 'Stop'
+                                and detail.get('algorithm') == 'MatchTemplate'
+                                and detail.get('result', {}).get('template') == 'StageDrops-Stars-2.png'):
+                            imperfect_result.set()
                     if home_recognized(msg, value):
                         home_observed.set()
                     if (msg == 20002 and value.get('details', {}).get('task') == 'ZootdNavigationLocked'
@@ -507,12 +520,55 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             task_id = lib.AsstAppendTask(handle, b'Copilot', params)
             check(task_id)
             (run / 'task-id.json').write_text(json.dumps(task_id))
+            if json.loads(params).get('abort_on_leak') is True and not route.get('raid'):
+                from .copilot_leak_guard import LeakGuard, abort_tasks
+                import numpy as np
+                lib.AsstGetImageBgr.argtypes = [C.c_void_p, C.c_void_p, C.c_uint64]
+                lib.AsstGetImageBgr.restype = C.c_uint64
+                leak_guard = LeakGuard([root / path / 'resource' for path in resources], run, task_id)
+                image_buffer = C.create_string_buffer(720 * 1280 * 3)
             check(lib.AsstStart(handle))
             while lib.AsstRunning(handle):
                 if callback_failed.is_set():
                     raise RuntimeError('Callback recording failed')
-                time.sleep(0.2)
+                if leak_guard is not None and leak_guard.active:
+                    # Passive cached image only: no competing ADB screenshots
+                    # or touches while the native Copilot owns the controller.
+                    size = lib.AsstGetImageBgr(handle, image_buffer, len(image_buffer))
+                    if size == len(image_buffer):
+                        image = np.frombuffer(image_buffer.raw, dtype=np.uint8).reshape(720, 1280, 3)
+                        witness = leak_guard.inspect(image)
+                        with mutex:
+                            should_abort = witness is not None and leak_guard.active
+                        if should_abort:
+                            witness['requested_ns'] = time.monotonic_ns()
+                            progress.update(phase='abort_cleanup', leak_abort=witness)
+                            check(lib.AsstStop(handle))
+                            deadline = time.monotonic() + 10
+                            while True:
+                                with mutex:
+                                    stopped = any(e['message'] == 10003
+                                                  and e['details'].get('taskchain') == 'Copilot'
+                                                  and e['details'].get('taskid') == task_id
+                                                  and e['details'].get('uuid') == witness['uuid']
+                                                  and e['recorded_ns'] >= witness['requested_ns'] for e in records)
+                                if stopped and not lib.AsstRunning(handle):
+                                    break
+                                check(time.monotonic() < deadline and not callback_failed.is_set())
+                                time.sleep(.05)
+                            overlay = run / 'leak-abort-overlay/resource/tasks'
+                            overlay.mkdir(parents=True)
+                            (overlay / 'tasks.json').write_text(json.dumps(abort_tasks(route['code'])))
+                            check(lib.AsstLoadResource(str(overlay.parent.parent).encode()))
+                            witness['abort_task_id'] = run_task(
+                                b'Custom', b'{"task_names":["ZootdLeakAbort"]}')
+                            progress['phase'] = 'battle_aborted'
+                            return 0
+                time.sleep(.1 if leak_guard is not None else .2)
             check(not callback_failed.is_set())
+            if imperfect_result.is_set():
+                progress['phase'] = 'imperfect_result'
+                return 1
             if proof_context:
                 # Only after battle: Stop overlays would otherwise prevent it.
                 from .copilot_capability import safe_proxy_tasks

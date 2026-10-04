@@ -238,15 +238,15 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     if not loaded or not chain_failed or not all_done or unexpected or (unsuccessful_stars and successful_stars):
         return failure('unknown_execution_failure')
     if formed and battling and battle_failed:
-        # Official CN has refunded failed/abandoned normal operations since
+        # Official CN has refunded failed/abandoned operations since
         # 2025-08-02. A two-star CLEAR still costs sanity. A zero-star glyph
         # alone does not prove the explicit mission-failure refund contract.
         # Never infer a refund
         # from generic worker/task failure or absence of a successful terminal.
-        # Challenge refunds have no independent evidence contract here, so
-        # keep their full reservation even after an explicit mission failure.
+        # Challenge mode additionally requires its native confirmation before
+        # formation. Leakage there causes mission failure, not a two-star clear.
         return failure('battle_failed', retryable=True, evidence=evidence,
-                       sanity_outcome='refunded' if mission_failed and not cleared and not raid else 'charged_or_unknown')
+                       sanity_outcome='refunded' if mission_failed and not cleared else 'charged_or_unknown')
     if forming and not formed and not battling:
         if schema_failed:
             return failure('copilot_schema_failure', retryable=True, sanity_outcome='not_spent')
