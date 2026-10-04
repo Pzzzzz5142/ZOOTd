@@ -188,6 +188,17 @@ def navigation_tasks(route: dict) -> dict:
             'exceededNext': ['ZootdStage', 'ZootdMapReady']}
         find.insert(find.index('ZootdMapReady'), 'ZootdZoneTabGlyph')
         find.insert(find.index('ZootdMapReady'), 'ZootdZoneTab')
+    if route['kind'] == 'archive' and '-S-' in code:
+        # Some older special zones expose only a chess-piece footer selector,
+        # with no zone-name text. The isolated glyph avoids adjacent tabs;
+        # it only opens the map, never establishes the requested stage.
+        tasks['ZootdSpecialZoneRook'] = {
+            'algorithm': 'MatchTemplate', 'template': 'StageZone-SpecialRook.png',
+            'templThreshold': .8, 'maskRange': [180, 255],
+            'roi': [640, 550, 640, 170], 'action': 'ClickSelf', 'postDelay': 1000,
+            'next': ['ZootdStage', 'ZootdMapReady'], 'maxTimes': 1,
+            'exceededNext': ['ZootdStage', 'ZootdMapReady']}
+        find.insert(find.index('ZootdMapReady'), 'ZootdSpecialZoneRook')
     if route.get('locked_texts'):
 
         tasks['ZootdNavigationLocked'] = ocr(route['locked_texts'], [], click=False)
@@ -250,5 +261,5 @@ def install_navigation_resources(resource_dir: Path) -> None:
     """Keep navigation UI glyphs in the run overlay, away from live runtime."""
     target = resource_dir / 'template'
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(Path(__file__).with_name('resources') / 'StageZone-EX.png',
-                    target / 'StageZone-EX.png')
+    for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png'):
+        shutil.copyfile(Path(__file__).with_name('resources') / name, target / name)

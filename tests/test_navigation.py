@@ -272,6 +272,30 @@ class NavigationTests(unittest.TestCase):
             self.assertTrue(tasks['ZootdStageConfirmed']['fullMatch'])
             self.assertEqual(tasks['ZootdStageConfirmed']['action'], 'DoNothing')
 
+    def test_special_archive_rook_opens_map_once_and_keeps_exact_target_proof(self):
+        route = dict(self.catalog().route('NL-9'), code='NL-S-1')
+        tasks = navigation_tasks(route)
+        tab = tasks['ZootdSpecialZoneRook']
+        self.assertEqual(tab['template'], 'StageZone-SpecialRook.png')
+        self.assertEqual(tab['roi'], [640, 550, 640, 170])
+        self.assertEqual(tab['maxTimes'], 1)
+        self.assertEqual(tab['next'], ['ZootdStage', 'ZootdMapReady'])
+        self.assertEqual(tab['exceededNext'], tab['next'])
+        self.assertIn('ZootdSpecialZoneRook', tasks['ZootdEnter']['next'])
+        self.assertEqual(tasks['ZootdStageConfirmed']['text'], ['NL-S-1', 'NLS1'])
+        self.assertEqual(tasks['ZootdStageConfirmed']['action'], 'DoNothing')
+        self.assertNotIn('ZootdSpecialZoneRook', navigation_tasks(dict(route, kind='activity')))
+        self.assertNotIn('ZootdSpecialZoneRook', navigation_tasks(dict(route, code='NL-9')))
+
+    def test_navigation_resources_install_both_isolated_glyphs(self):
+        from maa_planner.copilot_navigation import install_navigation_resources
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp)
+            install_navigation_resources(destination)
+            for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png'):
+                self.assertEqual((destination / 'template' / name).read_bytes(),
+                                 (Path(__file__).parents[1] / 'maa_planner/resources' / name).read_bytes())
+
     def test_event_lock_texts_follow_game_prerequisite_graph(self):
         tables, installed, tiles = fixture()
         tables['stage_table']['stages']['act1dp_s01']['unlockCondition'] = [{'stageId': 'previous'}]
