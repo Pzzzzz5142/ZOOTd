@@ -314,6 +314,10 @@ class RetryClassificationTests(unittest.TestCase):
 
 
     def test_only_proven_zero_cost_failure_releases_sanity(self):
+        outcome = classify(failed_events('two_star_complete'), exit_code=1, worker_phase='imperfect_result')
+        self.assertEqual(outcome['category'], 'imperfect_result')
+        self.assertFalse(outcome['retryable'])
+        self.assertEqual(outcome['sanity_outcome'], 'charged_or_unknown')
         for kind, outcome in [('missing', 'not_spent'), ('requirement', 'not_spent'),
                               ('schema', 'not_spent'), ('battle', 'refunded'),
                               ('two_star', 'charged_or_unknown'),
