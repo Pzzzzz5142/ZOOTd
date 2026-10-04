@@ -292,7 +292,8 @@ class NavigationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp)
             install_navigation_resources(destination)
-            for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png', 'StageDrops-Stars-0.png'):
+            for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png', 'StageDrops-Stars-0.png',
+                         'StageResult-FriendCancel.png'):
                 self.assertEqual((destination / 'template' / name).read_bytes(),
                                  (Path(__file__).parents[1] / 'maa_planner/resources' / name).read_bytes())
 
@@ -302,7 +303,7 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdRecoverZeroResult']['next'], [
             'ZootdRecoverThreeStars', 'ZootdRecoverAdverseStars', 'ZootdRecoverTwoStars',
             'ZootdRecoverFailure', 'ZootdRecoverZeroStars', 'ZootdRecoverNoZero'])
-        self.assertEqual(tasks['ZootdRecoverZeroStars']['next'], ['ZootdRecoverClearZero'])
+        self.assertEqual(tasks['ZootdRecoverZeroStars']['next'], ['ZootdRecoverFriendPrompt', 'ZootdRecoverClearZero'])
         self.assertEqual(tasks['ZootdRecoverTwoStars']['action'], 'Stop')
         self.assertEqual(tasks['ZootdRecoverTwoStars']['next'], [])
         self.assertEqual(tasks['ZootdRecoverClearZero']['maxTimes'], 3)
@@ -310,6 +311,11 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdRecoverFailure']['baseTask'], 'FightMissionFailed')
         self.assertEqual(tasks['ZootdRecoverFailure']['maxTimes'], 1)
         self.assertEqual(tasks['ZootdRecoverFailure']['next'], ['ZootdRecoverZeroStars', 'ZootdRecoverNoZero'])
+        self.assertEqual(tasks['ZootdRecoverFriendPrompt']['action'], 'DoNothing')
+        self.assertEqual(tasks['ZootdRecoverFriendPrompt']['next'], ['ZootdRecoverFriendCancel'])
+        self.assertEqual(tasks['ZootdRecoverFriendCancel']['template'], 'StageResult-FriendCancel.png')
+        self.assertEqual(tasks['ZootdRecoverFriendCancel']['maxTimes'], 1)
+        self.assertEqual(tasks['ZootdRecoverFriendCancel']['next'], ['ZootdRecoverClearZero'])
         self.assertTrue(all(t['onErrorNext'] == [] and t['exceededNext'] == [] for t in tasks.values()))
 
     def test_event_lock_texts_follow_game_prerequisite_graph(self):

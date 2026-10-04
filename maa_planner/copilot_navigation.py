@@ -249,6 +249,19 @@ def copilot_result_tasks() -> dict:
     return tasks
 
 
+def zero_result_friend_tasks(prefix, following):
+    """Decline a result friend prompt only after observing explicit zero stars."""
+    return {
+        prefix + 'FriendPrompt': {'algorithm': 'OcrDetect', 'action': 'DoNothing',
+            'text': ['是否添加为好友'], 'fullMatch': True, 'roi': [850, 245, 430, 45],
+            'ocrReplace': [[r'^是否添加.+为好友[?？]?$', '是否添加为好友']],
+            'maxTimes': 1, 'next': [prefix + 'FriendCancel']},
+        prefix + 'FriendCancel': {'algorithm': 'MatchTemplate', 'action': 'ClickSelf',
+            'template': 'StageResult-FriendCancel.png', 'templThreshold': .9,
+            'roi': [900, 280, 160, 65], 'maxTimes': 1, 'postDelay': 1000, 'next': following},
+    }
+
+
 def zero_result_recovery_tasks() -> dict:
     """Clear explicit defeat/zero-star pages before native StartUp."""
     tasks = {
@@ -268,8 +281,9 @@ def zero_result_recovery_tasks() -> dict:
             'algorithm': 'MatchTemplate', 'template': f'StageDrops-Stars-{stars}.png',
             'templThreshold': .8, 'roi': [50, 270, 250, 100],
             'action': 'Stop' if stars == '2' else 'DoNothing',
-            'next': (['ZootdRecoverClearZero'] if stars == '0' else
+            'next': (['ZootdRecoverFriendPrompt', 'ZootdRecoverClearZero'] if stars == '0' else
                      [] if stars == '2' else ['ZootdRecoverNoZero'])}
+    tasks.update(zero_result_friend_tasks('ZootdRecover', ['ZootdRecoverClearZero']))
     for task in tasks.values():
         task.update(sub=[], onErrorNext=[], exceededNext=[])
     return tasks
@@ -279,13 +293,14 @@ def install_copilot_result_resources(resource_dir: Path) -> None:
     """Install our zero-star glyph template only in the disposable run overlay."""
     target = resource_dir / 'template'
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(Path(__file__).with_name('resources') / 'StageDrops-Stars-0.png',
-                    target / 'StageDrops-Stars-0.png')
+    for name in ('StageDrops-Stars-0.png', 'StageResult-FriendCancel.png'):
+        shutil.copyfile(Path(__file__).with_name('resources') / name, target / name)
 
 
 def install_navigation_resources(resource_dir: Path) -> None:
     """Keep navigation UI glyphs in the run overlay, away from live runtime."""
     target = resource_dir / 'template'
     target.mkdir(parents=True, exist_ok=True)
-    for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png', 'StageDrops-Stars-0.png'):
+    for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png', 'StageDrops-Stars-0.png',
+                 'StageResult-FriendCancel.png'):
         shutil.copyfile(Path(__file__).with_name('resources') / name, target / name)

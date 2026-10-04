@@ -187,6 +187,32 @@ class LeakGuardTests(unittest.TestCase):
         rows[11] = copy.deepcopy(original)  # Map code does not replace panel proof.
         self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
 
+    def test_friend_decline_is_bound_to_zero_and_prompt_then_exact_return(self):
+        receipt = self.receipt()
+        def observation(task, algorithm, action, result):
+            row = copy.deepcopy(self.records()[11])
+            row['details']['details'] = dict(task=task, algorithm=algorithm, action=action, result=dict(result, score=.99))
+            return row
+        zero = observation('ZootdAbortZeroStars', 'MatchTemplate', 'DoNothing', {'template': 'StageDrops-Stars-0.png'})
+        prompt = observation('ZootdAbortFriendPrompt', 'OcrDetect', 'DoNothing', {'text': '是否添加为好友'})
+        cancel = observation('ZootdAbortFriendCancel', 'MatchTemplate', 'ClickSelf', {'template': 'StageResult-FriendCancel.png'})
+        for steps, expected in [([zero, prompt, cancel], 'verified'),
+                                 ([prompt, cancel], 'unproven'), ([zero, cancel], 'unproven'),
+                                 ([zero, prompt, cancel, cancel], 'unproven')]:
+            rows = self.records()
+            rows[11:11] = copy.deepcopy(steps)
+            for i, row in enumerate(rows):
+                row.update(sequence=i, recorded_ns=100+i)
+            self.assertEqual(self.prove(rows, receipt)['status'], expected)
+        for field, value in [('template', 'PopupConfirm.png'), ('score', .89)]:
+            rows = self.records()
+            steps = copy.deepcopy([zero, prompt, cancel])
+            steps[-1]['details']['details']['result'][field] = value
+            rows[11:11] = steps
+            for i, row in enumerate(rows):
+                row.update(sequence=i, recorded_ns=100+i)
+            self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+
     def raced_defeat_records(self, prefix=0, zero=False):
         rows = self.records()
         failure = copy.deepcopy(rows[11])
