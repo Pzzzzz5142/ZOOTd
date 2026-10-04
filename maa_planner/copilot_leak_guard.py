@@ -51,7 +51,7 @@ class LeakGuard:
             self.formed = self.loaded
         if message == 20001 and value.get('subtask') == 'BattleProcessTask':
             self.active = self.formed
-        if (message in (10000, 10002, 10003, 10004, 20000, 20004)
+        if (message in (10000, 10002, 10004, 20000, 20004)
                 or message == 20002 and value.get('subtask') == 'BattleProcessTask'):
             self.active = False
 
@@ -170,8 +170,12 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
         if battling and any(token in str(detail.get('task', ''))
                             for token in ('Stars-2', 'Stars-3', 'Stars-Adverse')):
             return rejected
-        if (msg in (0, 1, 10000, 10004, 20004)
+        if (msg in (0, 1, 10000, 20004)
                 or value.get('what') in ('GameOffline', 'Disconnect', 'Reconnecting', 'ScreencapFailed')):
+            return rejected
+        if msg == 10004 and not (value.get('taskchain') == 'Copilot'
+                and value.get('taskid') == task_id and value.get('uuid') == uuid
+                and event['recorded_ns'] >= requested):
             return rejected
         if value.get('taskchain') == 'Copilot':
             if (not forming and msg == 20000 and value.get('subtask') == 'ProcessTask'
@@ -207,7 +211,7 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                     and event['recorded_ns'] < requested
                     or 'Stars-' in str(detail.get('task', ''))):
                 return rejected
-            if msg == 10003:
+            if msg == 10004:
                 if not battling or not battle_start <= witness['baseline']['recorded_ns'] <= requested <= event['recorded_ns']:
                     return rejected
                 stopped = True

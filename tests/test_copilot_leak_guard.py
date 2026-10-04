@@ -46,7 +46,7 @@ class LeakGuardTests(unittest.TestCase):
         add(20002, subtask='BattleFormationTask')
         add(20001, subtask='BattleProcessTask')
         add(20002, subtask='BattleProcessTask')  # Native task unwinds after stop.
-        add(10003)
+        add(10004)
         add(10001, 8, 'Custom')
         for name, algorithm, action, result in [
                 ('ZootdAbortRed', 'MatchTemplate', 'DoNothing', {'template': 'BattleHpFlag2.png'}),
@@ -85,6 +85,8 @@ class LeakGuardTests(unittest.TestCase):
         self.assertIsNone(guard.inspect(self.images['BattleHpFlag2']))
         self.assertIsNone(guard.inspect(self.images['BattleHpFlag']))
         self.assertIsNotNone(guard.inspect(self.images['BattleHpFlag2']))
+        guard.observe(10003, dict(uuid='device', taskid=7, taskchain='Copilot', what='ExtraInfo'))
+        self.assertTrue(guard.active)
         guard.observe(20002, dict(uuid='device', taskid=7, taskchain='Copilot', subtask='BattleProcessTask'))
         self.assertIsNone(guard.inspect(self.images['BattleHpFlag2']))
 
@@ -113,6 +115,9 @@ class LeakGuardTests(unittest.TestCase):
             changed = copy.deepcopy(rows)
             changed[index]['details'][field] = value
             self.assertEqual(self.prove(changed, receipt)['status'], 'unproven')
+        changed = copy.deepcopy(rows)
+        changed[6]['message'] = 10003
+        self.assertEqual(self.prove(changed, receipt)['status'], 'unproven')
         for message, detail in [(10000, {}), (20003, {'what': 'GameOffline'}),
                                 (20002, {'details': {'task': 'StageDrops-Stars-2'}})]:
             changed = copy.deepcopy(rows)
@@ -155,7 +160,7 @@ class LeakGuardTests(unittest.TestCase):
             def stop(self, handle):
                 if self.running:
                     self.emit(20002, subtask='BattleProcessTask')
-                    self.emit(10003)
+                    self.emit(10004)
                 self.running = False
                 return 1
         (self.run / 'navigation.json').write_text(json.dumps({'code': 'MN-EX-7', 'raid': False}))
@@ -170,7 +175,7 @@ class LeakGuardTests(unittest.TestCase):
         self.assertEqual(receipt['phase'], 'battle_aborted')
         self.assertEqual(core.appended[-1], ('Custom', {'task_names': ['ZootdLeakAbort']}))
         events = [json.loads(line) for line in (self.run / 'callbacks.jsonl').read_text().splitlines()]
-        stopped = next(i for i, row in enumerate(events) if row['message'] == 10003)
+        stopped = next(i for i, row in enumerate(events) if row['message'] == 10004)
         self.assertEqual(events[stopped + 1]['details']['taskchain'], 'Custom')
         self.assertTrue((self.run / 'leak-guard/leak.png').exists())
 
