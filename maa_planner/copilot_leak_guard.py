@@ -86,7 +86,7 @@ class LeakGuard:
 def abort_tasks(code):
     """Bounded native abandonment; no start, refill or successful-result action."""
     cleanup = ['ZootdAbortStagePanel', 'ZootdAbortFailureScreen',
-               'ZootdAbortZeroStars', 'ZootdAbortLoading']
+               'ZootdAbortZeroStars', 'ZootdAbortLoading', 'ZootdAbortMapStage']
     tasks = {
         'ZootdLeakAbort': {'algorithm': 'JustReturn', 'next': ['ZootdAbortRed', 'ZootdAbortBlue']},
         'ZootdAbortGear': {'baseTask': 'RoguelikeBattleExitBegin',
@@ -95,6 +95,7 @@ def abort_tasks(code):
         'ZootdAbortAbandon': {'baseTask': 'NormalBattleAbandon', 'template': 'NormalBattleAbandon.png',
                               'maxTimes': 1, 'postDelay': 500, 'next': cleanup},
         'ZootdAbortStagePanel': {'baseTask': 'StartButton1', 'action': 'DoNothing',
+                                'ocrReplace': [[r'^[+＋]开始行动$', '开始行动']],
                                 'postDelay': 0, 'next': ['ZootdAbortStageConfirmed']},
         'ZootdAbortStageConfirmed': {'baseTask': 'ClickedCorrectStage', 'action': 'DoNothing',
                                     'text': [code, code.replace('-', '')], 'next': []},
@@ -107,6 +108,11 @@ def abort_tasks(code):
                             'next': cleanup},
         'ZootdAbortLoading': {'baseTask': 'LoadingIcon', 'template': 'LoadingIcon.png',
                              'action': 'DoNothing', 'maxTimes': 30, 'postDelay': 500, 'next': cleanup},
+        # Abandonment may return to the map rather than retain the detail
+        # panel. Reopen only the exact visible target once, without swiping.
+        'ZootdAbortMapStage': {'baseTask': 'ClickStageName', 'text': [code, code.replace('-', '')],
+                              'isAscii': True, 'fullMatch': True, 'specialParams': [],
+                              'maxTimes': 1, 'postDelay': 700, 'next': ['ZootdAbortStagePanel']},
     }
     for name, template in [('ZootdAbortRed', 'BattleHpFlag2'), ('ZootdAbortBlue', 'BattleHpFlag')]:
         tasks[name] = {'baseTask': template, 'template': template + '.png',
@@ -170,6 +176,7 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
         'ZootdAbortZeroStars': ('MatchTemplate', 'DoNothing', 3),
         'ZootdAbortReturn': ('JustReturn', 'ClickRect', 3),
         'ZootdAbortLoading': ('MatchTemplate', 'DoNothing', 30),
+        'ZootdAbortMapStage': ('OcrDetect', 'ClickSelf', 1),
     }
     signatures = {name: (algorithm, action) for name, algorithm, action in expected[1:]}
     signatures.update({name: ('MatchTemplate', 'DoNothing') for name in ('ZootdAbortRed', 'ZootdAbortBlue')})
@@ -257,6 +264,8 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                         if type(score) not in (int, float) or not math.isfinite(score) or not 0 < score <= 1:
                             return rejected
                         if task == 'ZootdAbortFailureScreen' and result.get('text') != '任务失败':
+                            return rejected
+                        if task == 'ZootdAbortMapStage' and result.get('text') not in (code, code.replace('-', '')):
                             return rejected
                         templates = {'ZootdAbortZeroStars': 'StageDrops-Stars-0.png',
                                      'ZootdAbortLoading': 'LoadingIcon.png'}
