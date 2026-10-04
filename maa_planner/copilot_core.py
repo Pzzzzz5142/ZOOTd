@@ -495,6 +495,23 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
             # into Copilot. These tasks have no battle or refill actions.
             progress['phase'] = 'navigation'
             launch_game(address)
+            early_params = (json.loads((run / 'params.json').read_bytes())
+                            if (run / 'params.json').exists() else {})
+            if route.get('recover_zero_result') is True or early_params.get('recover_zero_result') is True:
+                recovery_id = run_task(b'Custom', b'{"task_names":["ZootdRecoverZeroResult"]}')
+                with mutex:
+                    pending_two_star = any(
+                        e['message'] == 20001 and e['details'].get('taskchain') == 'Custom'
+                        and e['details'].get('taskid') == recovery_id
+                        and e['details'].get('first') == ['ZootdRecoverZeroResult']
+                        and e['details'].get('details', {}).get('task') == 'ZootdRecoverTwoStars'
+                        and e['details']['details'].get('algorithm') == 'MatchTemplate'
+                        and e['details']['details'].get('action') == 'Stop'
+                        and e['details']['details'].get('result', {}).get('template') == 'StageDrops-Stars-2.png'
+                        for e in records)
+                if pending_two_star:
+                    progress['phase'] = 'imperfect_result'
+                    return 1
             run_task(b'StartUp', b'{"client_type":"Official","start_game_enabled":false}')
             run_task(b'Custom', b'{"task_names":["Home","Home@ReturnButtons"]}')
             check(home_observed.is_set())

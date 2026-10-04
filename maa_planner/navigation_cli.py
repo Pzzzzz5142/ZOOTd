@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 
 from .copilot_core import callbacks_are_fresh, map_recognized, special_panel_complete
-from .copilot_navigation import navigation_tasks, install_navigation_resources
+from .copilot_navigation import navigation_tasks, zero_result_recovery_tasks, install_navigation_resources
 from .copilot_run import command, device, device_lock, execute
 from .navigation_catalog import load_navigation
 from .prts import PrtsError
@@ -58,6 +58,7 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
             catalog = load_navigation(root, refresh=refresh)
             route = catalog.route(stage)
             route['navigation_only'] = True
+            route['recover_zero_result'] = True
             audit.update(navigation=route, sources=catalog.evidence)
             atomic_write_json(run / 'navigation.json', route, mode=0o600)
             if plan_only:
@@ -68,6 +69,7 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
             audit['git_head'] = command(['git', '-C', str(root), 'rev-parse', 'HEAD']).strip()
             audit['runtime'] = validate_runtime_receipt(root)
             tasks = navigation_tasks(route)
+            tasks.update(zero_result_recovery_tasks())
             tasks.update(PROXY_RESOURCE)
             # Legacy refill alias is absent from current native tasks. Keep
             # its fail-closed stop without inventing a nonexistent template

@@ -292,9 +292,22 @@ class NavigationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp)
             install_navigation_resources(destination)
-            for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png'):
+            for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png', 'StageDrops-Stars-0.png'):
                 self.assertEqual((destination / 'template' / name).read_bytes(),
                                  (Path(__file__).parents[1] / 'maa_planner/resources' / name).read_bytes())
+
+    def test_stranded_result_recovery_clears_only_zero_and_stops_at_two(self):
+        from maa_planner.copilot_navigation import zero_result_recovery_tasks
+        tasks = zero_result_recovery_tasks()
+        self.assertEqual(tasks['ZootdRecoverZeroResult']['next'], [
+            'ZootdRecoverThreeStars', 'ZootdRecoverAdverseStars', 'ZootdRecoverTwoStars',
+            'ZootdRecoverZeroStars', 'ZootdRecoverNoZero'])
+        self.assertEqual(tasks['ZootdRecoverZeroStars']['next'], ['ZootdRecoverClearZero'])
+        self.assertEqual(tasks['ZootdRecoverTwoStars']['action'], 'Stop')
+        self.assertEqual(tasks['ZootdRecoverTwoStars']['next'], [])
+        self.assertEqual(tasks['ZootdRecoverClearZero']['maxTimes'], 3)
+        self.assertEqual(tasks['ZootdRecoverClearZero']['baseTask'], 'ClickCorner')
+        self.assertTrue(all(t['onErrorNext'] == [] and t['exceededNext'] == [] for t in tasks.values()))
 
     def test_event_lock_texts_follow_game_prerequisite_graph(self):
         tables, installed, tiles = fixture()

@@ -193,9 +193,10 @@ class Function:
 
 
 class FakeCore:
-    def __init__(self, records, navigation_records=None):
+    def __init__(self, records, navigation_records=None, recovery_stars=None):
         self.records = records
         self.navigation_records = navigation_records
+        self.recovery_stars = recovery_stars
         self.appended = []
         self.loaded_tasks = []
         self.AsstCreateEx = Function(self.create)
@@ -229,6 +230,17 @@ class FakeCore:
 
     def start(self, _):
         kind, params = self.appended[-1]
+        if params.get('task_names') == ['ZootdRecoverZeroResult']:
+            self.emit(10001)
+            if self.recovery_stars in (0, 2):
+                self.emit(20001 if self.recovery_stars == 2 else 20002,
+                    subtask='ProcessTask', first=['ZootdRecoverZeroResult'], details={
+                    'task': 'ZootdRecoverTwoStars' if self.recovery_stars == 2 else 'ZootdRecoverZeroStars',
+                    'algorithm': 'MatchTemplate', 'action': 'Stop' if self.recovery_stars == 2 else 'DoNothing',
+                    'result': {'template': f'StageDrops-Stars-{self.recovery_stars}.png', 'score': .99}})
+            self.emit(10002)
+            self.emit(3, finished_tasks=[len(self.appended)])
+            return 1
         if params.get('task_names') == ['ZootdNavigate'] and self.navigation_records is not None:
             for record in self.navigation_records:
                 value = copy.deepcopy(record['details'])
@@ -261,15 +273,17 @@ class FakeCore:
 
 
 class PreflightDispatchTests(unittest.TestCase):
-    def run_worker(self, records, *, raid=True, navigation_only=False, navigation_records=None):
+    def run_worker(self, records, *, raid=True, navigation_only=False, navigation_records=None,
+                   recover_zero_result=False, recovery_stars=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = root / 'attempt'
             run.mkdir()
             (run / 'navigation.json').write_text(json.dumps({
                 'code': 'MN-EX-7', 'raid': raid, 'navigation_only': navigation_only}))
-            (run / 'params.json').write_text('{"copilot_list":[]}')
-            lib = FakeCore(records, navigation_records=navigation_records)
+            (run / 'params.json').write_text(json.dumps({
+                'copilot_list': [], 'recover_zero_result': recover_zero_result}))
+            lib = FakeCore(records, navigation_records=navigation_records, recovery_stars=recovery_stars)
             with patch('maa_planner.copilot_core.C.CDLL', return_value=lib), \
                     patch('maa_planner.copilot_core.launch_game'), \
                     patch('maa_planner.copilot_core.signal.signal'), \
@@ -280,6 +294,23 @@ class PreflightDispatchTests(unittest.TestCase):
             self.loaded_tasks = lib.loaded_tasks
             receipt = json.loads((run / 'worker-result.json').read_text())
             return status, receipt, lib.appended, (run / 'task-id.json').exists()
+
+    def test_pending_two_star_stops_before_startup_or_battle(self):
+        status, receipt, appended, task_file = self.run_worker(
+            [], raid=False, recover_zero_result=True, recovery_stars=2)
+        self.assertEqual(status, 1)
+        self.assertEqual(receipt['phase'], 'imperfect_result')
+        self.assertEqual(appended, [('Custom', {'task_names': ['ZootdRecoverZeroResult']})])
+        self.assertFalse(task_file)
+
+    def test_zero_result_recovery_completes_before_startup_and_normal_navigation(self):
+        status, receipt, appended, task_file = self.run_worker(
+            [], raid=False, recover_zero_result=True, recovery_stars=0)
+        self.assertEqual(status, 0)
+        self.assertEqual(appended[0], ('Custom', {'task_names': ['ZootdRecoverZeroResult']}))
+        self.assertEqual(appended[1][0], 'StartUp')
+        self.assertEqual(appended[-1][0], 'Copilot')
+        self.assertTrue(task_file)
 
     def test_special_panel_adapts_native_checks_only_after_complete_navigation(self):
         for navigation_only in (False, True):

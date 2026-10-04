@@ -372,6 +372,8 @@ MAA 技能列表向下滑动的辅助 ProcessTask 可能使用默认任务 ID 0�
 
 新回调带唯一尝试 ID、连续序号及单调时钟，旧回调不补写或追认。设备和 runtime 更新整轮共用独占锁，每个 worker 上限 20 分钟；只关闭本命令启动的 Waydroid surface。此功能不接入 daily、timer、planner 或恢复 controller。
 
+中断后可能遗留零星结果页，原生 StartUp 的一次点击不足以离开该页。navigator/Copilot 在 StartUp 前共用独立 Custom：先排除三星及突袭成功图标，两星结果立即 Stop 并结束整轮；只有明确零星模板才允许最多三次原生空白处点击。其他画面直接交还原生 StartUp，目标关卡和难度仍须重新证明；这条清理不开始战斗、不用药石、不证明新通关或退款。
+
 #### 有限候选重试（Phase 4）
 
 ```bash

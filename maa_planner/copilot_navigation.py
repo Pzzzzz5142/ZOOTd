@@ -249,6 +249,28 @@ def copilot_result_tasks() -> dict:
     return tasks
 
 
+def zero_result_recovery_tasks() -> dict:
+    """Clear only a stranded zero-star result before native StartUp."""
+    tasks = {
+        'ZootdRecoverZeroResult': {'algorithm': 'JustReturn',
+            'next': ['ZootdRecoverThreeStars', 'ZootdRecoverAdverseStars',
+                     'ZootdRecoverTwoStars', 'ZootdRecoverZeroStars', 'ZootdRecoverNoZero']},
+        'ZootdRecoverNoZero': {'algorithm': 'JustReturn', 'next': []},
+        'ZootdRecoverClearZero': {'baseTask': 'ClickCorner', 'maxTimes': 3, 'postDelay': 1000,
+            'next': ['ZootdRecoverZeroStars', 'ZootdRecoverNoZero']},
+    }
+    for name, stars in [('Three', '3'), ('Adverse', 'Adverse'), ('Two', '2'), ('Zero', '0')]:
+        tasks[f'ZootdRecover{name}Stars'] = {
+            'algorithm': 'MatchTemplate', 'template': f'StageDrops-Stars-{stars}.png',
+            'templThreshold': .8, 'roi': [50, 270, 250, 100],
+            'action': 'Stop' if stars == '2' else 'DoNothing',
+            'next': (['ZootdRecoverClearZero'] if stars == '0' else
+                     [] if stars == '2' else ['ZootdRecoverNoZero'])}
+    for task in tasks.values():
+        task.update(sub=[], onErrorNext=[], exceededNext=[])
+    return tasks
+
+
 def install_copilot_result_resources(resource_dir: Path) -> None:
     """Install our zero-star glyph template only in the disposable run overlay."""
     target = resource_dir / 'template'
@@ -261,5 +283,5 @@ def install_navigation_resources(resource_dir: Path) -> None:
     """Keep navigation UI glyphs in the run overlay, away from live runtime."""
     target = resource_dir / 'template'
     target.mkdir(parents=True, exist_ok=True)
-    for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png'):
+    for name in ('StageZone-EX.png', 'StageZone-SpecialRook.png', 'StageDrops-Stars-0.png'):
         shutil.copyfile(Path(__file__).with_name('resources') / name, target / name)

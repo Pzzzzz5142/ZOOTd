@@ -22,7 +22,7 @@ from .copilot_proof import battle_proof
 from .copilot_leak_guard import abort_proof
 from . import copilot_capability
 from .copilot_retry import RetryLimits, RetryBudget, classify_failure, failure
-from .copilot_navigation import navigation_tasks, copilot_result_tasks, install_copilot_result_resources, install_navigation_resources
+from .copilot_navigation import navigation_tasks, copilot_result_tasks, zero_result_recovery_tasks, install_copilot_result_resources, install_navigation_resources
 from .navigation_catalog import load_navigation
 from .copilot_matcher import match_candidate, rank_candidates, skill_placeholder
 from .copilot_static import fetch_catalog
@@ -57,6 +57,8 @@ def failure_message(result):
         return '未在地图上找到并确认目标关卡；已停止扫描，请查看本次地图识别记录。'
     if category == 'navigation_failure':
         return '游戏启动或关卡导航失败；请检查游戏登录、更新/公告弹窗及关卡入口。'
+    if category == 'imperfect_result':
+        return '当前为两星结算页面，已停止点击和继续执行；请查看本次运行记录。'
     if category == 'adb_failure' or phase == 'device':
         return '设备连接失败；请检查 Waydroid 和 ADB 状态。'
     if category in {'formation_missing_operator', 'formation_requirement_unsatisfied', 'copilot_schema_failure'}:
@@ -312,6 +314,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         params = {'copilot_list': [{'filename': str(filename), 'stage_name': code, 'is_raid': route['raid']}],
                   'formation': True, 'loop_times': 1, 'use_sanity_potion': use_sanity_potion,
                   'abort_on_leak': not route['raid'],
+                  'recover_zero_result': True,
                   'add_trust': False, 'ignore_requirements': False,
                   'support_unit_usage': 2 if checked.support_needed else 0}
         if checked.support_needed:
@@ -324,6 +327,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         overlay.mkdir(parents=True)
         tasks = navigation_tasks(route)
         tasks.update(copilot_result_tasks())
+        tasks.update(zero_result_recovery_tasks())
         if params['abort_on_leak']:
             # A late two-star screen cannot be refunded by withholding a click.
             # Still stop there instead of advancing its settlement or retrying.
@@ -372,7 +376,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             if worker.get('run_id') == run.name and worker.get('exit_code') == status:
                 worker_phase = worker.get('phase')
                 if worker_phase in {'runtime', 'adb', 'navigation', 'stage_locked', 'stage_not_found_on_map',
-                                    'raid_preflight', 'execution', 'proxy_proof', 'abort_cleanup', 'battle_aborted'}:
+                                    'raid_preflight', 'execution', 'proxy_proof', 'abort_cleanup', 'battle_aborted', 'imperfect_result'}:
                     audit['worker_phase'] = worker_phase
         fresh = callbacks_are_fresh(events, run_id=run.name, started_ns=started_ns, finished_ns=finished_ns)
         # The battle reducer ends at its own AllTasksCompleted. Later Custom
