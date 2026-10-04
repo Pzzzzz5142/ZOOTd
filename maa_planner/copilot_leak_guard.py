@@ -57,16 +57,20 @@ class LeakGuard:
             self.active = False
 
     def inspect(self, image):
-        """A fresh blue baseline precedes the unambiguous red leak indicator."""
+        """Stop on red even if polling missed blue; refund proof still needs both."""
         import cv2
         if not self.active:
             return None
         scores = self.recognizer.scores(image)
+        if scores['BattleHpFlag2'] >= .9:
+            witness = {'run_id': self.run.name, 'task_id': self.task_id, 'uuid': self.uuid,
+                       'trigger': 'blue_to_red' if self.baseline else 'red_without_baseline',
+                       'leak': self._save('leak', image, scores, cv2)}
+            if self.baseline is not None:
+                witness['baseline'] = self.baseline
+            return witness
         if self.baseline is None and scores['BattleHpFlag'] >= .9:
             self.baseline = self._save('baseline', image, scores, cv2)
-        if self.baseline is not None and scores['BattleHpFlag2'] >= .9:
-            return {'run_id': self.run.name, 'task_id': self.task_id, 'uuid': self.uuid,
-                    'baseline': self.baseline, 'leak': self._save('leak', image, scores, cv2)}
         return None
 
     def _save(self, name, image, scores, cv2):

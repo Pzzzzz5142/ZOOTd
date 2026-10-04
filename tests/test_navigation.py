@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.navigation_samples import sample_route
+
 from maa_planner.copilot_core import map_recognized
 from maa_planner.copilot_navigation import navigation_tasks
 from maa_planner.navigation_catalog import NavigationCatalog, load_tables, MAX_AGE, activity_labels, title_text
@@ -215,21 +217,7 @@ class NavigationTests(unittest.TestCase):
                            ('ZootdStagePanel', 'ClickedCorrectStageOrSwipe')]:
             self.assertEqual(tasks[name]['baseTask'], base)
         self.assertEqual(tasks['ZootdStagePanel']['action'], 'DoNothing')
-        self.assertIn('ZootdSpecialPanel', tasks['ZootdStage']['next'])
-        for name in ('ZootdSpecialPanel', 'ZootdSpecialStart', 'ZootdSpecialStageConfirmed'):
-            self.assertEqual(tasks[name]['algorithm'], 'OcrDetect')
-            self.assertEqual(tasks[name]['action'], 'DoNothing')
-            self.assertTrue(tasks[name]['fullMatch'])
-        self.assertEqual(tasks['ZootdSpecialStageConfirmed']['text'], ['NL-9', 'NL9'])
-        self.assertTrue(tasks['ZootdSpecialPanel']['isAscii'])
-        self.assertTrue(tasks['ZootdSpecialStageConfirmed']['isAscii'])
-        self.assertEqual(tasks['ZootdSpecialStageConfirmed']['baseTask'], 'ClickedCorrectStage')
-        from maa_planner.navigation_vision import normalize
-        replacements = tasks['ZootdSpecialStart']['ocrReplace']
-        self.assertEqual(normalize('+开始行动', replacements), '开始行动')
-        self.assertEqual(normalize('+查看条件', replacements), '+查看条件')
-        self.assertEqual(normalize('未解锁+开始行动', replacements), '未解锁+开始行动')
-        self.assertEqual(tasks['StartUp@CloseAnno']['baseTask'], 'CloseAnno')
+        self.assertNotIn('ZootdSpecialPanel', tasks['ZootdStage']['next'])
         self.assertEqual(tasks['StartUp@CloseAnno']['template'], 'CloseAnno.png')
         self.assertEqual(tasks['StartUp@CloseAnno']['next'][-1], 'StartUp@ReturnButtons#next')
         self.assertFalse(tasks['ZootdStage']['isAscii'])
@@ -273,7 +261,7 @@ class NavigationTests(unittest.TestCase):
             self.assertEqual(tasks['ZootdStageConfirmed']['action'], 'DoNothing')
 
     def test_special_archive_rook_opens_map_once_and_keeps_exact_target_proof(self):
-        route = dict(self.catalog().route('NL-9'), code='NL-S-1')
+        route = sample_route('NL-S-1')
         tasks = navigation_tasks(route)
         tab = tasks['ZootdSpecialZoneRook']
         self.assertEqual(tab['template'], 'StageZone-SpecialRook.png')
@@ -336,6 +324,8 @@ class NavigationTests(unittest.TestCase):
         route = self.catalog().route('NL-9')
         self.assertNotIn('ZootdEncryptedEntry', navigation_tasks(route))
         route['ap_cost'] = 0
+        self.assertNotIn('ZootdEncryptedEntry', navigation_tasks(route))
+        route = sample_route('DV-S-2')
         tasks = navigation_tasks(route)
         self.assertIn('ZootdEncryptedEntry', tasks['ZootdEnter']['next'])
         self.assertEqual(tasks['ZootdEncryptedEntry']['maxTimes'], 1)
@@ -408,7 +398,7 @@ class NavigationCliTests(unittest.TestCase):
                     records = [{'message': 10001, 'details': {'taskchain': 'Custom', 'uuid': 'device', 'taskid': 4}},
                                event,
                                {'message': 10002, 'details': {'taskchain': 'Custom', 'uuid': 'device', 'taskid': 4}},
-                               {'message': 3, 'details': {'finished_tasks': [4]}}]
+                               {'message': 3, 'details': {'finished_tasks': [4], 'taskchain': 'Custom', 'uuid': 'device', 'taskid': 4}}]
                     if mode == 'missing_end':
                         del records[2]
                     for index, record in enumerate(records):

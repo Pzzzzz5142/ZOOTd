@@ -4,17 +4,19 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
+from .navigation_layouts import DV_SPECIAL_ACCESS, NL_SPECIAL_ROOK, navigation_layout, stage_panel_tasks
 
 SPECIAL_PANEL_ROIS = {
     'marker': [45, 150, 225, 45],
     'start': [775, 560, 415, 60],
     'title': [770, 145, 250, 90],
 }
-STAGE_PANEL_TASKS = ['ZootdStagePanel', 'ZootdSpecialPanel', 'ZootdMapReady']
 
 
-def special_panel_execution_tasks() -> dict:
+def special_panel_execution_tasks(route: dict) -> dict:
     """Adapt native Copilot only after a completed special-panel observation."""
+    if navigation_layout(route) != DV_SPECIAL_ACCESS:
+        raise ValueError('Unverified special-panel route')
     # MultiCopilotTaskPlugin checks these native ROIs independently of our
     # Custom graph. Keep its exact title check and all native button edges.
     return {'StartButton1': {'roi': SPECIAL_PANEL_ROIS['start']},
@@ -24,6 +26,7 @@ def special_panel_execution_tasks() -> dict:
 
 def navigation_tasks(route: dict) -> dict:
     code = route['code']
+    layout = navigation_layout(route)
 
     def ocr(texts, next_tasks, *, roi=None, click=True):
         return {'algorithm': 'OcrDetect', 'text': texts, 'fullMatch': True,
@@ -47,7 +50,7 @@ def navigation_tasks(route: dict) -> dict:
         # '通关DP-1解锁' to DP-1 and click the locked successor.
         'ZootdStage': {'baseTask': 'ClickStageName', 'text': [code],
                       'isAscii': False, 'specialParams': [],
-                      'next': ['ZootdStagePanel', 'ZootdSpecialPanel', 'ZootdStage'],
+                      'next': stage_panel_tasks(route)[:-1] + ['ZootdStage'],
                       'maxTimes': 6, 'exceededNext': []},
         'ZootdStagePanel': {'baseTask': 'ClickedCorrectStageOrSwipe',
                             'action': 'DoNothing', 'sub': [], 'reduceOtherTimes': [],
@@ -56,27 +59,26 @@ def navigation_tasks(route: dict) -> dict:
             'baseTask': 'ClickedCorrectStage', 'text': [code, code.replace('-', '')],
             'action': 'DoNothing', 'next': [], 'sub': [], 'onErrorNext': [],
             'exceededNext': [], 'fullMatch': True},
-        # This detail layout has no map behind its title. Prove its marker
-        # and available start button before accepting the exact stage code.
-        # These are observations only, including in zero-battle navigation.
-        'ZootdSpecialPanel': ocr(['SPECIAL ACCESS CONTENT'], ['ZootdSpecialStart'],
-                                 roi=SPECIAL_PANEL_ROIS['marker'], click=False),
-        'ZootdSpecialStart': ocr(['开始行动'], ['ZootdSpecialStageConfirmed'],
-                                 roi=SPECIAL_PANEL_ROIS['start'], click=False),
-        'ZootdSpecialStageConfirmed': ocr([code, code.replace('-', '')], [],
-                                          roi=SPECIAL_PANEL_ROIS['title'], click=False),
         'ZootdZone': {**ocr(route['zone_names'], find), 'maxTimes': 1,
                      'exceededNext': ['ZootdStage', 'ZootdMapReady']},
         'ZootdMapReady': {'algorithm': 'JustReturn', 'next': []},
     }
-    # The small English strip needs the installed character OCR model.
-    # Word OCR repeatedly read it as SPELAccEsSCNTEN on the real panel.
-    tasks['ZootdSpecialPanel']['isAscii'] = True
-    tasks['ZootdSpecialStart']['ocrReplace'] = [[r'^[+＋]开始行动$', '开始行动']]
-    tasks['ZootdSpecialStageConfirmed']['isAscii'] = True
-    tasks['ZootdSpecialStageConfirmed']['baseTask'] = 'ClickedCorrectStage'
-    # Native CloseAnno can match the special panel's close icon. After the
-    # click, retain announcement/home checks and also resume bounded return.
+    if layout == DV_SPECIAL_ACCESS:
+        # This observed detail layout has no map behind its title. All three
+        # observations must complete before accepting the code or adapting Core.
+        tasks.update({
+            'ZootdSpecialPanel': {**ocr(['SPECIAL ACCESS CONTENT'], ['ZootdSpecialStart'],
+                                      roi=SPECIAL_PANEL_ROIS['marker'], click=False), 'isAscii': True},
+            'ZootdSpecialStart': {**ocr(['开始行动'], ['ZootdSpecialStageConfirmed'],
+                                      roi=SPECIAL_PANEL_ROIS['start'], click=False),
+                                  'ocrReplace': [[r'^[+＋]开始行动$', '开始行动']]},
+            'ZootdSpecialStageConfirmed': {**ocr([code, code.replace('-', '')], [],
+                                                roi=SPECIAL_PANEL_ROIS['title'], click=False),
+                                           'isAscii': True, 'baseTask': 'ClickedCorrectStage'},
+        })
+    # Startup recovers the current page, which may belong to a previous
+    # activity. Retain native home/announcement checks and bounded return
+    # after closing it, independently of the destination layout.
     tasks['StartUp@CloseAnno'] = {
         'baseTask': 'CloseAnno', 'template': 'CloseAnno.png',
         'next': ['StartUp@MainThemes#next', 'StartUp@CloseAnnos#next',
@@ -85,7 +87,8 @@ def navigation_tasks(route: dict) -> dict:
         # The detail panel remembers challenge mode from a previous run.
         # Native recognition/switching finishes before ordinary execution.
         tasks['ZootdStageConfirmed']['next'] = ['NormalConfirm', 'ChangeToNormalDifficulty']
-        tasks['ZootdSpecialStageConfirmed']['next'] = ['NormalConfirm', 'ChangeToNormalDifficulty']
+        if layout == DV_SPECIAL_ACCESS:
+            tasks['ZootdSpecialStageConfirmed']['next'] = ['NormalConfirm', 'ChangeToNormalDifficulty']
     if route.get('raid'):
         tasks.update(raid_preflight_tasks(code))
     # Keep native return recognition first. Some event panels texture the
@@ -112,7 +115,7 @@ def navigation_tasks(route: dict) -> dict:
                                    ['ZootdActivity', 'ZootdListScan'], 45, []),
             'ZootdEnter': ocr(['进入活动', '前往章节'], find, roi=[940, 540, 340, 180]),
         })
-        if route.get('ap_cost') == 0:
+        if layout == DV_SPECIAL_ACCESS:
             # Encrypted zero-cost stages hide their code until extra objectives
             # are met. Collect conditions; the available reconstruction button
             # may unlock access but still requires exact detail proof. An
@@ -130,7 +133,7 @@ def navigation_tasks(route: dict) -> dict:
                 'ZootdEncryptedRecordPage': {**ocr(['加密实验记录', '解密实验记录', '重构事件'],
                                                   ['ZootdEncryptedReconstruct', 'ZootdEncryptedBlocked'], click=False),
                                               'fullMatch': False},
-                'ZootdEncryptedReconstruct': {**ocr(['事件重构'], STAGE_PANEL_TASKS,
+                'ZootdEncryptedReconstruct': {**ocr(['事件重构'], stage_panel_tasks(route),
                                                    roi=[180, 590, 900, 90]),
                                               'postDelay': 2000, 'maxTimes': 1, 'exceededNext': []},
                 'ZootdEncryptedBlocked': {'algorithm': 'JustReturn', 'next': []},
@@ -188,8 +191,8 @@ def navigation_tasks(route: dict) -> dict:
             'exceededNext': ['ZootdStage', 'ZootdMapReady']}
         find.insert(find.index('ZootdMapReady'), 'ZootdZoneTabGlyph')
         find.insert(find.index('ZootdMapReady'), 'ZootdZoneTab')
-    if route['kind'] == 'archive' and '-S-' in code:
-        # Some older special zones expose only a chess-piece footer selector,
+    if layout == NL_SPECIAL_ROOK:
+        # This archived NL section exposes a chess-piece footer selector,
         # with no zone-name text. The isolated glyph avoids adjacent tabs;
         # it only opens the map, never establishes the requested stage.
         tasks['ZootdSpecialZoneRook'] = {

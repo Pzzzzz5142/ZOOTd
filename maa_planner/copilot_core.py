@@ -11,6 +11,7 @@ import threading
 import time
 from pathlib import Path
 
+from .navigation_layouts import DV_SPECIAL_ACCESS, navigation_layout, stage_panel_tasks
 
 def launch_game(address):
     """Wait for Android's actual launch result; am may exit zero on errors."""
@@ -45,8 +46,10 @@ def map_recognized(message, value, code):
             and result.get('text') in (code, code.replace('-', '')))
 
 
-def special_panel_complete(events, *, task_id, code):
+def special_panel_complete(events, *, task_id, code, route=None):
     """Require marker, available start and exact title in one finished Custom."""
+    if navigation_layout(route) != DV_SPECIAL_ACCESS or route['code'] != code:
+        return False
     active = None
     observed = 0
     completed = finished = False
@@ -426,7 +429,6 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 nonlocal navigation_attempt, special_panel_observed
                 navigation_attempt += 1
                 special_panel_observed = False
-                from .copilot_navigation import STAGE_PANEL_TASKS
                 from .navigation_vision import scan_map
                 import cv2
                 import numpy as np
@@ -454,7 +456,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                         'ZootdNavigate': {'algorithm': 'JustReturn', 'next': ['ZootdVisionClick']},
                         'ZootdVisionClick': {'algorithm': 'JustReturn', 'action': 'ClickRect',
                                             'specificRect': rect, 'postDelay': 700,
-                                            'next': STAGE_PANEL_TASKS}})
+                                            'next': stage_panel_tasks(route)}})
                     confirm_navigation()
                     return map_observed.is_set()
 
@@ -465,7 +467,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                     task_id = run_task(b'Custom', b'{"task_names":["ZootdNavigate"]}')
                     with mutex:
                         special_panel_observed = special_panel_complete(
-                            records[first:], task_id=task_id, code=route['code'])
+                            records[first:], task_id=task_id, code=route['code'], route=route)
                     if special_panel_observed:
                         map_observed.set()
 
@@ -537,7 +539,7 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 from .copilot_navigation import special_panel_execution_tasks
                 overlay = run / 'special-panel-overlay/resource/tasks'
                 overlay.mkdir(parents=True)
-                (overlay / 'tasks.json').write_text(json.dumps(special_panel_execution_tasks()))
+                (overlay / 'tasks.json').write_text(json.dumps(special_panel_execution_tasks(route)))
                 check(lib.AsstLoadResource(str(overlay.parent.parent).encode()))
             progress['phase'] = 'execution'
             params = (run / 'params.json').read_bytes()
