@@ -130,7 +130,34 @@ class LeakGuardTests(unittest.TestCase):
         self.assertEqual(tasks['ZootdAbortAbandon']['template'], 'NormalBattleAbandon.png')
         self.assertNotIn('Stars-2', json.dumps(tasks))
         self.assertNotIn('Stars-3', json.dumps(tasks))
+        self.assertEqual(tasks['ZootdAbortZeroStars']['maxTimes'], 3)
+        self.assertEqual(tasks['ZootdAbortReturn']['maxTimes'], 3)
+        self.assertEqual(tasks['ZootdAbortReturn']['postDelay'], 1000)
         self.assertTrue(all(t['onErrorNext'] == [] and t['exceededNext'] == [] for t in tasks.values()))
+
+    def test_repeated_zero_page_cleanup_is_bounded_and_unknown_inputs_reject(self):
+        receipt = self.receipt()
+        def extra(task, algorithm, action, result):
+            return {'run_id': self.run.name, 'message': 20002, 'details': {'uuid': 'device', 'taskid': 8, 'taskchain': 'Custom',
+                'subtask': 'ProcessTask', 'first': ['ZootdLeakAbort'], 'details': {
+                'task': task, 'algorithm': algorithm, 'action': action, 'result': result}}}
+        zero = extra('ZootdAbortZeroStars', 'MatchTemplate', 'DoNothing',
+                     {'template': 'StageDrops-Stars-0.png', 'score': .99})
+        click = extra('ZootdAbortReturn', 'JustReturn', 'ClickRect', {})
+        for repetitions, expected in [(2, 'verified'), (4, 'unproven')]:
+            rows = self.records()
+            rows[11:11] = [copy.deepcopy(x) for _ in range(repetitions) for x in (zero, click)]
+            for i, row in enumerate(rows):
+                row.update(sequence=i, recorded_ns=100+i)
+            self.assertEqual(self.prove(rows, receipt)['status'], expected)
+        for unexpected in [extra('StartButton1', 'OcrDetect', 'ClickSelf', {'text': '开始行动', 'score': .99}),
+                           {'run_id': self.run.name, 'message': 20003, 'details': {'uuid': 'device', 'taskid': 8,
+                            'taskchain': 'Custom', 'what': 'ExceededLimit'}}]:
+            rows = self.records()
+            rows.insert(11, unexpected)
+            for i, row in enumerate(rows):
+                row.update(sequence=i, recorded_ns=100+i)
+            self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
 
     def test_worker_stops_copilot_before_enqueuing_native_abandonment(self):
         images = self.images
