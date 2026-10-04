@@ -360,7 +360,7 @@ Phase 5 的 `battle_proof` 位于各尝试结果：默认 `observed` 只表示�
 
 MAA 跳过战中剧情后可能发出 `SkipThePreBattlePlot` 的 ProcessTask 错误。只有同一已开始战斗链先完成跳过按钮与确认按钮的模板识别和点击，才将其视为已完成剧情跳过的尾部错误；无前置识别、错误身份、乱序、重复尾部错误及其他错误仍拒绝。随后仍必须收到本次完整战斗、三星模板和任务终态，剧情跳过不能代替通关证据。
 
-MAA 技能列表向下滑动的辅助 ProcessTask 可能使用默认任务 ID 0。证明模块只在同设备、已加载作业且正在编队时接受该具名 Swipe/JustReturn 辅助回调；它不能代替属于本次真实任务 ID 的编队、战斗、三星或终态证据，错误回调和其他默认 ID 回调仍拒绝。
+MAA 技能列表向下滑动的辅助 ProcessTask 可能使用默认任务 ID 0。证明模块只在同设备、已加载作业且正在编队时接受该具名 Swipe/JustReturn 辅助回调；它不能代替属于本次真实任务 ID 的编队、战斗、三星或终态证据，错误回调和其他默认 ID 回调仍拒绝。查找助战时，详情退出同样可能使用默认 ID 0：只接受同设备、真实编队阶段的 `SupportList-DetailPanel-Leave` 入口、`ClickRect` 动作及原生详情标记模板，仍不能替代编队或战斗终态。
 
 ```bash
 ./bin/zootd copilot-run NL-8 --profile no-support --prove-capability
