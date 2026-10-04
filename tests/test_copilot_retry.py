@@ -150,7 +150,7 @@ class RetryClassificationTests(unittest.TestCase):
             changed[index:index] = formation_swipe_events()
             self.assertFalse(classify(stamp(changed))['retryable'])
 
-    def test_completed_unsuccessful_stars_retry_with_full_cost_and_bound_evidence(self):
+    def test_completed_zero_star_refunds_but_two_star_keeps_cost_with_bound_evidence(self):
         for stars, kind in ((0, 'zero_star_complete'), (2, 'two_star_complete')):
             with self.subTest(stars=stars):
                 records = failed_events(kind)
@@ -159,7 +159,7 @@ class RetryClassificationTests(unittest.TestCase):
                 outcome = classify(records)
                 self.assertEqual(outcome['category'], 'battle_failed')
                 self.assertTrue(outcome['retryable'])
-                self.assertEqual(outcome['sanity_outcome'], 'charged_or_unknown')
+                self.assertEqual(outcome['sanity_outcome'], 'refunded' if stars == 0 else 'charged_or_unknown')
                 for index in range(len(records)):
                     changed = copy.deepcopy(records)
                     del changed[index]
@@ -179,6 +179,17 @@ class RetryClassificationTests(unittest.TestCase):
                 contradictory['details']['details']['task'] = 'StageDrops-Stars-3'
                 changed.insert(-2, contradictory)
                 self.assertFalse(classify(stamp(changed))['retryable'])
+
+    def test_raid_complete_zero_star_refund_requires_mode_and_rejects_two_star_contradiction(self):
+        records = failed_events('zero_star_complete')
+        self.assertFalse(classify(records, raid=True)['retryable'])
+        records.insert(2, raid_confirmation())
+        self.assertEqual(classify(stamp(records), raid=True)['sanity_outcome'], 'refunded')
+        contradictory = copy.deepcopy(records[7])
+        contradictory['details']['details'].update(task='StageDrops-Stars-2',
+            result={'template': 'StageDrops-Stars-2.png', 'score': .99})
+        records.insert(-2, contradictory)
+        self.assertFalse(classify(stamp(records), raid=True)['retryable'])
 
     def test_complete_zero_star_defeat_with_explicit_failure_uses_refund_contract(self):
         records = failed_events('zero_star_mission_failed_complete')
@@ -754,17 +765,17 @@ class RetryIntegrationTests(unittest.TestCase):
             tasks = json.loads((path / 'navigation/resource/tasks/tasks.json').read_text())
             self.assertIn('Copilot@StageDrops-Stars-2', tasks['Copilot@EndOfAction']['next'])
 
-    def test_zero_star_result_retries_with_template_and_full_reservation(self):
+    def test_zero_star_result_retries_with_template_and_refund(self):
         self.outcomes = ['zero_star_complete', 'success']
         self.provider.get.side_effect = [self.content,
             dict(self.content, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
-        result = self.run_experiment(sanity_budget=36)
+        result = self.run_experiment(sanity_budget=18)
         self.assertEqual(result['status'], 'success', result)
         self.assertEqual(len(result['attempts']), 2)
         self.assertEqual(result['attempts'][0]['execution']['errors'], ['non_three_star_result'])
         self.assertEqual(result['attempts'][0]['failure']['category'], 'battle_failed')
-        self.assertEqual(result['budget']['sanity_reserved'], 36)
-        self.assertEqual(result['budget']['sanity_released'], 0)
+        self.assertEqual(result['budget']['sanity_reserved'], 18)
+        self.assertEqual(result['budget']['sanity_released'], 18)
         for path in self.paths:
             tasks = json.loads((path / 'navigation/resource/tasks/tasks.json').read_text())
             self.assertIn('Copilot@StageDrops-Stars-0', tasks['Copilot@EndOfAction']['next'])
