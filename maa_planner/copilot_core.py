@@ -239,6 +239,9 @@ def formation_auxiliary(message, value, *, device_uuid):
     if task == 'SupportList-Refresh':
         return (first == refresh and previous == 'SupportList-RefreshAfterCooldown'
                 and action == 'ClickSelf' and result.get('template') == 'SupportList-Refresh.png')
+    if task == 'SupportList-DetailPanel-Leave':
+        return (first == [task] and previous == '' and action == 'ClickRect'
+                and result.get('template') == 'SupportList-DetailPanel-Flag.png')
     if task in ('SupportList-DetailPanel-Flag', 'SupportList-DetailPanel-Confirm'):
         expected_first = ([task, task + '@LoadingText'] if task.endswith('-Flag') else [task])
         return (first == expected_first and previous == ''

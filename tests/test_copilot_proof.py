@@ -254,6 +254,8 @@ def support_helpers():
              '', 'DoNothing', 'MatchTemplate', {'template': 'SupportList-DetailPanel-Flag.png', 'score': .98}),
             ('SupportList-DetailPanel-Confirm', ['SupportList-DetailPanel-Confirm'],
              '', 'ClickSelf', 'MatchTemplate', {'template': 'SupportList-DetailPanel-Flag.png', 'score': .98}),
+            ('SupportList-DetailPanel-Leave', ['SupportList-DetailPanel-Leave'],
+             '', 'ClickRect', 'MatchTemplate', {'template': 'SupportList-DetailPanel-Flag.png', 'score': .98}),
             ('Stop', ['SupportList-RefreshAfterCooldown'], 'SupportList-Refresh', 'Stop', 'JustReturn', {})]:
         for message in ((20001,) if action == 'Stop' else (20001, 20002)):
             records.append({'message': message, 'details': {
@@ -264,6 +266,26 @@ def support_helpers():
 
 
 class SupportHelperProofTests(unittest.TestCase):
+    def test_leaving_support_detail_requires_bound_native_signature(self):
+        leave = next(e for e in support_helpers() if e['details']['details']['task'] == 'SupportList-DetailPanel-Leave')
+        def records(extra):
+            rows = observations()
+            rows[2:2] = [{'message': 20001, 'details': {
+                'uuid': 'device', 'taskid': 7, 'taskchain': 'Copilot', 'subtask': 'BattleFormationTask'}}, extra]
+            return stamp(rows)
+        self.assertTrue(prove(records(leave))['three_star'])
+        for field, value in [('uuid', 'other'), ('taskid', 8), ('first', ['Unknown']), ('pre_task', 'Unknown')]:
+            changed = copy.deepcopy(leave)
+            changed['details'][field] = value
+            self.assertFalse(prove(records(changed))['three_star'])
+        for field, value in [('task', 'Unknown'), ('action', 'ClickSelf'), ('algorithm', 'JustReturn')]:
+            changed = copy.deepcopy(leave)
+            changed['details']['details'][field] = value
+            self.assertFalse(prove(records(changed))['three_star'])
+        changed = copy.deepcopy(leave)
+        changed['details']['details']['result']['template'] = 'SupportList-Refresh.png'
+        self.assertFalse(prove(records(changed))['three_star'])
+
     def test_support_helpers_cannot_replace_bound_formation_or_battle(self):
         records = observations()
         records[2:2] = [{'message': 20001, 'details': {
