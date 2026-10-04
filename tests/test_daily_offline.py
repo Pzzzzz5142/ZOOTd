@@ -62,7 +62,12 @@ run_daily_attempt 30s "$TEST_LOG"
             self.assertLess(time.monotonic() - start, 9)
             pid = (root / 'child').read_text()
             stat = Path(f'/proc/{pid}/stat')
-            self.assertTrue(not stat.exists() or stat.read_text().split()[2] == 'Z')
+            try:
+                state = stat.read_text().split()[2]
+            except (FileNotFoundError, ProcessLookupError):
+                pass  # The killed child was already reaped during the read.
+            else:
+                self.assertEqual(state, 'Z')
             self.assertIn('GameOffline', (root / 'daily.log').read_text())
 
     def test_watchdog_preserves_normal_status_and_rejects_old_logs(self):
