@@ -62,6 +62,8 @@ PYTHONDONTWRITEBYTECODE=1 /tmp/zootd-ui-check/bin/python -m unittest discover -s
 
 这组测试完全在本地运行；更新器场景使用临时目录、假 Maa 和本地 Git 仓库，不启动 MaaCore、ADB、Waydroid 或游戏。真实设备 E2E 另用 `award-only.toml`，只在设备空闲时手工执行。
 
+导航适配回归见 `tests/test_navigation_layouts.py` 和 [样本说明](../tests/fixtures/navigation/README.md)。范围检查使用真实游戏元数据中的其他 S 区与零费用关，协议检查使用早于两活动修复的六组脱敏 Custom 输入，并测试错误身份及缺失终态。可选 OCR 回放实际运行已安装模型，但图像只是公开编号裁片组成的测试画布；MN 底栏裁片用于棋子模板误命中检查。这些检查不等同完整实机 E2E，缺少 OCR 资源时须报告跳过，不把结构测试或合成画布称为跨活动实机通过。
+
 MAA 自定义 MatchTemplate 任务使用 `baseTask` 时应显式指定继承任务的模板文件；派生任务名称可能参与默认模板路径生成。仅验证 `AsstLoadResource` 返回成功不能证明模板可识别，必须同时核对生成的模板参数。导航和模式检查的实机验收优先采用零战斗路线，并检查本次模板回调及完整 Custom 终态。
 
 ## 修改与运行历史

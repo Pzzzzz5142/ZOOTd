@@ -1,0 +1,508 @@
+{
+  "DV-S-1": {
+    "kind": "archive",
+    "stage_id": "act19side_s01",
+    "battle_id": "act19side_s01",
+    "code": "DV-S-1",
+    "activity": "绿野幻梦",
+    "activity_labels": [
+      "绿野幻梦"
+    ],
+    "activity_id": "permanent_sidestory_15_Dorothy's_Vision",
+    "zone_id": "permanent_sidestory_15_zone1",
+    "zone_names": [
+      "实验基地"
+    ],
+    "ap_cost": 0,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": false
+  },
+  "DV-S-2": {
+    "kind": "archive",
+    "stage_id": "act19side_s02",
+    "battle_id": "act19side_s02",
+    "code": "DV-S-2",
+    "activity": "绿野幻梦",
+    "activity_labels": [
+      "绿野幻梦"
+    ],
+    "activity_id": "permanent_sidestory_15_Dorothy's_Vision",
+    "zone_id": "permanent_sidestory_15_zone1",
+    "zone_names": [
+      "实验基地"
+    ],
+    "ap_cost": 0,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": false
+  },
+  "NL-S-1": {
+    "kind": "archive",
+    "stage_id": "act13side_s01",
+    "battle_id": "act13side_s01",
+    "code": "NL-S-1",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 15,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "NL-S-2": {
+    "kind": "archive",
+    "stage_id": "act13side_s02",
+    "battle_id": "act13side_s02",
+    "code": "NL-S-2",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 15,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "NL-S-3": {
+    "kind": "archive",
+    "stage_id": "act13side_s03",
+    "battle_id": "act13side_s03",
+    "code": "NL-S-3",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 20,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "NL-S-4": {
+    "kind": "archive",
+    "stage_id": "act13side_s04",
+    "battle_id": "act13side_s04",
+    "code": "NL-S-4",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 20,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "NL-S-5": {
+    "kind": "archive",
+    "stage_id": "act13side_s05",
+    "battle_id": "act13side_s05",
+    "code": "NL-S-5",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 25,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "DV-EX-1": {
+    "kind": "archive",
+    "stage_id": "act19side_ex01",
+    "battle_id": "act19side_ex01",
+    "code": "DV-EX-1",
+    "activity": "绿野幻梦",
+    "activity_labels": [
+      "绿野幻梦"
+    ],
+    "activity_id": "permanent_sidestory_15_Dorothy's_Vision",
+    "zone_id": "permanent_sidestory_15_zone2",
+    "zone_names": [
+      "莱茵总部"
+    ],
+    "ap_cost": 10,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "NL-EX-1": {
+    "kind": "archive",
+    "stage_id": "act13side_ex01",
+    "battle_id": "act13side_ex01",
+    "code": "NL-EX-1",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone2",
+    "zone_names": [
+      "零号地块"
+    ],
+    "ap_cost": 10,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "TW-S-1": {
+    "kind": "archive",
+    "stage_id": "act11d0_s01",
+    "battle_id": "act11d0_s01",
+    "code": "TW-S-1",
+    "activity": "沃伦姆德的薄暮",
+    "activity_labels": [
+      "沃伦姆德的薄暮",
+      "伦姆德的薄暮"
+    ],
+    "activity_id": "permanent_sidestory_4_Twilight_Of_Wolumonde",
+    "zone_id": "permanent_sidestory_4_zone1",
+    "zone_names": [
+      "议事高塔"
+    ],
+    "ap_cost": 15,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "DH-S-1": {
+    "kind": "archive",
+    "stage_id": "act12side_s01",
+    "battle_id": "act12side_s01",
+    "code": "DH-S-1",
+    "activity": "多索雷斯假日",
+    "activity_labels": [
+      "多索雷斯假日",
+      "索雷斯假日"
+    ],
+    "activity_id": "permanent_sidestory_9_Dossoles_Holiday",
+    "zone_id": "permanent_sidestory_9_zone3",
+    "zone_names": [
+      "暗流涌动"
+    ],
+    "ap_cost": 15,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": true
+  },
+  "DH-MO-1": {
+    "kind": "archive",
+    "stage_id": "act12side_mo01",
+    "battle_id": "act12side_mo01",
+    "code": "DH-MO-1",
+    "activity": "多索雷斯假日",
+    "activity_labels": [
+      "多索雷斯假日",
+      "索雷斯假日"
+    ],
+    "activity_id": "permanent_sidestory_9_Dossoles_Holiday",
+    "zone_id": "permanent_sidestory_9_zone3",
+    "zone_names": [
+      "暗流涌动"
+    ],
+    "ap_cost": 0,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": false
+  },
+  "OF-1": {
+    "kind": "archive",
+    "stage_id": "a003_01",
+    "battle_id": "a003_01",
+    "code": "OF-1",
+    "activity": "火蓝之心",
+    "activity_labels": [
+      "火蓝之心"
+    ],
+    "activity_id": "permanent_sidestory_2_Heart_Of_Surging_Flame",
+    "zone_id": "permanent_sidestory_2_zone1",
+    "zone_names": [
+      "主舞台"
+    ],
+    "ap_cost": 0,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": false,
+    "has_raid": false
+  },
+  "MN-EX-7": {
+    "activity": "玛莉娅·临光",
+    "activity_id": "permanent_sidestory_6_Maria_Nearl",
+    "activity_labels": [
+      "玛莉娅临光",
+      "莉娅临光"
+    ],
+    "ap_cost": 20,
+    "battle_id": "act13d5_ex07",
+    "chapter": null,
+    "code": "MN-EX-7",
+    "kind": "archive",
+    "locked_texts": [],
+    "select_normal": false,
+    "stage_id": "act13d5_ex07",
+    "zone_id": "permanent_sidestory_6_zone2",
+    "zone_names": [
+      "钳兽牢笼"
+    ],
+    "raid": false
+  },
+  "1-7": {
+    "activity": "",
+    "activity_id": "main_1",
+    "activity_labels": [
+      ""
+    ],
+    "ap_cost": 6,
+    "battle_id": "main_01-07",
+    "chapter": 1,
+    "code": "1-7",
+    "kind": "main",
+    "locked_texts": [],
+    "select_normal": false,
+    "stage_id": "main_01-07",
+    "zone_id": "main_1",
+    "zone_names": [
+      "黑暗时代·下",
+      "第一章",
+      "01"
+    ],
+    "raid": false
+  },
+  "LS-5": {
+    "activity": "",
+    "activity_id": "weekly_7",
+    "activity_labels": [
+      ""
+    ],
+    "ap_cost": 30,
+    "battle_id": "wk_kc_5",
+    "chapter": null,
+    "code": "LS-5",
+    "kind": "supplies",
+    "locked_texts": [],
+    "select_normal": false,
+    "stage_id": "wk_kc_5",
+    "zone_id": "weekly_7",
+    "zone_names": [
+      "战术演习"
+    ],
+    "raid": false
+  },
+  "AP-5": {
+    "activity": "",
+    "activity_id": "weekly_5",
+    "activity_labels": [
+      ""
+    ],
+    "ap_cost": 30,
+    "battle_id": "wk_toxic_5",
+    "chapter": null,
+    "code": "AP-5",
+    "kind": "supplies",
+    "locked_texts": [],
+    "select_normal": false,
+    "stage_id": "wk_toxic_5",
+    "zone_id": "weekly_5",
+    "zone_names": [
+      "粉碎防御"
+    ],
+    "raid": false
+  },
+  "SK-5": {
+    "activity": "",
+    "activity_id": "weekly_8",
+    "activity_labels": [
+      ""
+    ],
+    "ap_cost": 30,
+    "battle_id": "wk_armor_5",
+    "chapter": null,
+    "code": "SK-5",
+    "kind": "supplies",
+    "locked_texts": [],
+    "select_normal": false,
+    "stage_id": "wk_armor_5",
+    "zone_id": "weekly_8",
+    "zone_names": [
+      "资源保障"
+    ],
+    "raid": false
+  },
+  "NL-S-1#f#": {
+    "kind": "archive",
+    "stage_id": "act13side_s01#f#",
+    "battle_id": "act13side_s01#f#",
+    "code": "NL-S-1",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 15,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": true,
+    "has_raid": true
+  },
+  "NL-S-2#f#": {
+    "kind": "archive",
+    "stage_id": "act13side_s02#f#",
+    "battle_id": "act13side_s02#f#",
+    "code": "NL-S-2",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 15,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": true,
+    "has_raid": true
+  },
+  "NL-S-3#f#": {
+    "kind": "archive",
+    "stage_id": "act13side_s03#f#",
+    "battle_id": "act13side_s03#f#",
+    "code": "NL-S-3",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 20,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": true,
+    "has_raid": true
+  },
+  "NL-S-4#f#": {
+    "kind": "archive",
+    "stage_id": "act13side_s04#f#",
+    "battle_id": "act13side_s04#f#",
+    "code": "NL-S-4",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 20,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": true,
+    "has_raid": true
+  },
+  "NL-S-5#f#": {
+    "kind": "archive",
+    "stage_id": "act13side_s05#f#",
+    "battle_id": "act13side_s05#f#",
+    "code": "NL-S-5",
+    "activity": "长夜临光",
+    "activity_labels": [
+      "长夜临光"
+    ],
+    "activity_id": "permanent_sidestory_10_Near_Light",
+    "zone_id": "permanent_sidestory_10_zone3",
+    "zone_names": [
+      "城市霓虹"
+    ],
+    "ap_cost": 25,
+    "locked_texts": [],
+    "chapter": null,
+    "select_normal": false,
+    "raid": true,
+    "has_raid": true
+  },
+  "DP-1": {
+    "activity": "逐影集趣",
+    "activity_id": "act1dp",
+    "activity_labels": [
+      "逐影集趣"
+    ],
+    "ap_cost": 30,
+    "battle_id": "act1dp_01",
+    "chapter": null,
+    "code": "DP-1",
+    "kind": "activity",
+    "locked_texts": [
+      "通关DP-TR-1解锁"
+    ],
+    "select_normal": false,
+    "stage_id": "act1dp_01",
+    "zone_id": "act1dp_zone1",
+    "zone_names": [
+      "轻游"
+    ],
+    "raid": false
+  }
+}

@@ -13,6 +13,7 @@ import numpy as np
 
 from maa_planner.copilot_core import worker
 from maa_planner.copilot_leak_guard import LeakGuard, abort_proof, abort_tasks
+from maa_planner.copilot_retry import classify_failure
 from tests.test_copilot_preflight import FakeCore, Function
 
 
@@ -77,18 +78,30 @@ class LeakGuardTests(unittest.TestCase):
         context.update(changes)
         return abort_proof(records, receipt, **context)
 
-    def test_only_bound_started_battle_with_blue_baseline_can_trigger(self):
+    def test_only_bound_started_battle_can_trigger(self):
         guard = LeakGuard([self.resource], self.run, 7)
         self.assertIsNone(guard.inspect(self.images['BattleHpFlag2']))
         for row in self.records()[:5]:
             guard.observe(row['message'], row['details'])
-        self.assertIsNone(guard.inspect(self.images['BattleHpFlag2']))
+        self.assertIsNone(guard.inspect(np.zeros((720, 1280, 3), dtype=np.uint8)))
         self.assertIsNone(guard.inspect(self.images['BattleHpFlag']))
         self.assertIsNotNone(guard.inspect(self.images['BattleHpFlag2']))
         guard.observe(10003, dict(uuid='device', taskid=7, taskchain='Copilot', what='ExtraInfo'))
         self.assertTrue(guard.active)
         guard.observe(20002, dict(uuid='device', taskid=7, taskchain='Copilot', subtask='BattleProcessTask'))
         self.assertIsNone(guard.inspect(self.images['BattleHpFlag2']))
+
+    def test_red_first_stops_without_fabricating_a_blue_refund_witness(self):
+        guard = LeakGuard([self.resource], self.run, 7)
+        for row in self.records()[:5]:
+            guard.observe(row['message'], row['details'])
+        witness = guard.inspect(self.images['BattleHpFlag2'])
+        self.assertEqual(witness['trigger'], 'red_without_baseline')
+        self.assertNotIn('baseline', witness)
+        self.assertFalse((self.run / 'leak-guard/baseline.png').exists())
+        receipt = self.receipt()
+        del receipt['leak_abort']['baseline']
+        self.assertEqual(self.prove(self.records(), receipt)['status'], 'unproven')
 
     def test_refund_requires_complete_native_abandonment_and_current_image_witness(self):
         rows, receipt = self.records(), self.receipt()
@@ -271,9 +284,9 @@ class LeakGuardTests(unittest.TestCase):
     def test_worker_stops_copilot_before_enqueuing_native_abandonment(self):
         images = self.images
         class GuardCore(FakeCore):
-            def __init__(self, late=False):
+            def __init__(self, late=False, red_first=False):
                 super().__init__([])
-                self.late = late
+                self.late, self.red_first = late, red_first
                 self.running = False
                 self.frame = 0
                 self.AsstRunning = Function(lambda *_: int(self.running))
@@ -298,7 +311,7 @@ class LeakGuardTests(unittest.TestCase):
                     return 1
                 return super().start(handle)
             def image(self, handle, buffer, size):
-                flag = 'BattleHpFlag' if self.frame == 0 else 'BattleHpFlag2'
+                flag = 'BattleHpFlag' if self.frame == 0 and not self.red_first else 'BattleHpFlag2'
                 self.frame += 1
                 C.memmove(buffer, images[flag].tobytes(), size)
                 return size
@@ -308,12 +321,12 @@ class LeakGuardTests(unittest.TestCase):
                     self.emit(10004)
                 self.running = False
                 return 1
-        for late in (False, True):
-            run = self.root / ('late-result' if late else 'native-abandon')
+        for late, red_first in ((False, False), (False, True), (True, False), (True, True)):
+            run = self.root / f'abort-late-{late}-red-first-{red_first}'
             run.mkdir()
             (run / 'navigation.json').write_text(json.dumps({'code': 'MN-EX-7', 'raid': False}))
             (run / 'params.json').write_text(json.dumps({'abort_on_leak': True}))
-            core = GuardCore(late)
+            core = GuardCore(late, red_first)
             with patch('maa_planner.copilot_core.C.CDLL', return_value=core), \
                     patch('maa_planner.copilot_core.launch_game'), \
                     patch('maa_planner.copilot_core.signal.signal'), \
@@ -326,6 +339,16 @@ class LeakGuardTests(unittest.TestCase):
             stopped = next(i for i, row in enumerate(events) if row['message'] == 10004)
             self.assertEqual(events[stopped + 1]['details']['taskchain'], 'Custom')
             self.assertTrue((run / 'leak-guard/leak.png').exists())
+            self.assertEqual((run / 'leak-guard/baseline.png').exists(), not red_first)
+            self.assertEqual(receipt['leak_abort']['trigger'],
+                             'red_without_baseline' if red_first else 'blue_to_red')
+            if red_first:
+                failure = classify_failure(events, run_id=run.name,
+                    started_ns=events[0]['recorded_ns'], finished_ns=events[-1]['recorded_ns'],
+                    task_id=receipt['leak_abort']['task_id'], stage='stage', filename='/execution.json',
+                    exit_code=receipt['exit_code'], worker_phase=receipt['phase'], raid=False)
+                self.assertFalse(failure['retryable'])
+                self.assertEqual(failure['sanity_outcome'], 'charged_or_unknown')
 
     def test_late_two_star_stop_is_never_reported_as_worker_success(self):
         class LateCore(FakeCore):

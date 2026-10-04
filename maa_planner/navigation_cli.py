@@ -17,32 +17,36 @@ from .runtime_receipt import validate_runtime_receipt
 from .util import atomic_write_json
 
 
-def navigation_complete(events, code):
+def navigation_complete(events, code, *, route=None):
     """Bind target OCR to the same completed Custom chain and final task list."""
     active = completed = None
     matched = finished = False
     chain_start = 0
     for index, event in enumerate(events):
         msg, value = event['message'], event['details']
-        if (msg in (0, 1, 10000, 10004) or value.get('what') == 'GameOffline'
+        if (msg in (0, 1, 10000, 10004, 20000, 20004)
+                or value.get('what') in ('GameOffline', 'Disconnect', 'Reconnecting', 'ExceededLimit')
                 or value.get('taskchain') in ('Fight', 'Copilot')):
             return False
         key = (value.get('uuid'), value.get('taskid'))
         if msg == 10001:
             completed = None
             finished = False
-            active = key if value.get('taskchain') == 'Custom' else None
+            active = key if (value.get('taskchain') == 'Custom' and type(key[1]) is int
+                             and isinstance(key[0], str) and key[0]) else None
             matched = False
             chain_start = index
         if (active is not None and key == active and value.get('first') == ['ZootdNavigate']
                 and map_recognized(msg, value, code)):
             matched = True
-        if msg == 10002 and key == active and matched:
+        if msg == 10002 and key == active and matched and value.get('taskchain') == 'Custom':
             completed = active
         if msg == 3 and completed is not None:
-            finished = completed[1] in value.get('finished_tasks', [])
+            finished = (key == completed and value.get('taskchain') == 'Custom'
+                        and value.get('finished_tasks') == [completed[1]]
+                        and type(value['finished_tasks'][0]) is int)
         if (msg == 3 and active is not None and special_panel_complete(
-                events[chain_start:index + 1], task_id=active[1], code=code)):
+                events[chain_start:index + 1], task_id=active[1], code=code, route=route)):
             finished = True
     return finished
 
@@ -84,7 +88,7 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
                 end = time.monotonic_ns()
             events_path = run / 'callbacks.jsonl'
             events = [json.loads(line) for line in events_path.read_text().splitlines()] if events_path.exists() else []
-            completed = navigation_complete(events, route['code'])
+            completed = navigation_complete(events, route['code'], route=route)
             worker = json.loads((run / 'worker-result.json').read_bytes())
             audit['exit_code'] = exit_code
             if (exit_code == 0 and completed

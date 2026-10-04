@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.navigation_samples import sample_route
+
 from maa_planner.copilot_core import raid_preflight_complete, special_panel_complete, worker
 from maa_planner.copilot_navigation import navigation_tasks
 from maa_planner.navigation_cli import navigation_complete
@@ -38,7 +40,7 @@ def special_events():
     records = [event(10001)]
     for task, text in [('ZootdSpecialPanel', 'SPECIAL ACCESS CONTENT'),
                        ('ZootdSpecialStart', '开始行动'),
-                       ('ZootdSpecialStageConfirmed', 'MN-EX-7')]:
+                       ('ZootdSpecialStageConfirmed', 'DV-S-2')]:
         records.append(event(20002, first=['ZootdNavigate'], subtask='ProcessTask', details={
             'task': task, 'algorithm': 'OcrDetect', 'action': 'DoNothing', 'result': {'text': text}}))
     return records + [event(10002), event(3, finished_tasks=[5])]
@@ -47,36 +49,36 @@ def special_events():
 class SpecialPanelEvidenceTests(unittest.TestCase):
     def test_requires_ordered_layout_start_title_and_full_terminal(self):
         records = special_events()
-        self.assertTrue(special_panel_complete(records, task_id=5, code='MN-EX-7'))
-        self.assertTrue(navigation_complete(records, 'MN-EX-7'))
+        self.assertTrue(special_panel_complete(records, task_id=5, code='DV-S-2', route=sample_route('DV-S-2')))
+        self.assertTrue(navigation_complete(records, 'DV-S-2', route=sample_route('DV-S-2')))
         for index in range(len(records)):
             changed = copy.deepcopy(records)
             del changed[index]
-            self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
-            self.assertFalse(navigation_complete(changed, 'MN-EX-7'))
+            self.assertFalse(special_panel_complete(changed, task_id=5, code='DV-S-2', route=sample_route('DV-S-2')))
+            self.assertFalse(navigation_complete(changed, 'DV-S-2', route=sample_route('DV-S-2')))
         for index, field, value in [(1, 'result', {'text': 'OTHER PANEL'}),
                                     (2, 'action', 'ClickSelf'), (2, 'result', {'text': '查看条件'}),
-                                    (3, 'result', {'text': 'MN-EX-70'}),
+                                    (3, 'result', {'text': 'DV-S-20'}),
                                     (3, 'algorithm', 'JustReturn')]:
             changed = copy.deepcopy(records)
             changed[index]['details']['details'][field] = value
-            self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
-            self.assertFalse(navigation_complete(changed, 'MN-EX-7'))
+            self.assertFalse(special_panel_complete(changed, task_id=5, code='DV-S-2', route=sample_route('DV-S-2')))
+            self.assertFalse(navigation_complete(changed, 'DV-S-2', route=sample_route('DV-S-2')))
         for index in range(len(records)):
             for field, value in [('uuid', 'other'), ('taskid', 6), ('taskchain', 'Copilot')]:
                 changed = copy.deepcopy(records)
                 changed[index]['details'][field] = value
-                self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
-                self.assertFalse(navigation_complete(changed, 'MN-EX-7'))
+                self.assertFalse(special_panel_complete(changed, task_id=5, code='DV-S-2', route=sample_route('DV-S-2')))
+                self.assertFalse(navigation_complete(changed, 'DV-S-2', route=sample_route('DV-S-2')))
         changed = copy.deepcopy(records)
         changed[1], changed[2] = changed[2], changed[1]
-        self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
+        self.assertFalse(special_panel_complete(changed, task_id=5, code='DV-S-2', route=sample_route('DV-S-2')))
         changed = copy.deepcopy(records)
         changed[3]['details']['first'] = ['OldNavigation']
-        self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
+        self.assertFalse(special_panel_complete(changed, task_id=5, code='DV-S-2', route=sample_route('DV-S-2')))
         changed = copy.deepcopy(records)
         changed.insert(3, {'message': 20003, 'details': {'what': 'ExceededLimit'}})
-        self.assertFalse(special_panel_complete(changed, task_id=5, code='MN-EX-7'))
+        self.assertFalse(special_panel_complete(changed, task_id=5, code='DV-S-2', route=sample_route('DV-S-2')))
 
 
 class PreflightEvidenceTests(unittest.TestCase):
@@ -274,20 +276,22 @@ class FakeCore:
 
 class PreflightDispatchTests(unittest.TestCase):
     def run_worker(self, records, *, raid=True, navigation_only=False, navigation_records=None,
-                   recover_zero_result=False, recovery_stars=None):
+                   recover_zero_result=False, recovery_stars=None, route=None, map_click=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = root / 'attempt'
             run.mkdir()
             (run / 'navigation.json').write_text(json.dumps({
-                'code': 'MN-EX-7', 'raid': raid, 'navigation_only': navigation_only}))
+                'code': 'MN-EX-7', 'raid': raid, 'navigation_only': navigation_only, **(route or {})}))
             (run / 'params.json').write_text(json.dumps({
                 'copilot_list': [], 'recover_zero_result': recover_zero_result}))
             lib = FakeCore(records, navigation_records=navigation_records, recovery_stars=recovery_stars)
             with patch('maa_planner.copilot_core.C.CDLL', return_value=lib), \
                     patch('maa_planner.copilot_core.launch_game'), \
                     patch('maa_planner.copilot_core.signal.signal'), \
-                    patch('maa_planner.navigation_vision.scan_map', return_value=False), \
+                    patch('maa_planner.navigation_vision.scan_map', return_value=False,
+                          side_effect=(lambda *args, **kwargs: kwargs['click_and_confirm']([600, 400, 80, 40]))
+                          if map_click else None), \
                     patch('maa_planner.copilot_core.subprocess.run', return_value=
                           subprocess.CompletedProcess([], 0, stdout=b'')):
                 status = worker(root, run, 'device')
@@ -315,7 +319,7 @@ class PreflightDispatchTests(unittest.TestCase):
     def test_special_panel_adapts_native_checks_only_after_complete_navigation(self):
         for navigation_only in (False, True):
             status, receipt, appended, task_file = self.run_worker(
-                [], raid=False, navigation_only=navigation_only, navigation_records=special_events())
+                [], raid=False, navigation_only=navigation_only, navigation_records=special_events(), route=sample_route('DV-S-2'))
             self.assertEqual(status, 0)
             if navigation_only:
                 self.assertFalse(task_file)
@@ -331,7 +335,7 @@ class PreflightDispatchTests(unittest.TestCase):
             changed = special_events()
             del changed[index]
             status, _, appended, task_file = self.run_worker(
-                [], raid=False, navigation_records=changed)
+                [], raid=False, navigation_records=changed, route=sample_route('DV-S-2'))
             self.assertEqual(status, 1)
             self.assertFalse(task_file)
             self.assertNotIn('Copilot', [kind for kind, _ in appended])
@@ -343,12 +347,12 @@ class PreflightDispatchTests(unittest.TestCase):
         records[1]['details']['details'].update(
             task='ZootdEncryptedRecordPage', result={'text': '加密实验记录03'})
         status, receipt, appended, task_file = self.run_worker(
-            [], raid=False, navigation_records=records)
+            [], raid=False, navigation_records=records, route=sample_route('DV-S-2'))
         self.assertEqual(status, 1)
         self.assertEqual(receipt['phase'], 'stage_locked')
         self.assertFalse(task_file)
         self.assertNotIn('Copilot', [kind for kind, _ in appended])
-        self.assertFalse(navigation_complete(records, 'MN-EX-7'))
+        self.assertFalse(navigation_complete(records, 'DV-S-2', route=sample_route('DV-S-2')))
 
     def test_locked_mode_never_enqueues_copilot_even_with_success_terminal(self):
         records = preflight_events()
@@ -367,13 +371,13 @@ class PreflightDispatchTests(unittest.TestCase):
         records[1:1] = [page, click]
         for navigation_only in (False, True):
             status, _, appended, task_file = self.run_worker(
-                [], raid=False, navigation_only=navigation_only, navigation_records=records)
+                [], raid=False, navigation_only=navigation_only, navigation_records=records, route=sample_route('DV-S-2'))
             self.assertEqual(status, 0)
             self.assertEqual(task_file, not navigation_only)
         for index in (3, 4, 5):
             changed = copy.deepcopy(records)
             del changed[index]
-            status, _, appended, task_file = self.run_worker([], raid=False, navigation_records=changed)
+            status, _, appended, task_file = self.run_worker([], raid=False, navigation_records=changed, route=sample_route('DV-S-2'))
             self.assertEqual(status, 1)
             self.assertFalse(task_file)
             self.assertNotIn('Copilot', [kind for kind, _ in appended])
