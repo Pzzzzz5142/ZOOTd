@@ -250,7 +250,11 @@ class DashboardBrowserTests(unittest.TestCase):
         self.page.clock.install()
         self.page.reload()
         self.page.evaluate('refreshSkland()')
-        self.assertEqual(self.page.locator('#sanity-value').inner_text(), '80 / 135')
+        self.assertEqual(self.page.locator('#sanity-value').text_content(), '80 / 135')
+        offset = float(self.page.locator('#sanity-ring').get_attribute('stroke-dashoffset'))
+        self.assertAlmostEqual(offset, (1 - 80 / 135) * 540.354, places=3)
+        self.assertEqual(self.page.locator('#sanity-next-time').inner_text(), '00:06:00')
+        self.assertEqual(self.page.locator('#sanity-gauge').get_attribute('data-state'), 'recovering')
         self.assertIn('下一点 00:06:00', self.page.locator('#sanity-timer').inner_text())
         self.assertEqual(self.page.locator('.slot-timer').nth(1).inner_text(), '00:01:00')
         requests = []
@@ -259,7 +263,7 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('.slot-timer').nth(1).inner_text(), '00:00:59')
         self.assertFalse(any('/api/skland' in url for url in requests))
         self.page.evaluate('state.sklandAnchor -= 359000; renderSkland()')
-        self.assertEqual(self.page.locator('#sanity-value').inner_text(), '81 / 135')
+        self.assertEqual(self.page.locator('#sanity-value').text_content(), '81 / 135')
         self.assertIn('待同步确认', self.page.locator('.recruit-slot').nth(1).inner_text())
         self.assertIn('接口已确认', self.page.locator('.recruit-slot').nth(2).inner_text())
         self.assertIn('招募已结束', self.page.locator('.recruit-slot').nth(2).inner_text())
@@ -270,7 +274,9 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.evaluate('sanityAt({...state.skland.snapshot.sanity, current:180}, 2000020000)'), 180)
         self.assertEqual(self.page.evaluate('sanityAt({...state.skland.snapshot.sanity, full_at:null}, 2000020000)'), 80)
         self.page.evaluate('state.skland.snapshot.sanity.current=180; renderSkland()')
-        self.assertEqual(self.page.locator('#sanity-value').inner_text(), '180 / 135')
+        self.assertEqual(self.page.locator('#sanity-value').text_content(), '180 / 135')
+        self.assertEqual(float(self.page.locator('#sanity-ring').get_attribute('stroke-dashoffset')), 0)
+        self.assertEqual(self.page.locator('#sanity-gauge').get_attribute('data-state'), 'full')
         self.assertEqual(self.errors, [])
 
     def test_skland_old_snapshot_unknown_and_authentication_error(self):
@@ -283,7 +289,9 @@ class DashboardBrowserTests(unittest.TestCase):
                            next_refresh_at=2000001200, refresh_interval_seconds=1200, snapshot=None,
                            error={'category': 'authentication', 'message': './bin/zootd box-login <img src=x onerror=alert(1)>'})
         self.page.evaluate('refreshSkland()')
-        self.assertEqual(self.page.locator('#sanity-value').inner_text(), '— / —')
+        self.assertEqual(self.page.locator('#sanity-value').text_content(), '— / —')
+        self.assertEqual(self.page.locator('#sanity-gauge').get_attribute('data-state'), 'unknown')
+        self.assertEqual(float(self.page.locator('#sanity-ring').get_attribute('stroke-dashoffset')), 540.354)
         self.assertEqual(self.page.locator('#skland img').count(), 0)
         self.assertIn('box-login', self.page.locator('#skland-message').inner_text())
         self.assertEqual(self.page.locator('#recruit-summary').inner_text(), '数据未知')
@@ -301,6 +309,14 @@ class DashboardBrowserTests(unittest.TestCase):
             self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'))
             self.assertTrue(self.page.locator('#sanity-value').is_visible())
             self.assertEqual(self.page.locator('.recruit-slot:visible').count(), 4)
+            boxes = self.page.locator('.recruit-slot').evaluate_all('(nodes) => nodes.map(n => {const r=n.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};})')
+            for i, a in enumerate(boxes):
+                for b in boxes[i + 1:]:
+                    self.assertTrue(a['right'] <= b['left'] or b['right'] <= a['left']
+                                    or a['bottom'] <= b['top'] or b['bottom'] <= a['top'])
+        self.page.emulate_media(reduced_motion='reduce')
+        self.assertEqual(self.page.locator('.recruit-slot.running .slot-dot').evaluate('(n) => getComputedStyle(n).animationName'), 'none')
+        self.assertEqual(self.page.locator('#sanity-ring').evaluate('(n) => getComputedStyle(n).transitionDuration'), '0s')
         self.page.screenshot(path='/tmp/zootd-dashboard-desktop.png', full_page=True)
         self.page.set_viewport_size({'width': 390, 'height': 844})
         self.page.screenshot(path='/tmp/zootd-dashboard-mobile.png', full_page=True)

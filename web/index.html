@@ -1,44 +1,88 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ZOOTd · 罗德岛运行监控</title><link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script></head>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ZOOTd · 罗德岛运行监控</title>
+  <link rel="stylesheet" href="/style.css"><script defer src="/app.js"></script>
+</head>
 <body>
+<svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-mark" viewBox="0 0 32 32"><path d="M16 2 30 16 16 30 2 16Z"/><path d="M10 22h12M12 22V12l4-5 4 5v10M12 14h8M15 18h2"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 8a8 8 0 0 0-14-3L3 8m0-5v5h5M4 16a8 8 0 0 0 14 3l3-3m0 5v-5h-5"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M2 12h5l3-7 4 14 3-7h5"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="10" y="10" width="4" height="4"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m2 10v-3a6 6 0 0 0-2-4"/></symbol>
+  <symbol id="i-energy" viewBox="0 0 24 24"><path d="m14 2-9 12h6l-1 8 9-12h-6Z"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="m12 3 9 5v9l-9 5-9-5V8Zm-9 5 9 5 9-5m-9 5v9M7 5l10 6"/></symbol>
+  <symbol id="i-warning" viewBox="0 0 24 24"><path d="m12 3 10 18H2Z"/><path d="M12 9v5m0 3v1"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+</svg>
 <aside aria-label="主导航">
-  <a class="brand" href="#overview">Z<span> / </span>ZOOTd</a>
-  <div class="workspace">RHODES ISLAND<br><strong>罗德岛 · 自主运营</strong></div>
+  <a class="brand" href="#overview"><svg class="brand-mark" aria-hidden="true"><use href="#i-mark"/></svg><span>ZOOT<span class="accent">d</span><small>RHODES ISLAND</small></span></a>
+  <div class="workspace"><span class="eyebrow">WORKSPACE / 01</span><strong>罗德岛 · 自主运营</strong><span class="workspace-mode">AUTONOMOUS OPERATIONS</span></div>
   <nav class="primary-nav" aria-label="监控页面">
-    <a id="nav-overview" class="nav" href="#overview"><span aria-hidden="true">◈</span>运行概览</a>
-    <a id="nav-history" class="nav" href="#history"><span aria-hidden="true">≡</span>历史记录</a>
-    <a id="nav-detail" class="nav nav-child" href="#history" hidden>运行详情</a>
+    <a id="nav-overview" class="nav" href="#overview" aria-label="运行概览"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg><span>运行概览<small>Overview</small></span><span class="nav-index" aria-hidden="true">01</span></a>
+    <a id="nav-history" class="nav" href="#history" aria-label="历史记录"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>历史记录<small>Run history</small></span><span class="nav-index" aria-hidden="true">02</span></a>
+    <a id="nav-detail" class="nav nav-child" href="#history" aria-label="运行详情" hidden><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg><span>运行详情</span></a>
   </nav>
-  <div class="aside-foot"><span class="dot"></span> 本地只读监控<br>MAA × WAYDROID</div>
+  <div class="aside-foot"><div class="observer-label"><span class="dot"></span> LOCAL OBSERVER</div><p>本地只读监控</p><small>MAA × WAYDROID</small><span class="rail-code" aria-hidden="true">RI / ZOOTD / CN-OFFICIAL</span></div>
 </aside>
 <main>
   <header class="page-header">
     <div id="page-eyebrow" class="eyebrow">OPERATIONS / OVERVIEW</div>
     <div class="header-row">
       <div><h1 id="page-title" tabindex="-1">运行概览</h1><p id="page-description" class="muted">核对游戏状态与托管执行结果。</p></div>
-      <button id="refresh">↻ &nbsp;刷新数据</button>
+      <div class="header-actions"><button id="refresh"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>刷新数据</button><div id="connection" role="status" aria-live="polite">正在连接本地数据…</div></div>
     </div>
-    <div id="connection" role="status" aria-live="polite">正在连接本地数据…</div>
   </header>
   <nav id="breadcrumb" class="breadcrumb" aria-label="当前位置" hidden><a href="#history">历史记录</a><span aria-hidden="true">/</span><span aria-current="page">运行详情</span></nav>
-<section id="overview" aria-label="状态概览">
-  <section id="skland" class="panel game-panel" aria-labelledby="skland-title">
-    <div class="panel-heading"><div><div class="eyebrow">RHODES ISLAND / GAME STATUS</div><h2 id="skland-title">罗德岛状态</h2></div><span id="skland-state" class="badge" role="status">正在读取森空岛…</span></div>
-    <p id="skland-message" class="notice" hidden></p>
-    <div class="game-grid">
-      <article class="sanity-card"><span class="label">剩余理智 <span class="estimate">时间推算</span></span><div id="sanity-value" class="resource-value">—</div><progress id="sanity-progress" max="1" value="0" aria-label="理智恢复进度"></progress><p id="sanity-timer" class="resource-timer">等待数据</p><small id="sanity-snapshot">每 6 分钟自然恢复 1 点</small></article>
-      <article class="recruit-card"><div class="resource-heading"><span class="label">公开招募</span><span id="recruit-summary" class="muted">等待数据</span></div><div id="recruit-slots" class="recruit-slots"></div><small>倒计时结束后，等待下次同步确认实际状态。</small></article>
+  <section id="overview" aria-label="状态概览">
+    <section id="skland" class="game-panel" aria-labelledby="skland-title">
+      <div class="section-heading"><div><span class="eyebrow">01 / GAME TELEMETRY</span><h2 id="skland-title">罗德岛状态</h2></div><span id="skland-state" class="badge" role="status">正在读取森空岛…</span></div>
+      <p id="skland-message" class="notice" hidden></p>
+      <div class="game-grid">
+        <article class="sanity-card panel">
+          <div class="resource-heading"><span class="card-title"><svg class="icon" aria-hidden="true"><use href="#i-energy"/></svg>剩余理智</span><span class="estimate">TIME ESTIMATE</span></div>
+          <div class="sanity-body">
+            <div id="sanity-gauge" class="sanity-gauge" data-state="unknown">
+              <svg class="gauge-svg" viewBox="0 0 220 220" aria-hidden="true"><circle class="gauge-ticks" cx="110" cy="110" r="104"/><circle class="gauge-track" cx="110" cy="110" r="86"/><circle id="sanity-ring" class="gauge-ring" cx="110" cy="110" r="86" stroke-dasharray="540.354" stroke-dashoffset="540.354"/></svg>
+              <div class="gauge-center"><div id="sanity-value" class="resource-value">—</div><span class="gauge-caption">SANITY / 理智</span></div>
+            </div>
+            <div class="recovery-times"><div><span class="label">下一点恢复</span><strong id="sanity-next-time">—</strong></div><div><span class="label">恢复至上限</span><strong id="sanity-full-time">—</strong></div><span id="sanity-percent" class="recovery-label">等待数据</span></div>
+          </div>
+          <progress id="sanity-progress" class="sr-only" max="1" value="0" aria-label="理智恢复进度"></progress>
+          <p id="sanity-timer" class="sr-only">等待数据</p>
+          <small id="sanity-snapshot" class="card-footnote">每 6 分钟自然恢复 1 点</small>
+        </article>
+        <article class="recruit-card panel">
+          <div class="resource-heading"><span class="card-title"><svg class="icon" aria-hidden="true"><use href="#i-users"/></svg>公开招募</span><span id="recruit-summary" class="recruit-summary">等待数据</span></div>
+          <div id="recruit-slots" class="recruit-slots"></div>
+          <small class="card-footnote">计时结束后，等待森空岛同步确认实际状态。</small>
+        </article>
+      </div>
+      <div id="base-status" class="base-status"></div>
+      <div class="snapshot-meta"><span id="skland-age">快照尚未获取</span><span id="skland-next">森空岛每 20 分钟同步 · 倒计时每秒更新</span></div>
+    </section>
+    <div class="section-heading"><div><span class="eyebrow">02 / AUTOMATION STATUS</span><h2>托管运行</h2></div><span class="section-hint"><span class="dot"></span>本地状态每 10 秒更新</span></div>
+    <div class="stats">
+      <article class="system-card" id="service-card"><div class="metric-heading"><span class="label">当前运行状态</span><svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg></div><h2 id="service">—</h2><small id="service-detail">等待数据</small></article>
+      <article class="system-card" id="latest-card"><div class="metric-heading"><span class="label">最近运行结果</span><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></div><div class="metric-result"><h2 id="latest-result">—</h2><button id="latest-view" class="view" hidden>定位本轮记录 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button></div><small id="latest-detail">等待数据</small></article>
+      <article class="system-card" id="failure-card"><div class="metric-heading"><span class="label">服务历史失败</span><svg class="icon" aria-hidden="true"><use href="#i-warning"/></svg></div><h2 id="service-failures">—</h2><small id="failure-detail">等待数据</small></article>
+      <article class="runtime-card"><div class="runtime-version"><svg class="icon" aria-hidden="true"><use href="#i-cpu"/></svg><div><span class="label">本地 MAA CORE</span><h2 id="core">—</h2></div></div><small id="runtime">最近一次 runtime receipt</small><div id="upstream" class="upstream" role="status"><small>正在查询上游稳定版…</small></div></article>
     </div>
-    <div id="base-status" class="base-status"></div>
-    <div class="snapshot-meta"><span id="skland-age">快照尚未获取</span><span id="skland-next">森空岛每 20 分钟同步 · 倒计时每秒更新</span></div>
   </section>
-  <div class="section-heading"><h2>托管运行</h2><span class="muted">本地状态每 10 秒更新</span></div>
-  <div class="stats"><article><span class="label">当前运行状态</span><h2 id="service">—</h2><small id="service-detail">等待数据</small></article><article><span class="label">最近运行结果</span><h2 id="latest-result">—</h2><small id="latest-detail">等待数据</small><button id="latest-view" class="view" hidden>定位本轮记录 ↓</button></article><article><span class="label">服务历史失败</span><h2 id="service-failures">—</h2><small id="failure-detail">等待数据</small></article><article><span class="label">本地 MAA CORE</span><h2 id="core">—</h2><small id="runtime">最近一次 runtime receipt</small><div id="upstream" class="upstream" role="status"><small>正在查询上游稳定版…</small></div></article></div>
-</section>
-
-<section id="detail" class="panel"><div class="panel-heading"><div><div class="eyebrow">RUN DETAIL</div><h2 id="detail-title">最近一次执行</h2></div><a id="all-history" class="button-link" href="#history">全部历史 →</a><button id="close" hidden>← 返回历史记录</button></div><div id="detail-content"></div></section>
-<section id="history" class="panel" hidden><div class="panel-heading"><div><div class="eyebrow">RUN HISTORY</div><h2>全部运行</h2></div><span id="total" class="muted"></span></div><div class="toolbar"><div class="filters" role="group" aria-label="当前页状态筛选"><button data-filter="all" aria-pressed="true" class="selected">全部</button><button data-filter="success" aria-pressed="false">已通过</button><button data-filter="attention" aria-pressed="false">需关注</button></div><label class="search">⌕ <input id="search" type="search" aria-label="搜索当前页运行 ID" placeholder="搜索当前页运行 ID"></label></div><div class="table-scroll"><table><thead><tr><th>运行时间 / ID</th><th>运行模式</th><th>结果</th><th>阶段记录</th><th>耗时</th><th></th></tr></thead><tbody id="rows"></tbody></table></div><div id="empty" class="empty" hidden>暂无运行记录。完成一次托管运行后，记录会显示在这里。</div><div class="pagination"><small>当前页通过 <span id="success">—</span> · 需关注 <span id="attention">—</span><br>每页 30 条 · 筛选仅作用于当前页</small><div><button id="prev">← 上一页</button><span id="page">1</span><button id="next">下一页 →</button></div></div></section>
-
-<footer>只读监控 · 时间：Asia/Shanghai · 本地状态 10 秒 / 森空岛同步 20 分钟<br>森空岛可能滞后于游戏；时间推算不包含刷图消耗、用药或任务操作。运行结果以审计证据为准。</footer></main>
-</body></html>
+  <section id="detail" class="panel"><div class="panel-heading"><div><div class="eyebrow">03 / EXECUTION JOURNEY</div><h2 id="detail-title">最近一次执行</h2></div><a id="all-history" class="button-link" href="#history">全部历史 →</a><button id="close" hidden>← 返回历史记录</button></div><div id="detail-content"></div></section>
+  <section id="history" class="panel" hidden>
+    <div class="panel-heading"><div><div class="eyebrow">RUN HISTORY</div><h2>全部运行</h2></div><span id="total" class="muted"></span></div>
+    <div class="toolbar"><div class="filters" role="group" aria-label="当前页状态筛选"><button data-filter="all" aria-pressed="true" class="selected">全部</button><button data-filter="success" aria-pressed="false">已通过</button><button data-filter="attention" aria-pressed="false">需关注</button></div><label class="search">⌕ <input id="search" type="search" aria-label="搜索当前页运行 ID" placeholder="搜索当前页运行 ID"></label></div>
+    <div class="table-scroll"><table><thead><tr><th>运行时间 / ID</th><th>运行模式</th><th>结果</th><th>阶段记录</th><th>耗时</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+    <div id="empty" class="empty" hidden>暂无运行记录。完成一次托管运行后，记录会显示在这里。</div>
+    <div class="pagination"><small>当前页通过 <span id="success">—</span> · 需关注 <span id="attention">—</span><br>每页 30 条 · 筛选仅作用于当前页</small><div><button id="prev">← 上一页</button><span id="page">1</span><button id="next">下一页 →</button></div></div>
+  </section>
+  <footer><span>ZOOTd / RHODES ISLAND OPERATIONS</span><span>时间：Asia/Shanghai · 本地状态 10 秒 / 森空岛同步 20 分钟</span><p>森空岛可能滞后于游戏；时间推算不包含刷图消耗、用药或任务操作。运行结果以审计证据为准。</p></footer>
+</main>
+</body>
+</html>

@@ -222,7 +222,7 @@ systemctl --user status zootd-log-cleanup.timer
 ./bin/zootd dashboard --host 0.0.0.0 --port 8765
 ```
 
-概览页上方集中显示理智、公招与基建，下方显示托管状态、紧凑的版本栏以及最近一轮的完整阶段记录与过程时间线；“定位本轮记录”滚动到执行区域。历史查询继续使用“历史记录 → 运行详情”的页面层级。边栏高亮与当前页面同步，详情作为历史记录的子页面展示；顶部标题、面包屑和“返回历史记录”保持同一层级。返回列表保留当前页、搜索和筛选条件，以及本次页面会话内的滚动位置。浏览器前进/后退可切换页面，详情 URL（`#run/运行ID`）可直接打开；手机上保留导航入口。刷新整个网页会重置列表查询条件。
+概览采用深色控制台布局，以统一间距区分游戏状态、托管运行和执行证据。上方显示理智环形仪表、公招槽位及基建卡片，下方显示托管状态、紧凑的版本栏以及最近一轮的完整阶段记录与过程时间线；“定位本轮记录”滚动到执行区域。历史查询继续使用“历史记录 → 运行详情”的页面层级。边栏高亮与当前页面同步，详情作为历史记录的子页面展示；顶部标题、面包屑和“返回历史记录”保持同一层级。返回列表保留当前页、搜索和筛选条件，以及本次页面会话内的滚动位置。浏览器前进/后退可切换页面，详情 URL（`#run/运行ID`）可直接打开；手机上保留导航入口。刷新整个网页会重置列表查询条件。
 
 森空岛监控复用[本机登录](#森空岛登录与-box-同步experimental)保存的凭据。启动面板时立即尝试同步，此后每次查询完成后等待 20 分钟；后台线程独立运行，即使没有网页打开也会同步。`/api/skland` 只读取进程内缓存，网页轮询、手动刷新和多个访客不会触发额外远端查询。失败后同样等待一个周期，保留并明确标记旧快照，显示错误类别及下次同步倒计时；无旧快照时保留未知状态。重启面板清空缓存并立即重新同步。凭据缺失或失效时，在本机终端运行 `./bin/zootd box-login`，随后等待下个周期或重启面板服务；面板不发送短信、不提供浏览器登录。唯一官服角色自动选中；多官服角色用 `./bin/zootd dashboard --skland-uid UID` 显式选择，systemd 部署可按下文覆盖 `ExecStart` 添加该参数。
 
@@ -238,6 +238,8 @@ MAA Core 卡片同时显示本地 receipt 中的版本和上游最新稳定版�
 - 阶段导航可直接展开对应卡片；支持筛选异常与缺失记录。异常阶段默认展开，设备、关卡、无人机用途等已记录字段直接展示；证据文件路径与原始 JSON 按需展开，自动刷新保留展开与筛选状态。
 - 过程时间线按事件时间展示开始、阶段终态、结束和恢复事件。现有审计没有阶段开始或阶段内逐步事件，面板不推测阶段耗时、当前正在执行的阶段或未记录的中间操作。终态时间是记录时间，不是阶段开始时间；恢复事件不改变原始运行结果。
 - 证据异常的记录不显示可信阶段统计。“哈希链已校验”仅指事件链校验，不表示重新读取和校验每个证据文件。
+
+布局与间距参考 [Carbon spacing](https://www.carbondesignsystem.com/building-blocks/foundations/spacing/overview) 和 [2x Grid](https://www.carbondesignsystem.com/building-blocks/foundations/2x-grid/guidelines)，信息层级参考 [Grafana 仪表盘指南](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/best-practices/)。理智环形图只表示当前推算值占上限的比例，超上限数字原样保留但图形封顶；公招进度只表示已过时间，不作为聘用或任务成功证明。未知数据保持空仪表，旧快照明确提示。平板使用紧凑侧栏，手机重新排布卡片并保留完整导航；动效遵循系统的减少动态效果设置。
 
 交互设计参考 [NN/g 渐进披露](https://www.nngroup.com/articles/progressive-disclosure/)（摘要优先、证据按需展开）、[Carbon 进度反馈](https://carbondesignsystem.com/components/progress-bar/usage/)（仅量化已知进度）和 [Grafana 日志展示](https://grafana.com/docs/grafana/latest/visualizations/panels-visualizations/visualizations/logs/)（时间顺序与独立详情）。
 

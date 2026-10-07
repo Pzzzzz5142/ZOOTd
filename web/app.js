@@ -57,6 +57,26 @@ function node(tag, text, className) {
   return n;
 }
 
+function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  svg.setAttribute('class', 'icon');
+  svg.setAttribute('aria-hidden', 'true');
+  use.setAttribute('href', '#i-' + name);
+  svg.append(use);
+  return svg;
+}
+
+function resourceRail(ratio) {
+  const known = typeof ratio === 'number' && Number.isFinite(ratio);
+  const progress = Math.max(0, Math.min(1, known ? ratio : 0));
+  const rail = node('div', undefined, 'resource-rail' + (known ? '' : ' unknown'));
+  rail.setAttribute('role', 'img');
+  rail.setAttribute('aria-label', known ? `进度 ${Math.round(progress * 100)}%` : '进度未知');
+  for (let i = 0; i < 10; i++) rail.append(node('span', undefined, i < Math.floor(progress * 10) ? 'filled' : ''));
+  return rail;
+}
+
 function date(value) {
   return value ? new Date(value).toLocaleString('zh-CN', {
     timeZone: 'Asia/Shanghai',
@@ -483,6 +503,7 @@ function renderSkland() {
   const r = state.skland, now = sklandNow();
   const old = r?.snapshot && (r.state !== 'fresh' || now - r.fetched_at >= r.refresh_interval_seconds);
   const syncLabel = old ? '旧快照 · 推算中' : {fresh:'森空岛已同步', loading:'正在同步森空岛…', unavailable:'森空岛不可用'}[r?.state] || '正在读取森空岛…';
+  $('skland').dataset.state = old ? 'stale' : r?.state || 'loading';
   // Announce status transitions, without repeating the same message every second.
   if ($('skland-state').textContent !== syncLabel) $('skland-state').textContent = syncLabel;
   $('skland-state').className = 'badge ' + (old || r?.error ? 'unfinished' : r?.state === 'fresh' ? 'success' : '');
@@ -493,11 +514,23 @@ function renderSkland() {
   $('sanity-progress').max = ap?.max || 1;
   $('sanity-progress').value = sanity ?? 0;
   $('sanity-progress').classList.toggle('attention', sanity !== null && sanity >= ap.max);
+  const sanityRatio = sanity === null ? null : Math.max(0, Math.min(1, sanity / ap.max));
+  $('sanity-ring').setAttribute('stroke-dashoffset', ((1 - (sanityRatio ?? 0)) * 540.354).toFixed(3));
+  $('sanity-gauge').dataset.state = sanity === null ? 'unknown' : sanity >= ap.max ? 'full' : 'recovering';
+  $('sanity-next-time').textContent = '—';
+  $('sanity-full-time').textContent = '—';
+  $('sanity-percent').textContent = sanity === null ? '恢复进度未知' : `${Math.round(sanityRatio * 100)}% · 自然恢复推算`;
   if (sanity === null) $('sanity-timer').textContent = '理智数据未知';
-  else if (sanity >= ap.max) $('sanity-timer').textContent = '理智已满 · 可核对是否正常消耗';
+  else if (sanity >= ap.max) {
+    $('sanity-timer').textContent = '理智已满 · 可核对是否正常消耗';
+    $('sanity-next-time').textContent = '已达上限';
+    $('sanity-full-time').textContent = '无需恢复';
+  }
   else if (ap.full_at) {
     const next = ap.full_at - (ap.max - sanity - 1) * 360;
     $('sanity-timer').textContent = `下一点 ${countdown(next - now)} · 回满 ${countdown(ap.full_at - now)}`;
+    $('sanity-next-time').textContent = countdown(next - now);
+    $('sanity-full-time').textContent = countdown(ap.full_at - now);
   } else $('sanity-timer').textContent = '恢复时间未知，显示接口记录';
   $('sanity-snapshot').textContent = ap?.current == null ? '接口未提供理智时，保留未知状态'
     : `接口记录 ${ap.current} / ${ap.max ?? '—'} · 仅推算自然恢复`;
@@ -506,18 +539,24 @@ function renderSkland() {
   let running = 0, due = 0;
   for (let index = 0; index < 4; index++) {
     const slot = slots?.[index], card = node('div', undefined, 'recruit-slot');
+    let progress = null;
     let label = '状态未知', timer = '—', style = '';
     if (slot) {
       // Preserve the raw state for diagnostics. Only a reported deadline implies a countdown.
-      if (slot.state === 1) { label = '招募已结束'; timer = '接口已确认'; due++; style = 'attention'; }
+      if (slot.state === 1) { label = '招募已结束'; timer = '接口已确认'; due++; style = 'attention'; progress = 1; }
       else if (slot.state != null && slot.started_at > 0 && slot.finished_at > 0) {
-        if (slot.finished_at > now) { label = '招募中'; timer = countdown(slot.finished_at - now); running++; }
+        if (slot.finished_at > slot.started_at) progress = (now - slot.started_at) / (slot.finished_at - slot.started_at);
+        if (slot.finished_at > now) { label = '招募中'; timer = countdown(slot.finished_at - now); running++; style = 'running'; }
         else { label = '计时已结束'; timer = '待同步确认'; due++; style = 'attention'; }
       } else if (slot.state === 0 && !slot.started_at && !slot.finished_at) { label = '未在招募'; timer = '暂无计时'; }
       else { timer = '时间未知'; }
     }
     card.classList.add(style || 'neutral');
-    card.append(node('span', `槽位 ${index + 1}`, 'label'), node('strong', label), node('span', timer, 'slot-timer'),
+    const head = node('div', undefined, 'slot-heading');
+    head.append(node('span', `SLOT ${String(index + 1).padStart(2, '0')}`, 'label'), node('span', undefined, 'slot-dot'));
+    const symbol = node('div', undefined, 'slot-icon');
+    symbol.append(icon(style === 'attention' ? 'shield' : 'clock'));
+    card.append(head, symbol, node('strong', label), node('span', timer, 'slot-timer'), resourceRail(progress),
       node('small', slot?.state == null ? '接口状态未知' : `接口状态 ${slot.state}`));
     $('recruit-slots').append(card);
   }
@@ -530,14 +569,14 @@ function renderSkland() {
   const stock = knownTrading ? trading.reduce((n, t) => n + t.stored, 0) : null;
   const limit = knownTrading ? trading.reduce((n, t) => n + t.limit, 0) : null;
   const full = knownTrading ? trading.filter(t => t.limit > 0 && t.stored >= t.limit).length : 0;
-  for (const [title, value, hint, attention] of [
-    ['无人机', droneValue === null ? '—' : `${droneValue} / ${snapshot.drones.max}`, '按恢复时间推算', droneValue !== null && droneValue >= snapshot.drones.max],
-    ['疲劳干员', tired ?? '—', '森空岛快照', tired > 0],
-    ['交易站订单', stock === null ? '—' : `${stock} / ${limit}`, knownTrading ? `${full} 个交易站已满 · 快照库存` : '数据未知', full > 0],
-    ['最近在线', snapshot?.last_online_at ? date(new Date(snapshot.last_online_at * 1000)) : '—', '森空岛记录时间', false]
+  for (const [title, value, hint, attention, symbol] of [
+    ['无人机', droneValue === null ? '—' : `${droneValue} / ${snapshot.drones.max}`, '按恢复时间推算', droneValue !== null && droneValue >= snapshot.drones.max, 'energy'],
+    ['疲劳干员', tired ?? '—', '森空岛快照', tired > 0, 'users'],
+    ['交易站订单', stock === null ? '—' : `${stock} / ${limit}`, knownTrading ? `${full} 个交易站已满 · 快照库存` : '数据未知', full > 0, 'box'],
+    ['最近在线', snapshot?.last_online_at ? date(new Date(snapshot.last_online_at * 1000)) : '—', '森空岛记录时间', false, 'clock']
   ]) {
     const item = node('div', undefined, 'base-item' + (attention ? ' attention' : ''));
-    item.append(node('span', title, 'label'), node('strong', String(value)), node('small', hint));
+    item.append(icon(symbol), node('span', title, 'label'), node('strong', String(value)), node('small', hint));
     base.append(item);
   }
   $('skland-age').textContent = r?.fetched_at ? `同步于 ${date(new Date(r.fetched_at * 1000))} · ${Math.max(0, Math.floor((now - r.fetched_at) / 60))} 分钟前` : '尚无成功同步的快照';
@@ -588,15 +627,18 @@ async function refresh() {
       idle: '空闲',
       unknown: '状态未知'
     } [activity.state] || '状态未知';
+    $('service-card').dataset.state = activity.state;
     $('service-detail').textContent = activity.units.length ? activity.units.map(s => `${s.unit} · ${s.SubState} · PID ${s.MainPID}`).join('；') : activity.state === 'idle' ? '当前没有正在执行的定时托管任务' : '部分服务状态无法读取';
     state.latest = status.latest_run;
     renderLatest(state.latest);
     $('latest-result').textContent = state.latest ? (labels[state.latest.status] || state.latest.status) : '暂无记录';
+    $('latest-card').dataset.state = state.latest?.status || 'unknown';
     $('latest-detail').textContent = state.latest ? `${modes[state.latest.mode]||'未知模式'} · ${date(state.latest.started_at)}${state.latest.finished_at?' · 耗时 '+duration(state.latest):''}` : '尚无托管运行记录';
     $('latest-view').hidden = !state.latest;
     const failures = status.service_failures;
     const incomplete = Object.values(status.services).some(s => !s.available);
     $('service-failures').textContent = failures.length ? `${failures.length} 个服务` : incomplete ? '状态未知' : '无';
+    $('failure-card').dataset.state = failures.length ? 'failed' : incomplete ? 'unknown' : 'success';
     $('failure-detail').replaceChildren();
     for (const s of failures) {
       $('failure-detail').append(node('div', `${s.unit} · ${s.Result} · 退出码 ${s.ExecMainStatus||'未知'}`), node('div', s.ExecMainExitTimestamp || '退出时间未知'));
