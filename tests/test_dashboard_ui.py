@@ -74,6 +74,12 @@ class DashboardBrowserTests(unittest.TestCase):
         path = route.request.url.split('/api/')[1]
         if path == 'maa-release':
             payload = getattr(self, 'release', dict(state='fresh', version='v6.18.0', fetched_at='2026-09-24T10:22:00Z'))
+        elif path == 'skland':
+            from maa_planner.skland_monitor import normalize_monitor
+            raw = json.loads((Path(__file__).parent / 'fixtures/skland/monitor.json').read_text())
+            payload = getattr(self, 'skland', dict(state='fresh', observed_at=2000000000,
+                fetched_at=2000000000, next_refresh_at=2000001200, refresh_interval_seconds=1200,
+                snapshot=normalize_monitor(raw, '123456789'), error=None))
         elif path == 'status':
             payload = dict(activity={'state': 'idle', 'units': []}, latest_run=self.run,
                            service_failures=[], services={}, runtime={'receipt': {'core': {'active_version': 'v6.17.0'}}},
@@ -237,6 +243,85 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertIn('证据无法核验', self.page.locator('#detail').inner_text())
         self.assertEqual(self.page.locator('.run-metrics').count(), 0)
         self.assertIn('无法核验', self.page.locator('#rows').inner_text())
+        self.assertEqual(self.errors, [])
+
+    def test_skland_second_ticks_recovery_boundaries_and_confirmation(self):
+        self.page.locator('#nav-overview').click()
+        self.page.clock.install()
+        self.page.reload()
+        self.page.evaluate('refreshSkland()')
+        self.assertEqual(self.page.locator('#sanity-value').text_content(), '80 / 135')
+        offset = float(self.page.locator('#sanity-ring').get_attribute('stroke-dashoffset'))
+        self.assertAlmostEqual(offset, (1 - 80 / 135) * 540.354, places=3)
+        self.assertEqual(self.page.locator('#sanity-next-time').inner_text(), '00:06:00')
+        self.assertEqual(self.page.locator('#sanity-gauge').get_attribute('data-state'), 'recovering')
+        self.assertIn('下一点 00:06:00', self.page.locator('#sanity-timer').inner_text())
+        self.assertEqual(self.page.locator('.slot-timer').nth(1).inner_text(), '00:01:00')
+        requests = []
+        self.page.on('request', lambda r: requests.append(r.url))
+        self.page.clock.run_for(2000)
+        self.assertEqual(self.page.locator('.slot-timer').nth(1).inner_text(), '00:00:59')
+        self.assertFalse(any('/api/skland' in url for url in requests))
+        self.page.evaluate('state.sklandAnchor -= 359000; renderSkland()')
+        self.assertEqual(self.page.locator('#sanity-value').text_content(), '81 / 135')
+        self.assertIn('待同步确认', self.page.locator('.recruit-slot').nth(1).inner_text())
+        self.assertIn('接口已确认', self.page.locator('.recruit-slot').nth(2).inner_text())
+        self.assertIn('招募已结束', self.page.locator('.recruit-slot').nth(2).inner_text())
+        self.assertIn('状态未知', self.page.locator('.recruit-slot').nth(3).inner_text())
+        self.assertEqual(self.page.locator('#base-status strong').first.inner_text(), '106 / 200')
+        self.assertEqual(self.page.evaluate('sanityAt(state.skland.snapshot.sanity, 2000019799)'), 134)
+        self.assertEqual(self.page.evaluate('sanityAt(state.skland.snapshot.sanity, 2000019800)'), 135)
+        self.assertEqual(self.page.evaluate('sanityAt({...state.skland.snapshot.sanity, current:180}, 2000020000)'), 180)
+        self.assertEqual(self.page.evaluate('sanityAt({...state.skland.snapshot.sanity, full_at:null}, 2000020000)'), 80)
+        self.page.evaluate('state.skland.snapshot.sanity.current=180; renderSkland()')
+        self.assertEqual(self.page.locator('#sanity-value').text_content(), '180 / 135')
+        self.assertEqual(float(self.page.locator('#sanity-ring').get_attribute('stroke-dashoffset')), 0)
+        self.assertEqual(self.page.locator('#sanity-gauge').get_attribute('data-state'), 'full')
+        self.assertEqual(self.errors, [])
+
+    def test_skland_old_snapshot_unknown_and_authentication_error(self):
+        self.page.locator('#nav-overview').click()
+        self.page.evaluate('refreshSkland()')
+        self.page.evaluate('state.sklandAnchor -= 1200000; renderSkland()')
+        self.assertIn('旧快照', self.page.locator('#skland-state').inner_text())
+        self.assertTrue(self.page.locator('#skland-message').is_visible())
+        self.skland = dict(state='unavailable', observed_at=2000000000, fetched_at=None,
+                           next_refresh_at=2000001200, refresh_interval_seconds=1200, snapshot=None,
+                           error={'category': 'authentication', 'message': './bin/zootd box-login <img src=x onerror=alert(1)>'})
+        self.page.evaluate('refreshSkland()')
+        self.assertEqual(self.page.locator('#sanity-value').text_content(), '— / —')
+        self.assertEqual(self.page.locator('#sanity-gauge').get_attribute('data-state'), 'unknown')
+        self.assertEqual(float(self.page.locator('#sanity-ring').get_attribute('stroke-dashoffset')), 540.354)
+        self.assertEqual(self.page.locator('#skland img').count(), 0)
+        self.assertIn('box-login', self.page.locator('#skland-message').inner_text())
+        self.assertEqual(self.page.locator('#recruit-summary').inner_text(), '数据未知')
+        self.page.route('**/api/skland', lambda route: route.abort())
+        self.page.evaluate('refreshSkland()')
+        self.assertIn('面板连接失败', self.page.locator('#skland-message').inner_text())
+        self.assertEqual(self.errors, [])
+
+    def test_skland_overview_layout_and_return_to_foreground(self):
+        self.page.locator('#nav-overview').click()
+        self.page.evaluate('refreshSkland()')
+        self.assertIn('2', self.page.locator('#base-status').inner_text())
+        for width in (360, 390, 768, 1280, 1500):
+            self.page.set_viewport_size({'width': width, 'height': 1000})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'))
+            self.assertTrue(self.page.locator('#sanity-value').is_visible())
+            self.assertEqual(self.page.locator('.recruit-slot:visible').count(), 4)
+            boxes = self.page.locator('.recruit-slot').evaluate_all('(nodes) => nodes.map(n => {const r=n.getBoundingClientRect(); return {left:r.left,right:r.right,top:r.top,bottom:r.bottom};})')
+            for i, a in enumerate(boxes):
+                for b in boxes[i + 1:]:
+                    self.assertTrue(a['right'] <= b['left'] or b['right'] <= a['left']
+                                    or a['bottom'] <= b['top'] or b['bottom'] <= a['top'])
+        self.page.emulate_media(reduced_motion='reduce')
+        self.assertEqual(self.page.locator('.recruit-slot.running .slot-dot').evaluate('(n) => getComputedStyle(n).animationName'), 'none')
+        self.assertEqual(self.page.locator('#sanity-ring').evaluate('(n) => getComputedStyle(n).transitionDuration'), '0s')
+        self.page.screenshot(path='/tmp/zootd-dashboard-desktop.png', full_page=True)
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.page.screenshot(path='/tmp/zootd-dashboard-mobile.png', full_page=True)
+        self.page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        self.page.wait_for_function('() => !state.sklandBusy')
         self.assertEqual(self.errors, [])
 
 

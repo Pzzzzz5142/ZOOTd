@@ -1,0 +1,24 @@
+{
+  "status": {
+    "uid": "123456789", "name": "SYNTHETIC-PRIVATE-NAME",
+    "lastOnlineTs": 1999999400,
+    "ap": {"current": 80, "max": 135, "lastApAddTime": 2000000000, "completeRecoveryTime": 2000019800}
+  },
+  "recruit": [
+    {"state": 0, "startTs": -1, "finishTs": -1},
+    {"state": 0, "startTs": 1999990000, "finishTs": 2000000060},
+    {"state": 1, "startTs": 1999990000, "finishTs": -1},
+    {"state": 99, "startTs": -1, "finishTs": -1}
+  ],
+  "building": {
+    "labor": {"value": 100, "maxValue": 200, "lastUpdateTime": 2000000000, "remainSecs": 6000},
+    "tiredChars": [{"charId": "private_one"}, {"charId": "private_two"}],
+    "tradings": [
+      {"slotId": "private_slot", "stock": [{"private": "order1"}, {"private": "order2"}], "stockLimit": 2},
+      {"stock": [], "stockLimit": 3}
+    ],
+    "private": "SYNTHETIC-PRIVATE-BUILDING"
+  },
+  "chars": [{"charId": "private_operator"}],
+  "cred": "SYNTHETIC-SECRET-MUST-NOT-APPEAR"
+}

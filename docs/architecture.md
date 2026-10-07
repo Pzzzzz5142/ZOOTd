@@ -88,6 +88,14 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 05:30 `zootd-runtime-update.timer` 每天同时检查 stable Core 与官方 MaaResource `main`，所以不会因为资源暂时要求更高 Core 而永久钉死旧版。`./bin/zootd install-core`、`update` 和 `runtime-update` 都进入同一个事务式更新器；`resource-update` 只是旧命令的兼容别名。手工执行 `zootd-planner sync` 也只调用这个入口；正式游戏 service 已持有全局锁，所以仅刷新 HTTP 规划来源，不会在任务中途改 runtime。状态证据位于 `var/state/runtime/maa-resource.json`。
 
+## 森空岛监控边界
+
+`maa_planner/skland_monitor.py` 由 dashboard 服务持有，复用 `skland.py` 的只读路由、签名与官服角色选择。后台每 20 分钟执行认证、绑定、玩家信息查询；HTTP `/api/skland` 返回内存中的规范快照，读取锁不覆盖网络请求，慢请求不阻塞本地运行状态或访客读取。缺少凭据不创建目录；所有错误转为固定中文消息，不泄露原始异常或远端响应。账号不一致、字段类型错误、范围异常均拒绝更新；失败保留旧快照与原获取时间，使用 stale/unavailable 明确区分，不以缓存伪装本次成功。重启不恢复旧快照。
+
+字段仅包括理智数量/上限/恢复时间、公招序号/原始状态/起止时间、无人机恢复参数、疲劳干员数量、交易站库存/上限和最近在线时间；UID 仅在服务端验证，不进入响应。字段协议参考开源客户端的 [Status/AP](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/schemas/arknights/models/status.py)、[Recruit](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/schemas/arknights/models/recruit.py)、[Building](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/schemas/arknights/models/building.py) 和 [Labor](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/schemas/arknights/models/buildings/base.py)。它不是官方稳定协议承诺；可选字段缺失保留 null，不把缺失数据解释为无待处理事项。
+
+`web/app.js` 以 API 的服务端时间和浏览器单调时间计算时间差，每秒重算自然恢复与倒计时；每 10 秒读取缓存，重新回到前台时校时。理智按回满时间倒推 360 秒一个恢复周期，保留超上限数量；无人机依据 lastUpdateTime/remainSecs 线性推算并封顶。公招原始状态和推算时间同时展示；状态 1 按客户端 [ArkCard.recruit_finished](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/schemas/arknights/card.py) 解释为招募结束，其余状态需有正数起止时间才能计算倒计时。0/-1 的无效时间规范为 null，未知状态不猜成未开放或待聘用，计时结束也不作为实际完成证据。游戏区域与 supervisor 事件链相互独立，不授权执行或判断托管成功，也不写入 Box、运行审计、runtime receipt 或能力账本。
+
 ## 实验性 Operator Box 边界
 
 独立 `box-login` / `box-sync` 入口位于 `maa_planner/box_cli.py`；Skland 的认证、签名、官服绑定、字段校验和错误分类集中在 `skland.py`，下游只消费 `operator_box.py` 的 `BoxProvider → OperatorBox`。凭据和原始玩家响应不进入 HTTP 公共缓存、普通日志或受管任务审计；只有最小规范快照落入本地状态目录。失败不会写出空 Box 代替错误。

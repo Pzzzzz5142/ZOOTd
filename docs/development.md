@@ -13,7 +13,7 @@
 - `bin/zootd-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
 - `requirements.txt` / `.venv/`：官方 Python Codex SDK 的项目本地运行环境；不固定 SDK 版本，随最新稳定版升级，SDK 自动安装配套 Codex runtime。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
-- `maa_planner/dashboard.py` / `web/`：默认监听所有 IPv4 接口的标准库 HTTP 服务与无构建步骤的中文 Web 面板；`tests/test_dashboard.py` 验证历史证据、分页及只读 HTTP 边界。
+- `maa_planner/dashboard.py` / `skland_monitor.py` / `web/`：默认监听所有 IPv4 接口的标准库 HTTP 服务与无构建步骤的中文 Web 面板；森空岛后台只读同步独立于运行证据。`tests/test_dashboard.py` 验证历史证据、分页及只读 HTTP 边界；`tests/test_skland_monitor.py` 验证监控字段最小化、周期、并发、旧数据与错误边界。
 - `maa_planner/operator_box.py` / `skland.py` / `box_cli.py`：独立 experimental Box 模型、森空岛协议与本机交互登录；`tests/test_skland.py` 使用合成 fixture 离线验证，不发送短信或调用真实账号。进度见 [Copilot 路线图](copilot/README.md)。
 - `maa_planner/prts.py` / `prts_cli.py`：独立 experimental PRTS adapter、关卡映射和查询/获取入口；`tests/test_prts.py` 使用合成 fixture 验证，不访问真实 API。
 - `maa_planner/copilot_local.py`：显式本地完整作业来源，共用 Copilot 的匹配、导航和证明；`tests/test_copilot_local.py` 验证文件字节快照、变化拒绝、身份与参数边界，不访问设备或 PRTS。
@@ -51,7 +51,7 @@
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-前端交互另有可选浏览器测试 `tests/test_dashboard_ui.py`，使用合成 API 响应，覆盖阶段计数、筛选、自动刷新、恢复时间线、缺失/异常记录、文本转义、手机布局及侧栏导航/浏览器前进后退/详情直达。默认环境未安装 Playwright 时跳过这组测试；需要验证前端时，可在项目外的临时环境安装并执行，不增加运行时依赖：
+前端交互另有可选浏览器测试 `tests/test_dashboard_ui.py`，使用合成 API 响应，覆盖阶段计数、筛选、自动刷新、恢复时间线、缺失/异常记录、文本转义、手机布局及侧栏导航/浏览器前进后退/详情直达，以及森空岛的计时、超上限理智、缺失/旧快照与错误提示。默认环境未安装 Playwright 时跳过这组测试；需要验证前端时，可在项目外的临时环境安装并执行，不增加运行时依赖：
 
 ```bash
 python3 -m venv /tmp/zootd-ui-check

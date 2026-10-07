@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
 from .supervisor import ACCEPTED_RESULTS, RUN_MODES, SupervisorError, load_run_events, runtime_snapshot
+from .skland_monitor import SklandMonitor
 
 RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
 
@@ -174,6 +175,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if url.path == "/api/maa-release":
                 data = release_cache.read()
+            elif url.path == "/api/skland":
+                data = self.server.skland_monitor.read()
             elif url.path == "/api/status":
                 data = overview(self.root)
             elif url.path == "/api/runs":
@@ -202,16 +205,20 @@ def main():
     parser.add_argument("--project-root", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--host", default="0.0.0.0", help="IPv4 listen address (default: all interfaces)")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--skland-uid", help="Choose one bound Official account for read-only monitoring")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
     server = ThreadingHTTPServer((args.host, args.port), partial(Handler, root=args.project_root.resolve()))
+    server.skland_monitor = SklandMonitor(args.project_root.resolve(), args.skland_uid)
+    server.skland_monitor.start()
     print(f"ZOOTd 面板：http://{args.host}:{args.port} （Ctrl+C 停止）", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        server.skland_monitor.close()
         server.server_close()
 
 
