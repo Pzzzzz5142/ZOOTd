@@ -23,7 +23,7 @@ class CodexRecoveryError(RuntimeError):
 
 MAX_INPUT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 128 * 1024
-DEFAULT_TIMEOUT_SECONDS = 6 * 60 * 60
+DEFAULT_TIMEOUT_SECONDS = 9 * 60 * 60
 MAX_TIMEOUT_SECONDS = 9 * 60 * 60
 _RUN_ID_RE = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
 _ATTEMPT_ID_RE = re.compile(r"[0-9a-f]{32}")

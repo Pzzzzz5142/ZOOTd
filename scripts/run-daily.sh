@@ -894,10 +894,6 @@ scan_depot_inventory_once() {
 
     depot_evidence_log="${log_file}"
     supervisor_active_evidence="${log_file}"
-    if [[ "${evening_slot}" == true ]]; then
-        info "evening slot only reuses the morning inventory; Depot scan is disabled"
-        return 1
-    fi
     if [[ "${depot_scan_attempted}" == true ]]; then
         info "refusing a second Depot scan in the same launcher run"
         return 1
@@ -1605,9 +1601,7 @@ prepare_daily_drone_policy() {
         return 0
     fi
     if [[ "${evening_slot}" == true ]]; then
-        depot_scan_outcome=morning-snapshot-unavailable
-        info "morning inventory is unavailable; evening slot will not scan Depot"
-        return 0
+        info "evening inventory is unavailable; taking one fresh Depot snapshot before daily"
     fi
 
     stamp="$(date '+%Y%m%d-%H%M%S-%N')"

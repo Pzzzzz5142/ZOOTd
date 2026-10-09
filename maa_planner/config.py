@@ -330,7 +330,7 @@ def load_config(path: Path) -> PlannerConfig:
     ):
         raise ConfigError("supervisor diagnostic/recovery values have invalid types")
     recovery_timeout = _integer(
-        supervisor_raw, "recovery_timeout_seconds", 21600, minimum=1
+        supervisor_raw, "recovery_timeout_seconds", 32400, minimum=1
     )
     if recovery_timeout > 32400:
         raise ConfigError("supervisor.recovery_timeout_seconds must be <= 32400")

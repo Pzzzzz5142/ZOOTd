@@ -22,7 +22,7 @@ maa_activity_seconds = 1800
 yituliu_stage_seconds = 86400
 yituliu_matrix_seconds = 259200
 yituliu_value_seconds = 86400
-# The 06:00 slot scans once per game day; 18:00 reuses that morning's snapshot.
+# Both slots reuse a valid snapshot; a missing/invalid one gets one scan per run.
 # The launcher also checks the 04:00 game-day boundary before cache reuse.
 inventory_seconds = 86400
 
@@ -74,7 +74,9 @@ command = ["/home/pzzzzz/Projects/zootd/bin/zootd-codex-supervisor"]
 timeout_seconds = 90
 recovery_enabled = true
 recovery_command = ["/home/pzzzzz/Projects/zootd/bin/zootd-codex-recovery"]
-recovery_timeout_seconds = 21600
+# Allow waiting through morning maintenance and then completing a full retry.
+# Scheduled recovery still shares the outer service's 590-minute total limit.
+recovery_timeout_seconds = 32400
 
 # Optional per-item overrides for the dynamic target of 200. Missing observed
 # items are never interpreted as zero.

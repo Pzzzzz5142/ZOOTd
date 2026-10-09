@@ -318,7 +318,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertTrue(farming_config["supervisor"]["required_on_exception"])
         self.assertTrue(farming_config["supervisor"]["recovery_enabled"])
         self.assertEqual(
-            farming_config["supervisor"]["recovery_timeout_seconds"], 21600
+            farming_config["supervisor"]["recovery_timeout_seconds"], 32400
         )
         self.assertIn("MAA_RECOVERY_ACTIVE", launcher)
         self.assertIn(" supervisor-recover-run --run-id ", launcher)
@@ -634,9 +634,10 @@ class HighLevelRequirementTests(unittest.TestCase):
             launcher.index("\nensure_farming_inventory_snapshot() {")
         ]
         cases = (
-            # Evening cache failures and unavailable planner need no scan.
-            (True, "", "", "ready", True, "PureGold:false:morning-snapshot-unavailable:0"),
-            (True, "", "", "ready", False, "PureGold:false:morning-snapshot-unavailable:0"),
+            (True, "", "Money", "ready", True, "Money:true:ready:1"),
+            (True, "", "", "scan-failed", True, "PureGold:false:scan-failed:1"),
+            (True, "", "", "snapshot-invalid", True, "PureGold:false:snapshot-invalid:1"),
+            (True, "", "", "ready", False, "PureGold:true:drone-target-unavailable:1"),
             (False, "", "", "scan-failed", True, "PureGold:false:scan-failed:1"),
             (False, "", "", "snapshot-invalid", True, "PureGold:false:snapshot-invalid:1"),
             (False, "", "", "ready", True, "PureGold:true:drone-target-unavailable:1"),
@@ -680,7 +681,7 @@ printf '%s:%s:%s:%s' "$drone_mode" "$inventory_snapshot_ready" "$depot_scan_outc
                 )
                 self.assertEqual(result.stdout, expected)
 
-    def test_scheduled_inventory_reuses_cache_without_night_scans(self) -> None:
+    def test_scheduled_inventory_reuses_cache_or_scans_once_before_daily(self) -> None:
         launcher = (ROOT / "scripts/run-daily.sh").read_text()
         functions = launcher[
             launcher.index("prepare_daily_drone_policy() {"):
@@ -690,12 +691,16 @@ printf '%s:%s:%s:%s' "$drone_mode" "$inventory_snapshot_ready" "$depot_scan_outc
             launcher.index("scan_depot_inventory_once() {"):
             launcher.index("proxy_preflight_log_is_complete() {")
         ]
-        for pre_reset, cache_valid, expected_scans, expected_outcome in (
-            (True, True, 0, "reused"), (False, True, 0, "reused"),
-            (True, False, 0, "morning-snapshot-unavailable"),
-            (False, False, 1, "ready"),
+        for evening, cache_valid, scan_result, import_result, expected_scans, expected_outcome in (
+            (True, True, 0, 0, 0, "reused"), (False, True, 0, 0, 0, "reused"),
+            (True, False, 0, 0, 1, "ready"), (False, False, 0, 0, 1, "ready"),
+            (True, False, 1, 0, 1, "scan-failed"),
+            (False, False, 1, 0, 1, "scan-failed"),
+            (True, False, 0, 1, 1, "snapshot-invalid"),
+            (False, False, 0, 1, 1, "snapshot-invalid"),
         ):
-            with self.subTest(pre_reset=pre_reset, cache_valid=cache_valid):
+            with self.subTest(evening=evening, cache_valid=cache_valid,
+                              scan_result=scan_result, import_result=import_result):
                 harness = """
 set -eu
 project_root=/unused
@@ -710,18 +715,24 @@ scans=0
 info() { :; }
 select_daily_drone_policy_from_snapshot() { [[ "$CACHE_VALID" == true || "$scans" -gt 0 ]]; }
 run_farming_soft_with_timeout() {
-    if [[ "$2" == fake-maa ]]; then scans=$((scans + 1)); fi
-    return 0
+    if [[ "$2" == fake-maa ]]; then
+        scans=$((scans + 1))
+        return "$SCAN_RESULT"
+    fi
+    return "$IMPORT_RESULT"
 }
 """ + scan + functions + """
 prepare_daily_drone_policy
 ensure_farming_inventory_snapshot /unused/fallback.log || true
+ensure_farming_inventory_snapshot /unused/repeated.log || true
 printf '%s:%s' "$scans" "$depot_scan_outcome"
 """
                 result = subprocess.run(
                     ["bash", "-c", harness],
-                    env={**os.environ, "evening_slot": str(pre_reset).lower(),
-                         "CACHE_VALID": str(cache_valid).lower()},
+                    env={**os.environ, "evening_slot": str(evening).lower(),
+                         "CACHE_VALID": str(cache_valid).lower(),
+                         "SCAN_RESULT": str(scan_result), "IMPORT_RESULT": str(import_result),
+                         "MAA_RECOVERY_ACTIVE": "true"},
                     capture_output=True, text=True, check=True, timeout=10,
                 )
                 self.assertEqual(result.stdout, f"{expected_scans}:{expected_outcome}")

@@ -1,6 +1,6 @@
 # ZOOTd unattended recovery scope
 
-Version: 12
+Version: 13
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -53,6 +53,12 @@ There are only three valid terminal states:
    DNS errors, timeouts, transient upstream failures, and a first unsuccessful
    repair attempt are not terminal failures; continue investigating and retry.
 
+For `scope-blocked`, always use `classification=scope` and a concrete enumerated
+`scope_blocker`; describe the underlying game/network cause in `summary`.
+If the controller resumes this thread with `adapter_attempt.prior_errors`,
+correct the rejected report and continue the same incident. Preserve its
+attempt identity and budget; a rejected report does not start a new window.
+
 The agent must run the retry command supplied in the incident evidence. It must
 preserve `MAA_RECOVERY_ACTIVE=true` together with the supplied
 `MAA_RECOVERY_PARENT_RUN_ID`, `MAA_RECOVERY_ATTEMPT_ID`, and
@@ -68,12 +74,20 @@ There is no old pre-reset launch-minute restriction or 03:25 replay/farming
 cutoff. Return `scope-blocked` when the outer service's remaining window cannot
 produce a complete successful run.
 
+The configured recovery budget defaults to nine hours. The incident's
+`recovery_budget.deadline_at` and `remaining_seconds` bound this attempt; the
+outer service may expire sooner. Check the hosting unit's remaining time too,
+and reserve time for the complete launcher and cleanup after any wait.
+
 The 06:00 slot obtains one valid inventory snapshot per game day (04:00 reset,
 Asia/Shanghai). Replays reuse a complete, account-matching snapshot from that
-game day within the 24-hour freshness limit. The 18:00 slot and its recovery
-replays only reuse the same morning's snapshot; never run Depot to replace a missing
-or invalid snapshot at night. Do not alter snapshot timestamps or fabricate
-inventory. Missing valid inventory remains a failed phase, not a success proof.
+game day within the 24-hour freshness limit. The 18:00 slot and all recovery
+replays also prefer that valid snapshot. If it is missing, invalid, stale,
+account-mismatched, or lacks Pure Gold, the supplied launcher takes at most one
+fresh Depot scan before daily, including at night, and reuses it for farming.
+Use that managed path rather than scanning separately or editing inventory.
+Do not alter snapshot timestamps or fabricate inventory. A failed replacement
+scan remains a failed phase, not a success proof.
 
 ## In scope
 
@@ -192,6 +206,30 @@ or unverifiable PR is prominently audited but does not erase a separately
 proved operational recovery.
 
 ## Policy-resolved game conditions
+
+### Server maintenance and reopening
+
+An explicit server-not-open screen or announced temporary maintenance is a
+transient condition, not `stage-closed` or `hard-policy`. That stage blocker
+describes unavailable gameplay candidates, not a server-wide maintenance wait.
+Do not end recovery just because the same server-closed response appears twice.
+
+1. Verify fresh client screenshots/logs and the maintenance notice. Record its
+   expected reopening time and the remaining recovery/service budget.
+2. Complete any required official client update while preserving app data.
+3. When the budget allows waiting and a complete run afterward, wait through
+   the maintenance window. Poll the client with bounded backoff (up to five
+   minutes between checks); avoid repeated full launchers while closure is
+   explicit. Recheck near the announced end and continue if maintenance extends
+   while sufficient time remains. Keep the same recovery thread and identity.
+4. Once reopening is observed, run the supplied full launcher, including a
+   real Depot scan when its current-game-day snapshot is missing. Inspect any
+   fresh failure and continue recovery.
+5. Only when the recovery or outer service window cannot fit the remaining
+   wait plus a full run and cleanup may time exhaustion end this wait: report
+   `scope-blocked`, `classification=scope`, and
+   `scope_blocker=time-window-expired`, with the observed deadline evidence.
+   A separate login/consent or other hard boundary still uses its own blocker.
 
 ### Saved proxy failures and deterministic fallback
 

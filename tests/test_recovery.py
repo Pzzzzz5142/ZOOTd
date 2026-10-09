@@ -11,8 +11,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from maa_planner.codex_recovery import CodexRecoveryError, run_codex_recovery
+from maa_planner.codex_recovery import (
+    CodexRecoveryError,
+    DEFAULT_TIMEOUT_SECONDS,
+    MAX_TIMEOUT_SECONDS,
+    run_codex_recovery,
+)
 from maa_planner.codex_sdk import CodexSDKRequest, run_sdk_request
+from maa_planner.config import load_config
 from maa_planner.recovery import recover_failed_run, validate_recovery_report
 from maa_planner.supervisor import (
     PHASES,
@@ -216,7 +222,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 12,
+                    "version": 13,
                 },
             }
             seen: dict[str, object] = {}
@@ -697,6 +703,127 @@ class RecoveryTests(unittest.TestCase):
             self.assertIn("Bad Request", attempts[1]["prior_errors"][0])
             final = load_run_events(repo, failed_run_id)[-1]["payload"]
             self.assertEqual(len(final["agent"]["attempt_errors"]), 1)
+
+    def test_invalid_scope_classification_resumes_with_same_deadline_and_full_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            failed_run_id = self._failed_full_run(repo)
+            original_events = load_run_events(repo, failed_run_id)
+            attempts = []
+            timeouts = []
+
+            def adapter_runner(argv, **kwargs):
+                evidence = json.loads(kwargs["input"])
+                attempts.append(evidence)
+                timeouts.append(int(kwargs["env"]["MAA_CODEX_RECOVERY_TIMEOUT_SECONDS"]))
+                verification = {
+                    "command": evidence["retry_command"],
+                    "exit_status": 1,
+                    "successful_run_id": None,
+                    "audit_path": None,
+                }
+                output = {
+                    "schema_version": 2,
+                    "failed_run_id": failed_run_id,
+                    "status": "scope-blocked",
+                    "classification": "game-state",
+                    "summary": "The server is temporarily closed.",
+                    "actions_taken": ["Inspected the maintenance notice."],
+                    "verification": verification,
+                    "code_repair": self._no_code_repair(
+                        evidence["controller_repository"]["head"]
+                    ),
+                    "scope_blocker": "stage-closed",
+                }
+                if len(attempts) == 2:
+                    successful_run_id = self._successful_full_run(
+                        repo, now=datetime.now(UTC) + timedelta(seconds=1),
+                        recovery_evidence=evidence,
+                    )
+                    events = load_run_events(repo, successful_run_id)
+                    verification.update(
+                        exit_status=0, successful_run_id=successful_run_id,
+                        audit_path=(
+                            f"var/state/supervisor/runs/{successful_run_id}/events/"
+                            f"{len(events) - 1:04d}-run-finished.json"
+                        ),
+                    )
+                    output.update(status="recovered", classification="game-client",
+                                  scope_blocker="none", summary="Reopened; the full retry passed.")
+                return subprocess.CompletedProcess(argv, 0, json.dumps(output).encode(), b"")
+
+            with patch("maa_planner.recovery.time.monotonic", side_effect=[100, 101, 102, 111]):
+                outcome = recover_failed_run(
+                    repo, failed_run_id, slot="morning", command=("fake-recovery",),
+                    timeout_seconds=60, runner=adapter_runner,
+                )
+            self.assertEqual(outcome.status, "recovered")
+            self.assertEqual(timeouts, [59, 49])
+            self.assertEqual(attempts[0]["recovery_attempt"], attempts[1]["recovery_attempt"])
+            self.assertEqual(attempts[0]["recovery_budget"]["deadline_at"],
+                             attempts[1]["recovery_budget"]["deadline_at"])
+            self.assertEqual([a["recovery_budget"]["remaining_seconds"] for a in attempts],
+                             timeouts)
+            self.assertEqual(attempts[0]["adapter_attempt"]["prior_errors"], [])
+            self.assertIn("classification=scope",
+                          attempts[1]["adapter_attempt"]["prior_errors"][0])
+            events = load_run_events(repo, failed_run_id)
+            self.assertEqual(events[:-2], original_events)
+            self.assertEqual(events[-2]["payload"]["recovery_budget"]["deadline_at"],
+                             attempts[0]["recovery_budget"]["deadline_at"])
+            self.assertEqual(events[-1]["payload"]["controller_verification"]["status"],
+                             "success")
+            self.assertEqual(len(events[-1]["payload"]["agent"]["attempt_errors"]), 1)
+
+    def test_repeated_invalid_reports_exhaust_two_attempts_without_success(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            failed_run_id = self._failed_full_run(repo)
+            calls = []
+
+            def invalid_runner(argv, **kwargs):
+                calls.append(json.loads(kwargs["input"]))
+                return subprocess.CompletedProcess(argv, 0, b'{"status":"recovered"}', b"")
+
+            outcome = recover_failed_run(
+                repo, failed_run_id, slot="manual", command=("fake-recovery",),
+                timeout_seconds=60, runner=invalid_runner,
+            )
+            self.assertEqual(outcome.status, "failed")
+            self.assertIsNone(outcome.successful_run_id)
+            self.assertEqual(len(calls), 2)
+            self.assertIn("object shape", calls[1]["adapter_attempt"]["prior_errors"][0])
+            final = load_run_events(repo, failed_run_id)[-1]["payload"]
+            self.assertEqual(final["controller_verification"]["status"], "not-run")
+            self.assertEqual(len(final["agent"]["attempt_errors"]), 2)
+
+    def test_report_retry_stops_when_remaining_budget_is_too_short(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            failed_run_id = self._failed_full_run(repo)
+            calls = []
+
+            def invalid_runner(argv, **kwargs):
+                calls.append(kwargs)
+                return subprocess.CompletedProcess(argv, 0, b"{}", b"")
+
+            with patch("maa_planner.recovery.time.monotonic", side_effect=[100, 101, 135]):
+                outcome = recover_failed_run(
+                    repo, failed_run_id, slot="manual", command=("fake-recovery",),
+                    timeout_seconds=60, runner=invalid_runner,
+                )
+            self.assertEqual(outcome.status, "failed")
+            self.assertEqual(len(calls), 1)
+
+    def test_default_budget_can_wait_for_noon_maintenance_and_complete_a_run(self) -> None:
+        configured_timeout = load_config(ROOT / "config/farming.toml").supervisor.recovery_timeout_seconds
+        self.assertEqual(DEFAULT_TIMEOUT_SECONDS, configured_timeout)
+        self.assertLessEqual(DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS)
+        started = START.replace(hour=22) + timedelta(minutes=10)
+        maintenance_end = started + timedelta(hours=5, minutes=50)
+        full_run_and_cleanup = timedelta(minutes=30)
+        self.assertLess(maintenance_end + full_run_and_cleanup,
+                        started + timedelta(seconds=DEFAULT_TIMEOUT_SECONDS))
 
     def test_historical_success_cannot_masquerade_as_this_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
