@@ -290,6 +290,8 @@ Commands:
                         Experimental: retrieve one full PRTS copilot (no game launch)
   navigate STAGE [--plan] [--refresh]
                         Navigate to the stage detail panel without starting battle
+  battle-solver fetch|analyze|compile|validate [options]
+                        Experimental: public battle graph and local Copilot generation
   copilot-run STAGE [--raid] [--profile no-support|allow-support]
                         Experimental: defaults to one battle; no medicine or stones
                         Medicine: --use-sanity-potion explicitly allows medicines only
@@ -337,6 +339,11 @@ case "${command_name}" in
         shift
         export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
         exec python3 -m maa_planner.navigation_cli --project-root "${project_root}" "$@"
+        ;;
+    battle-solver)
+        shift
+        export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec python3 -m maa_planner.battle_cli --project-root "${project_root}" "$@"
         ;;
     copilot-run)
         shift
