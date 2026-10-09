@@ -243,7 +243,24 @@ class NavigationCatalog(StageCatalog):
 
 def load_navigation(root: Path, *, refresh=False, raid=False):
     tables, evidence = load_tables(root, refresh=refresh)
-    resource = root / 'var/data/resource'
-    installed = decode((resource / 'stages.json').read_bytes())
-    tiles = decode((resource / 'Arknights-Tile-Pos/overview.json').read_bytes())
+    # Match the isolated worker's AsstLoadResource order. New event maps may
+    # exist only in the promoted MaaResource overlay, while stable Core's
+    # bundled overview still predates the event.
+    resources = [root / directory / 'resource' for directory in
+                 ('var/data', 'var/data/MaaResource', 'var/data/cache')]
+    selected = {}
+    for relative in ('stages.json', 'Arknights-Tile-Pos/overview.json'):
+        for resource in resources:
+            path = resource / relative
+            if path.is_file():
+                selected[relative] = path
+    require(len(selected) == 2, 'Installed stage or tile overview is missing.')
+    raw = {name: path.read_bytes() for name, path in selected.items()}
+    installed = decode(raw['stages.json'])
+    require(isinstance(installed, list) and all(isinstance(row, dict) for row in installed),
+            'Invalid installed stages.')
+    tiles = decode(raw['Arknights-Tile-Pos/overview.json'])
+    evidence = {**evidence, 'installed_resources': {
+        name: {'path': str(selected[name]), 'sha256': sha256_bytes(content)}
+        for name, content in raw.items()}}
     return NavigationCatalog(tables, installed, tiles, evidence=evidence, raid=raid)

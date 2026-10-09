@@ -10,7 +10,7 @@ from tests.navigation_samples import sample_route
 
 from maa_planner.copilot_core import map_recognized
 from maa_planner.copilot_navigation import navigation_tasks
-from maa_planner.navigation_catalog import NavigationCatalog, load_tables, MAX_AGE, activity_labels, title_text
+from maa_planner.navigation_catalog import NavigationCatalog, load_navigation, load_tables, MAX_AGE, activity_labels, title_text
 from maa_planner.prts import PrtsError
 from maa_planner.navigation_cli import navigate, navigation_complete
 
@@ -61,6 +61,33 @@ def pipeline_catalog(root, *, raid=False):
 
 
 class NavigationTests(unittest.TestCase):
+    def test_promoted_overlays_supply_new_event_maps_in_worker_load_order(self):
+        tables, installed, tiles = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / 'var/data/resource'
+            overlay = root / 'var/data/MaaResource/resource'
+            cache = root / 'var/data/cache/resource'
+            for resource in (base, overlay, cache):
+                (resource / 'Arknights-Tile-Pos').mkdir(parents=True)
+            (base / 'stages.json').write_text(json.dumps(installed))
+            old_tiles = {key: row for key, row in tiles.items() if key != 'future_03'}
+            (base / 'Arknights-Tile-Pos/overview.json').write_text(json.dumps(old_tiles))
+            (overlay / 'Arknights-Tile-Pos/overview.json').write_text(json.dumps(tiles))
+            with patch('maa_planner.navigation_catalog.load_tables', return_value=(tables, {'sha256': 'fixture'})), \
+                 patch('maa_planner.navigation_catalog.time.time', return_value=150):
+                catalog = load_navigation(root)
+                self.assertTrue(catalog.route('XX-3', require_tiles=True)['tile_available'])
+                self.assertEqual(catalog.evidence['installed_resources']['Arknights-Tile-Pos/overview.json']['path'],
+                                 str(overlay / 'Arknights-Tile-Pos/overview.json'))
+                # A later hot-cache overview supersedes the earlier layer.
+                (cache / 'Arknights-Tile-Pos/overview.json').write_text(json.dumps(old_tiles))
+                with self.assertRaisesRegex(PrtsError, 'battle map'):
+                    load_navigation(root).route('XX-3', require_tiles=True)
+                (cache / 'Arknights-Tile-Pos/overview.json').write_text('[]')
+                with self.assertRaisesRegex(PrtsError, 'tile overview'):
+                    load_navigation(root)
+
     def catalog(self, **kwargs):
         return NavigationCatalog(*fixture(), now=150, **kwargs)
 
