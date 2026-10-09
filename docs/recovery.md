@@ -51,6 +51,8 @@ daily 的 `GameOffline` 先由启动器进行快速中断和一次确定性会�
 
 手动运行的终端挂断（SIGHUP）也会记录失败并进入整轮恢复；后续输出写入 `var/state/host/<run-id>-hangup.log`，cleanup 和恢复子进程忽略重复 HUP，不再依赖已断开的终端输入输出。只有启动器实际收到 SIGINT（如 Ctrl-C）或 SIGTERM 时才按显式停止处理，不自动重启任务，以保留 systemd 停止和槽位交接的语义。普通命令返回 129/130/143 本身不代表操作者取消，不能据此跳过恢复。嵌套恢复仍由已有恢复线程接管，不递归调用代理。
 
+服务器临时维护属于可等待的恢复条件，不能以 `stage-closed` 提前结束；维护窗口、轮询、剩余预算与终态规则见[恢复契约](llm-recovery-scope.md#server-maintenance-and-reopening)。
+
 没有代理作战或关卡未开放属于局部游戏状态：自动模式应跳过该候选并尝试下一候选/常驻回退；用户明确指定的唯一关卡不可用，或所有合规候选/回退都不可用时，才允许以 `proxy-unavailable` 或 `stage-closed` scope blocker 结束。游戏内资源下载和官服 APK 更新都属于恢复范围；若商店要求人工账号操作，代理改用 `https://ak.hypergryph.com/downloads/android_lastest` 动态解析当期官服 APK，并通过 ADB replacement install 保留数据。
 
 两个只读 adapter 的真实连通性仍用合成探针验证：
@@ -64,7 +66,7 @@ jq . var/state/supervisor/latest-probe.json
 
 两个探针都只发送合成故障，不读取真实游戏状态、不启动 Waydroid/MAA，也不修改基建或任何游戏数据；结果原子写入最近状态并按时间归档。恢复 adapter 不提供会触碰真实游戏的合成探针；可用 `./bin/zootd recover RUN_ID morning` 显式恢复一个尚未尝试恢复的失败 full run。`doctor` 只启动 SDK 自带的本地 runtime 并检查 SDK 版本与现有登录态，不自动发起模型请求。三个 adapter 固定使用项目 `.venv`，不再解析或执行外部 `codex` CLI。
 
-三个 adapter 都通过官方 Python SDK 直接提交显式文本输入和 JSON Schema 结构化输出。顾问/分类器继续使用 ephemeral thread、空临时工作区、`Sandbox.read_only`，并关闭执行、联网、MCP、plugin 和 subagent 能力；恢复代理则使用可 resume 的持久 thread，在项目根目录附加本地图片，使用 `Sandbox.full_access` 与 `ApprovalMode.deny_all`，但关闭无关 connector/plugin/subagent。SDK 调用使用隔离后的最小环境，并由异步超时负责取消和关闭 runtime。默认恢复预算为六小时，仍受 service 的十小时总预算约束。返回后 Python 二次验证所有字段；超时、非法输出、虚构成功或未声明的 Git 工作树变化均按失败关闭。这里的 full access 是 operator 明确选择，实际停止条件来自本仓库 scope，而不是 Codex sandbox。[Codex SDK 官方说明](https://learn.chatgpt.com/docs/codex-sdk)
+三个 adapter 都通过官方 Python SDK 直接提交显式文本输入和 JSON Schema 结构化输出。顾问/分类器继续使用 ephemeral thread、空临时工作区、`Sandbox.read_only`，并关闭执行、联网、MCP、plugin 和 subagent 能力；恢复代理则使用可 resume 的持久 thread，在项目根目录附加本地图片，使用 `Sandbox.full_access` 与 `ApprovalMode.deny_all`，但关闭无关 connector/plugin/subagent。SDK 调用使用隔离后的最小环境，并由异步超时负责取消和关闭 runtime。默认恢复预算为九小时，仍共享外层 service 的 590 分钟运行总预算和 4 分钟清理时间。controller 将本次预算截止时间与剩余秒数附在事故输入中；运输错误和报告字段校验错误最多续跑同一线程一次，反馈具体错误并保留原 attempt 身份、截止时间及剩余预算。两次仍无合法报告时失败关闭；虚构成功或未声明的 Git 工作树变化也不能通过验收。这里的 full access 是 operator 明确选择，实际停止条件来自本仓库 scope，而不是 Codex sandbox。[Codex SDK 官方说明](https://learn.chatgpt.com/docs/codex-sdk)
 
 ### Codex SDK 定期更新
 

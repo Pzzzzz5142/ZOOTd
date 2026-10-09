@@ -7,7 +7,7 @@ import shlex
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from secrets import token_hex
 from typing import Any, Callable, Mapping, Sequence
@@ -268,9 +268,10 @@ def validate_recovery_report(value: object, *, failed_run_id: str) -> dict[str, 
         ):
             raise RecoveryError("a recovered report lacks complete success evidence")
     elif status == "scope-blocked":
+        if classification != "scope":
+            raise RecoveryError("a scope-blocked report must use classification=scope")
         if (
             blocker in {"none", "unknown"}
-            or classification != "scope"
             or successful_run_id is not None
         ):
             raise RecoveryError("a scope-blocked report lacks a concrete blocker")
@@ -764,7 +765,7 @@ def _incident_evidence(
         "scope": {
             "path": "docs/llm-recovery-scope.md",
             "sha256": sha256_bytes(scope_bytes),
-            "version": 12,
+            "version": 13,
         },
         "controller_repository": controller_repository,
         "repair_policy": {
@@ -1250,6 +1251,11 @@ def recover_failed_run(
     except (OSError, SupervisorError, ValueError) as exc:
         raise RecoveryError(f"cannot build failed-run recovery evidence: {exc}") from exc
 
+    deadline = time.monotonic() + timeout_seconds
+    evidence["recovery_budget"] = {
+        "timeout_seconds": timeout_seconds,
+        "deadline_at": (datetime.now(UTC) + timedelta(seconds=timeout_seconds)).isoformat(),
+    }
     recovery_started_path = record_recovery_started(
         root,
         failed_run_id,
@@ -1267,6 +1273,7 @@ def recover_failed_run(
             "runtime_recovery_policy": evidence["runtime_recovery_policy"],
             "retry_command": evidence["retry_command"],
             "timeout_seconds": timeout_seconds,
+            "recovery_budget": evidence["recovery_budget"],
             "max_adapter_attempts": 2,
             "screenshot_paths": evidence["screenshot_paths"],
         },
@@ -1287,13 +1294,15 @@ def recover_failed_run(
     pull_request_url: str | None = None
     adapter_attempt_errors: list[str] = []
     try:
-        deadline = time.monotonic() + timeout_seconds
-        raw_report: object | None = None
         for attempt in (1, 2):
             remaining = int(deadline - time.monotonic())
             if remaining < 1:
                 raise RecoveryError("recovery adapter exhausted its total time budget")
             attempt_evidence = dict(evidence)
+            attempt_evidence["recovery_budget"] = {
+                **evidence["recovery_budget"],
+                "remaining_seconds": remaining,
+            }
             attempt_evidence["adapter_attempt"] = {
                 "number": attempt,
                 "maximum": 2,
@@ -1307,15 +1316,15 @@ def recover_failed_run(
                     timeout_seconds=remaining,
                     runner=runner,
                 )
+                report = validate_recovery_report(raw_report, failed_run_id=failed_run_id)
             except RecoveryError as exc:
                 adapter_attempt_errors.append(str(exc))
                 if attempt == 1 and deadline - time.monotonic() >= 30:
                     continue
                 raise
             break
-        if raw_report is None:
+        if report is None:
             raise RecoveryError("recovery adapter produced no report")
-        report = validate_recovery_report(raw_report, failed_run_id=failed_run_id)
         summary = report["summary"]
         blocker = report["scope_blocker"]
         repair = report["code_repair"]
