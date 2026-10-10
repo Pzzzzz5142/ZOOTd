@@ -29,6 +29,8 @@
 
 协议依据：[MaaCore 集成接口](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/docs/zh-cn/protocol/integration.md)、[CopilotTask](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/src/MaaCore/Task/Interface/CopilotTask.cpp)、[结构化消息](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/src/MaaCore/Common/AsstMsg.h)。单项 copilot_list 启用导航与战斗等待；不把进程退出码或纯文本作业输出当作成功。操作方式见[运维手册](../operations.md#单次-copilot-通关实验phase-3)。
 
+独立零战斗导航对原生 StartUp 禁用节点的生命周期通知按[导航验收契约](../architecture.md#copilot-关卡目录与导航)处理，不将启动阶段通知当成目标到达证明。合成协议测试覆盖正常零次数转换、ID 重编号、入口扩展与缺失终态、错设备/任务、未知节点、非零次数和 Custom 超限的拒绝；整轮测试继续要求本次新鲜目标证据。新规则的实机复验单独跟踪，不追认已有导航审计。
+
 ## 目标
 
 第一次真正跑通：
