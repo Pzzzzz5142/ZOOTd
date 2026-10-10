@@ -298,6 +298,28 @@ class CopilotRunTests(unittest.TestCase):
                 self.assertEqual(main(['--project-root', '/fixture', 'DV-8', *flags]), 0)
                 self.assertIs(run.call_args.kwargs['use_sanity_potion'], allowed)
 
+    def test_cli_defaults_to_trust_slots_and_allows_opt_out(self):
+        for flags, enabled in (([], True), (['--no-add-trust'], False)):
+            with self.subTest(enabled=enabled), \
+                 patch('maa_planner.copilot_run.experiment', return_value={'status': 'success'}) as run, \
+                 patch('maa_planner.copilot_run.signal.signal'), patch('maa_planner.copilot_run.os.umask'), \
+                 redirect_stdout(io.StringIO()):
+                self.assertEqual(main(['--project-root', '/fixture', 'YW-1', *flags]), 0)
+                self.assertIs(run.call_args.kwargs['add_trust'], enabled)
+                self.assertFalse(run.call_args.kwargs['use_sanity_potion'])
+
+    def test_invalid_trust_choice_stops_before_device_or_box(self):
+        for choice in (None, 0, 1, 'false'):
+            with self.subTest(choice=choice), \
+                 patch('maa_planner.copilot_run.load_policy', return_value={}), \
+                 patch('maa_planner.copilot_run.device') as dev, \
+                 patch('maa_planner.copilot_run.SklandBoxProvider') as provider, \
+                 redirect_stderr(io.StringIO()):
+                with self.assertRaises(ExperimentError):
+                    experiment(Path('/fixture'), 'YW-1', None, add_trust=choice)
+                dev.assert_not_called()
+                provider.assert_not_called()
+
     def test_wrong_task_stage_file_device_cannot_prove_success(self):
         for change in ('task', 'device', 'file', 'stage'):
             records = events()
@@ -403,9 +425,12 @@ class CopilotRunTests(unittest.TestCase):
         self.assertIn('超时', failure_message({'worker_exit_code': 124}))
 
     def test_full_pipeline_binds_parameters_and_rejects_download_drift(self):
-        for drift, proof_mode, potion in ((False, False, False), (True, False, False),
-                                         (False, True, False), (False, False, True), (True, False, True)):
-            with self.subTest(drift=drift, proof_mode=proof_mode, potion=potion), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
+        for drift, proof_mode, potion, trust_override in (
+                (False, False, False, {}), (True, False, False, {}),
+                (False, True, False, {}), (False, False, True, {}), (True, False, True, {}),
+                (False, False, False, {'add_trust': False})):
+            trust = trust_override.get('add_trust', True)
+            with self.subTest(drift=drift, proof_mode=proof_mode, potion=potion, trust=trust), tempfile.TemporaryDirectory() as tmp, ExitStack() as mocks:
                 root = Path(tmp)
                 (root / 'config').mkdir()
                 for name, payload in (
@@ -448,6 +473,12 @@ class CopilotRunTests(unittest.TestCase):
                     params = json.loads((run / 'params.json').read_text())
                     self.assertEqual(params['loop_times'], 1)
                     self.assertIs(params['use_sanity_potion'], potion)
+                    self.assertIs(params['add_trust'], trust)
+                    self.assertTrue(params['formation'])
+                    execution = json.loads((run / 'execution.json').read_text())
+                    self.assertEqual(execution['opers'], candidate().operators)
+                    self.assertEqual(execution['actions'], [{'type': 'SkillDaemon'}])
+                    self.assertNotIn('add_trust', execution)
                     tasks = json.loads((run / 'navigation/resource/tasks/tasks.json').read_text())
                     for task in ('UseStone', 'StoneConfirm', 'StoneConfirmWait'):
                         self.assertEqual(tasks[task]['action'], 'Stop')
@@ -471,11 +502,12 @@ class CopilotRunTests(unittest.TestCase):
                 with redirect_stderr(notice), patch('builtins.input', side_effect=AssertionError('No confirmation prompt')):
                     audit = experiment(root, 'NL-8', None, prove_capability=proof_mode,
                                        use_sanity_potion=potion, copilot_id=1,
-                                       exclude_copilot_ids=[999])
+                                       exclude_copilot_ids=[999], **trust_override)
                 self.assertEqual(audit['authorization']['copilot_id'], 1)
                 self.assertEqual(audit['authorization']['exclude_copilot_ids'], [999])
                 self.assertEqual(audit['authorization']['medicine'], 'as_needed' if potion else 0)
                 self.assertEqual(audit['authorization']['stone'], 0)
+                self.assertIs(audit['authorization']['add_trust'], trust)
                 self.assertEqual(notice.getvalue().strip(), ACCOUNT_NOTICE)
                 self.assertEqual(audit['status'], 'failed' if drift else 'success')
                 if drift:
