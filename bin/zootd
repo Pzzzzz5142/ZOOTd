@@ -295,6 +295,7 @@ Commands:
   copilot-run STAGE [--raid] [--profile no-support|allow-support]
                         Experimental: defaults to one battle; no medicine or stones
                         Medicine: --use-sanity-potion explicitly allows medicines only
+                        Formation: fill trust slots by default; --no-add-trust disables
                         Raid: explicit challenge mode, requires compatible copilot
                         Retry: --max-candidates N --max-battles N --sanity-budget N
                         Select: --copilot-id ID or repeated --exclude-copilot-id ID
