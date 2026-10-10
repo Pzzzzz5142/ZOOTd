@@ -1,3 +1,4 @@
+import copy
 import json
 import tempfile
 import time
@@ -13,6 +14,22 @@ from maa_planner.copilot_navigation import navigation_tasks
 from maa_planner.navigation_catalog import NavigationCatalog, load_navigation, load_tables, MAX_AGE, activity_labels, title_text
 from maa_planner.prts import PrtsError
 from maa_planner.navigation_cli import navigate, navigation_complete
+
+
+def startup_transition_events(task='ReturnButton', *, task_id=2, process_id=0, first=None):
+    """Synthetic native lifecycle, with separate enclosing/subtask identities."""
+    def event(message, identifier, **value):
+        return {'message': message, 'details': {
+            'uuid': 'device', 'taskid': identifier, 'taskchain': 'StartUp', **value}}
+    process = dict(subtask='ProcessTask', first=first or ['StartUpBegin'])
+    return [event(10001, task_id),
+            event(20001, process_id, **process, details={
+                'task': 'StartUpBegin', 'algorithm': 'JustReturn', 'action': 'DoNothing'}),
+            event(20002, process_id, **process, details={
+                'task': 'StartUpBegin', 'algorithm': 'JustReturn', 'action': 'DoNothing'}),
+            event(20003, process_id, **process, what='ExceededLimit', details={
+                'task': task, 'exec_times': 0, 'max_times': 0}),
+            event(10002, task_id), event(3, task_id, finished_tasks=[task_id])]
 
 
 def fixture():
@@ -390,9 +407,84 @@ class NavigationTests(unittest.TestCase):
 
 
 class NavigationCliTests(unittest.TestCase):
+    @staticmethod
+    def target_events():
+        def event(message, **value):
+            return {'message': message, 'details': {
+                'uuid': 'device', 'taskid': 4, 'taskchain': 'Custom', **value}}
+        return [event(10001), event(20002, subtask='ProcessTask', first=['ZootdNavigate'], details={
+            'task': 'ZootdStageConfirmed', 'algorithm': 'OcrDetect', 'action': 'DoNothing',
+            'result': {'text': 'NL-9'}}), event(10002), event(3, finished_tasks=[4])]
+
+    def test_disabled_startup_nodes_are_not_navigation_failure_or_target_evidence(self):
+        for task in ('ReturnButton', 'StartButton1'):
+            for interface_id, process_id in ((2, 0), (72, 31), (0, 9)):
+                with self.subTest(task=task, ids=(interface_id, process_id)):
+                    prefix = startup_transition_events(task, task_id=interface_id, process_id=process_id,
+                        first=['StartUpBegin', 'FutureSettingsEntry'])
+                    target = self.target_events()
+                    self.assertTrue(navigation_complete(prefix + target, 'NL-9'))
+                    self.assertFalse(navigation_complete(prefix, 'NL-9'))
+                    for index in range(len(target)):
+                        self.assertFalse(navigation_complete(prefix + target[:index] + target[index + 1:], 'NL-9'))
+
+    def test_startup_exception_requires_observed_identity_scope_and_successful_terminal(self):
+        prefix, target = startup_transition_events(), self.target_events()
+        for index, field, value in [
+                (3, 'taskid', 99), (3, 'taskid', True), (3, 'taskid', -1),
+                (3, 'uuid', 'other-device'), (3, 'taskchain', 'Custom'),
+                (3, 'subtask', 'UnknownTask'), (4, 'taskid', 99),
+                (5, 'uuid', 'other-device'), (5, 'taskchain', 'Custom'),
+                (5, 'finished_tasks', [99]), (5, 'finished_tasks', [True, 2])]:
+            changed = copy.deepcopy(prefix)
+            changed[index]['details'][field] = value
+            with self.subTest(index=index, field=field, value=value):
+                self.assertFalse(navigation_complete(changed + target, 'NL-9'))
+        for indices in ((0,), (1, 2), (4,), (5,)):
+            changed = [event for index, event in enumerate(prefix) if index not in indices]
+            self.assertFalse(navigation_complete(changed + target, 'NL-9'))
+        notification = prefix[3]
+        for records in ([notification] + prefix[:3] + prefix[4:] + target,
+                        prefix[:3] + prefix[4:5] + [notification] + prefix[5:] + target,
+                        prefix[:3] + prefix[4:] + [notification] + target,
+                        prefix[:3] + prefix[4:] + target[:2] + [notification] + target[2:]):
+            self.assertFalse(navigation_complete(records, 'NL-9'))
+        target[0]['details']['uuid'] = 'other-device'
+        self.assertFalse(navigation_complete(prefix + target, 'NL-9'))
+        for interface_id, invalid_id in ((0, False), (1, True)):
+            for index in (4, 5):
+                changed = startup_transition_events(task_id=interface_id, process_id=31)
+                changed[index]['details']['taskid'] = invalid_id
+                self.assertFalse(navigation_complete(changed + self.target_events(), 'NL-9'))
+
+    def test_startup_exception_never_allows_errors_or_unknown_limit_semantics(self):
+        prefix, target = startup_transition_events(), self.target_events()
+        for field, value in [('task', 'FutureDisabledNode'), ('exec_times', 1),
+                             ('max_times', 1), ('exec_times', True), ('max_times', False),
+                             ('exec_times', '0'), ('action', 'Stop')]:
+            changed = copy.deepcopy(prefix)
+            changed[3]['details']['details'][field] = value
+            with self.subTest(field=field, value=value):
+                self.assertFalse(navigation_complete(changed + target, 'NL-9'))
+        for message in (0, 1, 10000, 10004, 20000, 20004):
+            changed = copy.deepcopy(prefix)
+            changed[3]['message'] = message
+            self.assertFalse(navigation_complete(changed + target, 'NL-9'))
+        for what in ('GameOffline', 'Disconnect', 'Reconnecting'):
+            changed = copy.deepcopy(prefix)
+            changed[3]['details']['what'] = what
+            self.assertFalse(navigation_complete(changed + target, 'NL-9'))
+        # Even the recognized zero-limit semantics remain fatal in navigation.
+        custom = copy.deepcopy(prefix[3])
+        custom['details'].update(taskchain='Custom', taskid=4, first=['ZootdNavigate'])
+        self.assertFalse(navigation_complete(target[:2] + [custom] + target[2:], 'NL-9'))
+
     def test_zero_battle_requires_fresh_exact_panel_and_worker_completion(self):
         for mode, expected in [('ok', 'success'), ('wrong_stage', 'failed'),
-                               ('old', 'failed'), ('unfinished', 'failed'), ('locked', 'failed'), ('missing_end', 'failed'), ('wrong_chain', 'failed')]:
+                               ('old', 'failed'), ('unfinished', 'failed'), ('locked', 'failed'),
+                               ('missing_end', 'failed'), ('wrong_chain', 'failed'),
+                               ('startup_transition', 'success'), ('startup_nonzero', 'failed'),
+                               ('startup_old', 'failed')]:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
                 root = Path(tmp)
                 catalog = NavigationCatalog(*fixture(), now=150, evidence={'sha256': 'test'})
@@ -428,8 +520,15 @@ class NavigationCliTests(unittest.TestCase):
                                {'message': 3, 'details': {'finished_tasks': [4], 'taskchain': 'Custom', 'uuid': 'device', 'taskid': 4}}]
                     if mode == 'missing_end':
                         del records[2]
+                    if mode.startswith('startup_'):
+                        prefix = startup_transition_events()
+                        if mode == 'startup_nonzero':
+                            prefix[3]['details']['details']['max_times'] = 1
+                        records = prefix + records
                     for index, record in enumerate(records):
                         record.update(run_id=event['run_id'], sequence=index, recorded_ns=time.monotonic_ns())
+                    if mode == 'startup_old':
+                        records[3]['run_id'] = 'old-run'
                     (run / 'callbacks.jsonl').write_text('\n'.join(json.dumps(r) for r in records))
                     phase = 'stage_locked' if mode == 'locked' else 'navigation' if mode == 'unfinished' else 'navigation_complete'
                     (run / 'worker-result.json').write_text(json.dumps({'phase': phase}))
