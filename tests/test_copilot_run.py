@@ -480,6 +480,15 @@ class CopilotRunTests(unittest.TestCase):
                     self.assertEqual(execution['actions'], [{'type': 'SkillDaemon'}])
                     self.assertNotIn('add_trust', execution)
                     tasks = json.loads((run / 'navigation/resource/tasks/tasks.json').read_text())
+                    self.assertEqual(tasks['Copilot@EndOfAction']['postDelay'], 2500)
+                    self.assertEqual(tasks['Copilot@EndOfAction']['next'], [
+                        'Copilot@StageDrops-Stars-3', 'Copilot@StageDrops-Stars-Adverse',
+                        'Copilot@StageDrops-Stars-2', 'Copilot@StageDrops-Stars-0'])
+                    self.assertNotIn('Copilot@StageDrops-Stars-3', tasks)
+                    self.assertNotIn('Copilot@StageDrops-Stars-Adverse', tasks)
+                    self.assertEqual(tasks['Copilot@StageDrops-Stars-2']['templThreshold'], 0.8)
+                    self.assertEqual(tasks['Copilot@StageDrops-Stars-2']['action'], 'Stop')
+                    self.assertEqual(tasks['Copilot@StageDrops-Stars-2']['next'], [])
                     for task in ('UseStone', 'StoneConfirm', 'StoneConfirmWait'):
                         self.assertEqual(tasks[task]['action'], 'Stop')
                         self.assertEqual(tasks[task]['next'], [])

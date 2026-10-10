@@ -18,6 +18,8 @@
 
 三星识别依据 MaaCore v6.18.0 的 [CopilotTask](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/Interface/CopilotTask.cpp) 与 [任务资源](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/resource/tasks/tasks.json)：只接受普通难度 `Copilot@WaitUntilEndOfAction` 链中的 `StageDrops-Stars-3.png` 模板识别完成回调，拒绝 adverse、sandbox、失败及旁路结果。Core 的设备 UUID 和任务 ID 可能跨进程复用，不能代替 recorder 分配的 run 身份。已有历史回调不回填新身份，不追认旧实验为当前证明。
 
+结算动画的识别边界见[架构契约](../architecture.md#实验性-operator-box-边界)：结束标记后先等待，再识别星级。生成资源测试确认延时作用于所有结果分支，原生三星任务不被替换，普通二星仍 Stop；合成回调反例确认先二星后三星不能补成证明。离线验证不代表当前活动的实机复验完成。
+
 P5-04 离线验收：`tests/test_copilot_proof.py` 覆盖旧日志、越界时间、重复/缺失/乱序事件、异设备/任务/关卡/文件、非法模板与类型、失败终态及助战；`tests/test_copilot_run.py` 验证完整模拟管线写入三星观察但不创建能力账本。两组共 22 项通过；完整回归 175 项通过（5 项可选环境测试跳过）。一次已有 watchdog 子进程退出时序测试失败，独立及完整复跑均通过。文档相对链接与 `git diff --check` 通过；未启动游戏或调用账号接口。
 
 ### 2026-09-28 继续实现
