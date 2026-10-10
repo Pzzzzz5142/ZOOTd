@@ -2,7 +2,7 @@
 
 ## 项目与入口
 
-ZOOTd 是由 MAA 和 Waydroid 驱动、仅支持明日方舟国服官服的罗德岛自主运营守护进程。先读 [README.md](README.md) 和[文档索引](docs/README.md)，再按任务阅读相关专题。
+ZOOTd 是由 MAA 和 Waydroid 驱动、仅支持明日方舟国服官服的罗德岛自主运营守护进程。每次开发先读 [README.md](README.md)、[文档索引](docs/README.md) 和[工程设计指南](docs/engineering-guidelines.md)，再按任务阅读相关专题。实现或修改每个模块时都要考虑适度的前向兼容性；根据可信的变化依据、影响与维护成本选择边界、数据抽象和验证方式，并在 PR 中留下简短的兼容性判断。
 
 - `scripts/run-daily.sh`：完整运行编排；`bin/zootd`：宿主操作入口。
 - `maa_planner/`：确定性规划、日志证明、缓存、审计和恢复控制。
@@ -31,6 +31,7 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
 - 部署、操作命令、定时器、更新与排障写入 `docs/operations.md`。
 - 库存、基建、剿灭和代理策略写入 `docs/configuration.md`；数据职责、阶段契约与 runtime 机制写入 `docs/architecture.md`。
 - 代码结构、测试和 Git 约定写入 `docs/development.md`；LLM 行为与 SDK 维护写入 `docs/recovery.md`。
+- 跨模块的设计、数据维护和兼容性决策写入 `docs/engineering-guidelines.md`，具体模块的行为契约仍由对应专题维护。
 - 历史事故和旧验收结果写入 `docs/history.md`，明确标注当时行为，不作为当前操作说明。
 - 新增或移动文档时更新 `docs/README.md` 及引用链接。命令默认从项目根目录执行，Markdown 链接则相对所在文件解析。
 - 行为变更时同步更新对应专题，避免在多处重复维护相同规则；以当前代码、配置和测试核对过时描述。
