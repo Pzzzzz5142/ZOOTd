@@ -240,6 +240,9 @@ def copilot_result_tasks() -> dict:
     """Finish observed unsuccessful result pages for bounded failure classification."""
     tasks = {
         'Copilot@EndOfAction': {
+            # Stars animate after this marker; delay before the next screenshot,
+            # not with a star task's preDelay (which runs after recognition).
+            'postDelay': 2500,
             'next': ['Copilot@StageDrops-Stars-3', 'Copilot@StageDrops-Stars-Adverse',
                      'Copilot@StageDrops-Stars-2', 'Copilot@StageDrops-Stars-0']},
     }

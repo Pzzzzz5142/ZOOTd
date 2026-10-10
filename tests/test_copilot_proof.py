@@ -124,6 +124,19 @@ class CopilotProofTests(unittest.TestCase):
             records.insert(4, failure)
             self.assert_unproven(stamp(records))
 
+    def test_later_three_stars_cannot_repair_an_earlier_two_star_result(self):
+        # Synthetic callbacks model conflicting animation observations; they
+        # are not a replay or a promotion of a historical device run.
+        settled = observations()
+        self.assertTrue(prove(settled)['three_star'])
+        for prefix in ('', 'Copilot@'):
+            records = copy.deepcopy(settled)
+            early = copy.deepcopy(records[4])
+            early['details']['details'].update(task=prefix + 'StageDrops-Stars-2', result={
+                'template': 'StageDrops-Stars-2.png', 'score': .98})
+            records.insert(4, early)
+            self.assert_unproven(stamp(records))
+
     def test_only_optional_preformation_prts_probe_is_ignored(self):
         probe = {'message': 20000, 'details': {
             'uuid': 'device', 'taskid': 7, 'taskchain': 'Copilot',
