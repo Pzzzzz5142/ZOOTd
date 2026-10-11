@@ -106,6 +106,8 @@ Copilot 作业允许空干员列表和空干员组。与 MaaCore 编队行为一
 
 Copilot 独立运行资源层在 `Copilot@EndOfAction` 识别后明确等待 2500 毫秒，再由原生任务识别星级，避免结束标记出现时星级动画尚未完成而误判二星。延时放在结束任务的 `postDelay`：MaaCore v6.18.0 的 [ProcessTask](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/ProcessTask.cpp) 在识别后才执行 `preDelay`，而 `postDelay` 位于下一节点截图之前。等待不产生三星证据；普通三星/突袭模板、识别阈值、同链新鲜证明和普通二星 Stop 保持原有条件。2500 毫秒是当前观察支持的有限动画等待，不保证未来更长动画；仍误判或缺少完整证明时停止，不追认旧失败运行。
 
+普通 Copilot 的顶层成功还必须通过新鲜三星证明，原生 `execution` 完成只是独立诊断事实；证明不足时停止且不换候选。`copilot_plot.py` 在证明与失败分类之间共享原生剧情生命周期，重复次数由合法任务边与执行阶段约束；辅助错误不能成为三星、候选失败或理智退款证据。具体 scope 与错误豁免见[剧情回调契约](copilot/phase-5-proof.md#剧情辅助回调与普通关成功)。
+
 ## Copilot 关卡目录与导航
 
 `navigation_catalog.py` 从同一游戏数据 revision 的 stage、zone、activity、retro 表建立按普通/突袭模式隔离的关卡目录。突袭记录必须与实际普通记录的 code、zone、levelId、diffGroup 一致，保留独立的 canonical stageId 与 Tile 核对；PRTS 查询 ID 映射到普通版本，返回身份在本轮模式目录内重新解析。运行缓存和来源哈希位于 `var/cache/copilot-navigation/`，当期活动与分区窗口每次按当前时间检查；旧活动使用常驻表的 zone，而不是已经过期的复刻 zone。安装的 MAA `stages.json` 仅兼容既有 `_perm` 账本身份，Tile overview 用于核对可执行地图。原作业与绑定精确地图后的执行副本分别保存哈希，模式授权进入整轮快照和逐尝试结果；成功终态必须匹配执行副本的地图身份。模式过滤、确认及预算边界见[运维手册](operations.md#单次-copilot-通关实验phase-3)。

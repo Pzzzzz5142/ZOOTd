@@ -170,7 +170,9 @@ success
 failed
 ```
 
-更严格的三星证明放 Phase 5；此处 success 仅指执行终态，不得登记代理能力。
+这是 Phase 3 当时的执行终态定义，不得登记代理能力。当前普通关的顶层
+success 还要求 [Phase 5 新鲜三星证明](phase-5-proof.md#剧情辅助回调与普通关成功)；
+仅 `execution.status` 保留这里的原生终态语义。
 
 ---
 

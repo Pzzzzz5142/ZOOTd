@@ -1,0 +1,272 @@
+{
+  "core_version": "v6.18.0",
+  "during_battle": [
+    {
+      "message": 20001,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "SkipThePreBattlePlot"
+        ],
+        "pre_task": "",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlot",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlot.png",
+            "score": 0.836371
+          }
+        }
+      }
+    },
+    {
+      "message": 20002,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "SkipThePreBattlePlot"
+        ],
+        "pre_task": "",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlot",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlot.png",
+            "score": 0.836371
+          }
+        }
+      }
+    },
+    {
+      "message": 20001,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "SkipThePreBattlePlot"
+        ],
+        "pre_task": "SkipThePreBattlePlot",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlotConfirm",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlotConfirm.png",
+            "score": 0.88796
+          }
+        }
+      }
+    },
+    {
+      "message": 20002,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "SkipThePreBattlePlot"
+        ],
+        "pre_task": "SkipThePreBattlePlot",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlotConfirm",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlotConfirm.png",
+            "score": 0.88796
+          }
+        }
+      }
+    },
+    {
+      "message": 20001,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "SkipThePreBattlePlot"
+        ],
+        "pre_task": "",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlot",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlot.png",
+            "score": 0.836278
+          }
+        }
+      }
+    },
+    {
+      "message": 20002,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "SkipThePreBattlePlot"
+        ],
+        "pre_task": "",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlot",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlot.png",
+            "score": 0.836278
+          }
+        }
+      }
+    },
+    {
+      "message": 20000,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "SkipThePreBattlePlot"
+        ],
+        "pre_task": "",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {}
+      }
+    }
+  ],
+  "after_battle": [
+    {
+      "message": 20001,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "Copilot@WaitUntilEndOfAction"
+        ],
+        "pre_task": "Copilot@WaitUntilEndOfAction",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlot",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlot.png",
+            "score": 0.835341
+          }
+        }
+      }
+    },
+    {
+      "message": 20002,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "Copilot@WaitUntilEndOfAction"
+        ],
+        "pre_task": "Copilot@WaitUntilEndOfAction",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlot",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlot.png",
+            "score": 0.835341
+          }
+        }
+      }
+    },
+    {
+      "message": 20001,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "Copilot@WaitUntilEndOfAction"
+        ],
+        "pre_task": "Copilot@SkipThePreBattlePlot",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlotConfirm",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlotConfirm.png",
+            "score": 0.892812
+          }
+        }
+      }
+    },
+    {
+      "message": 20002,
+      "details": {
+        "taskchain": "Copilot",
+        "subtask": "ProcessTask",
+        "class": "asst::ProcessTask",
+        "first": [
+          "Copilot@WaitUntilEndOfAction"
+        ],
+        "pre_task": "Copilot@SkipThePreBattlePlot",
+        "uuid": "device",
+        "taskid": 7,
+        "details": {
+          "task": "SkipThePreBattlePlotConfirm",
+          "action": "ClickSelf",
+          "algorithm": "MatchTemplate",
+          "exec_times": 1,
+          "max_times": 2147483647,
+          "result": {
+            "template": "SkipThePreBattlePlotConfirm.png",
+            "score": 0.892812
+          }
+        }
+      }
+    }
+  ]
+}
