@@ -77,7 +77,7 @@ copilot ID/hash
 保留执行终态语义，不能单独触发成功、换候选或继续下一关。突袭保留其
 独立执行契约与 `raid_saved_proxy_not_supported`，不写普通关能力账本。
 
-`copilot_plot.py` 由三星证明与失败分类共享，只识别绑定执行阶段的原生
+`copilot_plot.py` 由三星证明、失败分类、漏怪监测和撤退证明共享，只识别绑定执行阶段的原生
 剧情语法，不依赖活动名称、场景数或固定尝试次数：
 
 - 战中 BattleHelper 的 `first=[SkipThePreBattlePlot]` helper 可重复匹配
@@ -94,6 +94,12 @@ copilot ID/hash
   MatchTemplate、原生模板和有效 score；身份与阶段由外层新鲜证明提供。
   零匹配探测没有剧情节点，不能补出缺失的点击或战斗事实。任务生命周期
   必须关闭，之后的完整战斗、三星和终态仍独立必需。
+
+漏怪监测与撤退证明只接受本次绑定且仍在战中的辅助 helper，不接受战后
+或停止后的剧情回调。撤退请求后的原生 BattleProcess 返回或停止时，
+剧情生命周期须已关闭；辅助回调不能代替蓝/红截图、停止、放弃或真实
+战败、准确关卡返回及完整终态。颜色检测与未知错误处理限制见
+[运维说明](../operations.md#单次-copilot-通关实验phase-3)。
 
 兼容依据及脱敏协议见[样本说明](../../tests/fixtures/copilot/README.md)。
 v5.28.0 与 v6.18.0 的战中 helper 与 Skip 自循环机制相同，战后 root
