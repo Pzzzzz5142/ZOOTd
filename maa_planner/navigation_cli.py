@@ -7,7 +7,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .copilot_core import callbacks_are_fresh, map_recognized, special_panel_complete
+from .copilot_core import callbacks_are_fresh, home_recognized, map_recognized, special_panel_complete
 from .copilot_navigation import navigation_tasks, zero_result_recovery_tasks, install_navigation_resources
 from .copilot_run import command, device, device_lock, execute
 from .navigation_catalog import load_navigation
@@ -17,15 +17,27 @@ from .runtime_receipt import validate_runtime_receipt
 from .util import atomic_write_json
 
 
-def _startup_zero_limit(value):
-    """Native StartUp disables these nodes instead of executing their clicks."""
+def _startup_runout(value):
+    """Native ProcessTask reports Runout, not failure, when a limit is reached."""
     detail = value.get('details', {})
     return (value.get('taskchain') == 'StartUp' and value.get('subtask') == 'ProcessTask'
             and value.get('what') == 'ExceededLimit' and isinstance(detail, dict)
-            and detail.get('task') in ('ReturnButton', 'StartButton1')
-            and type(detail.get('exec_times')) is int and detail['exec_times'] == 0
-            and type(detail.get('max_times')) is int and detail['max_times'] == 0
+            and isinstance(detail.get('task'), str) and bool(detail['task'].strip())
+            and type(detail.get('exec_times')) is int
+            and type(detail.get('max_times')) is int
+            and detail['exec_times'] >= detail['max_times'] >= 0
             and detail.get('action') is None)
+
+
+def _setup_guard_stop(message, value):
+    """The worker deliberately stops its home and terminal recognition guards."""
+    detail = value.get('details', {})
+    return ((value.get('first') == ['Home', 'Home@ReturnButtons']
+             and home_recognized(message, value))
+            or (message == 20001 and value.get('taskchain') == 'Custom'
+                and value.get('subtask') == 'ProcessTask' and value.get('first') == ['Terminal-Entry']
+                and detail.get('task') == 'Stop' and detail.get('algorithm') == 'JustReturn'
+                and detail.get('action') == 'Stop'))
 
 
 def navigation_complete(events, code, *, route=None):
@@ -39,9 +51,10 @@ def navigation_complete(events, code, *, route=None):
     for index, event in enumerate(events):
         msg, value = event['message'], event['details']
         key = (value.get('uuid'), value.get('taskid'))
+        detail = value.get('details', {})
         if (msg == 20003 and startup is not None and not startup_completed
                 and key[0] == startup[0] and type(key[1]) is int
-                and key[1] in startup_process_ids and _startup_zero_limit(value)):
+                and key[1] in startup_process_ids and _startup_runout(value)):
             # A Runout notification follows an observed native ProcessTask;
             # it is harmless only if the enclosing StartUp later completes.
             startup_transition = True
@@ -49,6 +62,11 @@ def navigation_complete(events, code, *, route=None):
             continue
         if (msg in (0, 1, 10000, 10004, 20000, 20004)
                 or value.get('what') in ('GameOffline', 'Disconnect', 'Reconnecting', 'ExceededLimit')
+                or (msg == 20003 and isinstance(detail, dict)
+                    and ('exec_times' in detail or 'max_times' in detail))
+                or (isinstance(detail, dict) and detail.get('action') == 'Stop'
+                    and (type(key[1]) is not int or key[1] < 0 or key != active
+                         or matched or not _setup_guard_stop(msg, value)))
                 or value.get('taskchain') in ('Fight', 'Copilot')):
             return False
         if msg == 10001:

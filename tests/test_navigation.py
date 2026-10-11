@@ -16,7 +16,8 @@ from maa_planner.prts import PrtsError
 from maa_planner.navigation_cli import navigate, navigation_complete
 
 
-def startup_transition_events(task='ReturnButton', *, task_id=2, process_id=0, first=None):
+def startup_transition_events(task='ReturnButton', *, task_id=2, process_id=0, first=None,
+                              exec_times=0, max_times=0):
     """Synthetic native lifecycle, with separate enclosing/subtask identities."""
     def event(message, identifier, **value):
         return {'message': message, 'details': {
@@ -28,7 +29,7 @@ def startup_transition_events(task='ReturnButton', *, task_id=2, process_id=0, f
             event(20002, process_id, **process, details={
                 'task': 'StartUpBegin', 'algorithm': 'JustReturn', 'action': 'DoNothing'}),
             event(20003, process_id, **process, what='ExceededLimit', details={
-                'task': task, 'exec_times': 0, 'max_times': 0}),
+                'task': task, 'exec_times': exec_times, 'max_times': max_times}),
             event(10002, task_id), event(3, task_id, finished_tasks=[task_id])]
 
 
@@ -416,17 +417,30 @@ class NavigationCliTests(unittest.TestCase):
             'task': 'ZootdStageConfirmed', 'algorithm': 'OcrDetect', 'action': 'DoNothing',
             'result': {'text': 'NL-9'}}), event(10002), event(3, finished_tasks=[4])]
 
-    def test_disabled_startup_nodes_are_not_navigation_failure_or_target_evidence(self):
-        for task in ('ReturnButton', 'StartButton1'):
+    def test_handled_startup_runout_is_not_navigation_failure_or_target_evidence(self):
+        for task, executions, limit in [('ReturnButton', 0, 0), ('StartButton1', 0, 0),
+                                        ('StartUp', 3, 3), ('FutureOptionalStep', 5, 5),
+                                        ('FutureLoweredLimit', 6, 5)]:
             for interface_id, process_id in ((2, 0), (72, 31), (0, 9)):
                 with self.subTest(task=task, ids=(interface_id, process_id)):
                     prefix = startup_transition_events(task, task_id=interface_id, process_id=process_id,
-                        first=['StartUpBegin', 'FutureSettingsEntry'])
+                        first=['StartUpBegin', 'FutureSettingsEntry'],
+                        exec_times=executions, max_times=limit)
                     target = self.target_events()
                     self.assertTrue(navigation_complete(prefix + target, 'NL-9'))
                     self.assertFalse(navigation_complete(prefix, 'NL-9'))
                     for index in range(len(target)):
                         self.assertFalse(navigation_complete(prefix + target[:index] + target[index + 1:], 'NL-9'))
+
+    def test_runout_may_continue_to_optional_steps_and_additional_handled_limits(self):
+        prefix = startup_transition_events('FutureOptionalStep', exec_times=2, max_times=2)
+        following = copy.deepcopy(prefix[1:4])
+        for event in following:
+            event['details']['details'].update(task='FutureSettingsEntry', exec_times=1, max_times=1)
+        following[-1]['details']['details']['display_label'] = 'Optional settings finished'
+        self.assertTrue(navigation_complete(prefix[:4] + following + prefix[4:] + self.target_events(), 'NL-9'))
+        # An unhandled continuation cannot be replaced by a later exact target.
+        self.assertFalse(navigation_complete(prefix[:4] + following + self.target_events(), 'NL-9'))
 
     def test_startup_exception_requires_observed_identity_scope_and_successful_terminal(self):
         prefix, target = startup_transition_events(), self.target_events()
@@ -459,31 +473,82 @@ class NavigationCliTests(unittest.TestCase):
 
     def test_startup_exception_never_allows_errors_or_unknown_limit_semantics(self):
         prefix, target = startup_transition_events(), self.target_events()
-        for field, value in [('task', 'FutureDisabledNode'), ('exec_times', 1),
-                             ('max_times', 1), ('exec_times', True), ('max_times', False),
-                             ('exec_times', '0'), ('action', 'Stop')]:
+        for field, value in [('task', ''), ('task', '  '), ('task', None), ('task', True),
+                             ('exec_times', -1), ('max_times', -1), ('max_times', 1),
+                             ('exec_times', True), ('max_times', False), ('exec_times', '0'),
+                             ('max_times', '0'), ('exec_times', 0.0), ('max_times', 0.0),
+                             ('action', 'Stop'), ('action', 'DoNothing')]:
             changed = copy.deepcopy(prefix)
             changed[3]['details']['details'][field] = value
             with self.subTest(field=field, value=value):
                 self.assertFalse(navigation_complete(changed + target, 'NL-9'))
+        for field in ('task', 'exec_times', 'max_times'):
+            changed = copy.deepcopy(prefix)
+            del changed[3]['details']['details'][field]
+            self.assertFalse(navigation_complete(changed + target, 'NL-9'))
         for message in (0, 1, 10000, 10004, 20000, 20004):
             changed = copy.deepcopy(prefix)
             changed[3]['message'] = message
             self.assertFalse(navigation_complete(changed + target, 'NL-9'))
-        for what in ('GameOffline', 'Disconnect', 'Reconnecting'):
+        for what in ('GameOffline', 'Disconnect', 'Reconnecting', 'FutureLimitMeaning'):
             changed = copy.deepcopy(prefix)
             changed[3]['details']['what'] = what
             self.assertFalse(navigation_complete(changed + target, 'NL-9'))
-        # Even the recognized zero-limit semantics remain fatal in navigation.
-        custom = copy.deepcopy(prefix[3])
-        custom['details'].update(taskchain='Custom', taskid=4, first=['ZootdNavigate'])
-        self.assertFalse(navigation_complete(target[:2] + [custom] + target[2:], 'NL-9'))
+        # Startup's handled lifecycle never weakens the target navigation graph.
+        for task, executions, limit in [('ReturnButton', 0, 0), ('StartUp', 3, 3),
+                                        ('FutureOptionalStep', 5, 5)]:
+            custom = startup_transition_events(task, exec_times=executions, max_times=limit)[3]
+            custom['details'].update(taskchain='Custom', taskid=4, first=['ZootdNavigate'])
+            self.assertFalse(navigation_complete(prefix + target[:2] + [custom] + target[2:], 'NL-9'))
+
+    def test_unknown_stops_cannot_hide_behind_completed_startup_or_target(self):
+        prefix, target = startup_transition_events('StartUp', exec_times=3, max_times=3), self.target_events()
+        for index in (1, 2):
+            changed = copy.deepcopy(prefix)
+            changed[index]['details']['details']['action'] = 'Stop'
+            self.assertFalse(navigation_complete(changed + target, 'NL-9'))
+        stopped = copy.deepcopy(target[1])
+        stopped['message'] = 20001
+        stopped['details']['details'].update(task='FutureNavigationStop', action='Stop')
+        for position in (1, 2, 4):
+            self.assertFalse(navigation_complete(prefix + target[:position] + [stopped] + target[position:], 'NL-9'))
+
+    def test_existing_home_and_terminal_stop_guards_remain_scoped_setup_only(self):
+        prefix, target = startup_transition_events('StartUp', exec_times=3, max_times=3), self.target_events()
+        def guard(first, detail):
+            return [{'message': 10001, 'details': {'uuid': 'device', 'taskid': 31, 'taskchain': 'Custom'}},
+                    {'message': 20001, 'details': {'uuid': 'device', 'taskid': 31, 'taskchain': 'Custom',
+                        'subtask': 'ProcessTask', 'first': first, 'details': detail}},
+                    {'message': 10002, 'details': {'uuid': 'device', 'taskid': 31, 'taskchain': 'Custom'}},
+                    {'message': 3, 'details': {'uuid': 'device', 'taskid': 31, 'taskchain': 'Custom',
+                        'finished_tasks': [31]}}]
+        guards = [guard(['Home', 'Home@ReturnButtons'], {'task': 'Home', 'action': 'Stop',
+                    'algorithm': 'MatchTemplate', 'result': {'template': 'SwitchTheme@ToggleSettingsMenu.png'}}),
+                  guard(['Terminal-Entry'], {'task': 'Stop', 'action': 'Stop', 'algorithm': 'JustReturn'})]
+        self.assertTrue(navigation_complete(prefix + guards[0] + guards[1] + target, 'NL-9'))
+        for records in guards:
+            self.assertFalse(navigation_complete(prefix + records[1:] + target, 'NL-9'))
+            for field, value in [('taskid', 99), ('uuid', 'other-device'), ('first', ['FutureGuard'])]:
+                changed = copy.deepcopy(records)
+                changed[1]['details'][field] = value
+                self.assertFalse(navigation_complete(prefix + changed + target, 'NL-9'))
+            changed = copy.deepcopy(records)
+            changed[1]['details']['details']['task'] = 'FutureGuard'
+            self.assertFalse(navigation_complete(prefix + changed + target, 'NL-9'))
+            for identifier, invalid_id in ((0, False), (-1, -1)):
+                changed = copy.deepcopy(records)
+                for event in changed:
+                    event['details']['taskid'] = identifier
+                changed[-1]['details']['finished_tasks'] = [identifier]
+                changed[1]['details']['taskid'] = invalid_id
+                self.assertFalse(navigation_complete(prefix + changed + target, 'NL-9'))
 
     def test_zero_battle_requires_fresh_exact_panel_and_worker_completion(self):
         for mode, expected in [('ok', 'success'), ('wrong_stage', 'failed'),
                                ('old', 'failed'), ('unfinished', 'failed'), ('locked', 'failed'),
                                ('missing_end', 'failed'), ('wrong_chain', 'failed'),
                                ('startup_transition', 'success'), ('startup_nonzero', 'failed'),
+                               ('startup_three', 'success'), ('startup_future', 'success'),
                                ('startup_old', 'failed')]:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
                 root = Path(tmp)
@@ -521,7 +586,10 @@ class NavigationCliTests(unittest.TestCase):
                     if mode == 'missing_end':
                         del records[2]
                     if mode.startswith('startup_'):
-                        prefix = startup_transition_events()
+                        prefix = (startup_transition_events('StartUp', exec_times=3, max_times=3)
+                                  if mode == 'startup_three' else
+                                  startup_transition_events('FutureOptionalStep', exec_times=2, max_times=2)
+                                  if mode == 'startup_future' else startup_transition_events())
                         if mode == 'startup_nonzero':
                             prefix[3]['details']['details']['max_times'] = 1
                         records = prefix + records
