@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 
 from .copilot_core import callbacks_are_fresh, terminal_result, formation_auxiliary
+from .copilot_plot import PlotLifecycle
 from .util import canonical_json, sha256_bytes
 
 
@@ -61,7 +62,7 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
     start_sequence = end_sequence = None
     forming = ignored_probe = False
     battle_running = False
-    plot_step = 0
+    plots = PlotLifecycle()
     for event in events:
         msg, value = event['message'], event['details']
         bound = (active is not None and value.get('taskchain') == 'Copilot'
@@ -70,21 +71,13 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
         if bound and phase == 2 and msg == 20001 and value.get('subtask') == 'BattleProcessTask':
             battle_running = True
         detail = value.get('details', {})
-        plot_task = detail.get('task')
-        if (bound and phase == 2 and battle_running and msg == 20002
-                and plot_task in ('SkipThePreBattlePlot', 'SkipThePreBattlePlotConfirm')):
-            match = detail.get('result', {})
-            expected = 'SkipThePreBattlePlot' if plot_step == 0 else 'SkipThePreBattlePlotConfirm'
-            if (plot_step > 1 or plot_task != expected
-                    or value.get('subtask') != 'ProcessTask' or value.get('class') != 'asst::ProcessTask'
-                    or value.get('first') != ['SkipThePreBattlePlot']
-                    or value.get('pre_task') != ('' if plot_step == 0 else 'SkipThePreBattlePlot')
-                    or detail.get('action') != 'ClickSelf' or detail.get('algorithm') != 'MatchTemplate'
-                    or not isinstance(match, dict) or match.get('template') != plot_task + '.png'
-                    or type(match.get('score')) not in (int, float)
-                    or not math.isfinite(match['score']) or not 0 < match['score'] <= 1):
-                return reject('invalid_plot_skip_observation')
-            plot_step += 1
+        plot = plots.observe(msg, value,
+                             during_battle=bound and phase == 2 and battle_running,
+                             after_battle=bound and phase == 3 and stars is None)
+        if plot == 'invalid':
+            return reject('invalid_plot_skip_observation')
+        if plot in ('accepted', 'ignored_error'):
+            continue
         if msg == 20001 and value.get('subtask') == 'BattleFormationTask':
             forming = True
         if msg in (20000, 20004) or value.get('what') == 'GameOffline':
@@ -97,21 +90,9 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
                               and value.get('first') == ['NotUsePrts']
                               and value.get('pre_task') == '' and value.get('details', {}) == {}
                               and not value.get('why') and not value.get('what'))
-            # BattleHelper ignores the return value of this matched skip
-            # process. Its terminal error after both clicks is not battle
-            # failure; a fresh completed battle and star match remain required.
-            completed_plot_skip = (msg == 20000 and bound and phase == 2 and battle_running
-                                   and plot_step == 2 and value.get('subtask') == 'ProcessTask'
-                                   and value.get('class') == 'asst::ProcessTask'
-                                   and value.get('first') == ['SkipThePreBattlePlot']
-                                   and value.get('pre_task') == '' and detail == {}
-                                   and not value.get('why') and not value.get('what'))
-            if not optional_probe and not completed_plot_skip:
+            if not optional_probe:
                 return reject('callback_failure')
-            if optional_probe:
-                ignored_probe = True
-            if completed_plot_skip:
-                plot_step = 0
+            ignored_probe = True
         if msg == 10001 and value.get('taskchain') == 'Copilot':
             start_sequence = event['sequence']
             active = (value.get('uuid'), value.get('taskid'))
@@ -150,7 +131,7 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
                 return reject('unexpected_formation')
             phase = 2
         if msg == 20002 and value.get('subtask') == 'BattleProcessTask':
-            if phase != 2:
+            if phase != 2 or not plots.complete:
                 return reject('unexpected_battle')
             phase = 3
         task = detail.get('task', '')
@@ -162,7 +143,7 @@ def battle_proof(events: list[dict], *, run_id: str, task_id: int, stage: str,
             return reject('unsupported_battle_result')
         if msg == 20002 and task == 'StageDrops-Stars-3':
             match = detail.get('result', {})
-            if (phase != 3 or stars is not None or value.get('subtask') != 'ProcessTask'
+            if (phase != 3 or stars is not None or not plots.complete or value.get('subtask') != 'ProcessTask'
                     or value.get('first') != ['Copilot@WaitUntilEndOfAction']
                     or detail.get('action') != 'DoNothing'
                     or detail.get('algorithm') != 'MatchTemplate'

@@ -67,6 +67,9 @@ def failure_message(result):
         return '作业或编队不满足要求；请检查干员练度、森空岛与游戏账号是否一致，并查看本次记录。'
     if category == 'battle_failed':
         return '本次战斗未通过；请查看战斗结果及作业适配情况。'
+    if (phase == 'terminal' and attempt.get('execution', {}).get('status') == 'success'
+            and attempt.get('battle_proof', {}).get('status') == 'unproven'):
+        return '任务已结束，但本次三星通关证明不完整，已停止继续执行；请查看本次运行记录。'
     return {
         'readiness': '运行准备失败；请检查工作区是否干净、运行锁及 MAA runtime 状态。',
         'box': '森空岛 Box 同步失败；请检查登录凭据、绑定角色和网络。',
@@ -424,6 +427,13 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
                 task_id=task_id, stage=content['stage_name'], filename=str(filename),
                 exit_code=status, worker_phase=worker_phase, raid=route['raid'])
             raise ExperimentError('MaaCore did not produce a complete successful Copilot terminal')
+        # A normal chain terminal is execution evidence, not a star result.
+        # Keep the explicit raid mode's separate, non-ledger proof contract.
+        if not route['raid'] and audit['battle_proof']['status'] != 'observed':
+            audit['failure'] = failure('unknown_execution_failure', evidence=[
+                {'reason': audit['battle_proof']['reason']}])
+            raise ExperimentError('Normal Copilot terminal lacks fresh three-star proof: '
+                                  + audit['battle_proof']['reason'])
         if proof_context:
             phase = 'capability_proof'
             proof = copilot_capability.complete_proof(

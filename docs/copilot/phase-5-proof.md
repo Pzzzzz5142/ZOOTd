@@ -70,6 +70,35 @@ copilot ID/hash
 
 只有强证据成立，才能登记能力。
 
+### 剧情辅助回调与普通关成功
+
+普通关的尝试与整轮 `status=success` 必须先得到 `battle_proof.status=observed`
+的新鲜三星证明；证明模式还须完成独立代理验证。原生 `execution.status`
+保留执行终态语义，不能单独触发成功、换候选或继续下一关。突袭保留其
+独立执行契约与 `raid_saved_proxy_not_supported`，不写普通关能力账本。
+
+`copilot_plot.py` 由三星证明与失败分类共享，只识别绑定执行阶段的原生
+剧情语法，不依赖活动名称、场景数或固定尝试次数：
+
+- 战中 BattleHelper 的 `first=[SkipThePreBattlePlot]` helper 可重复匹配
+  Skip；Confirm 无 next，会结束当前调用，之后可创建新 helper。已完成
+  Skip 点击的当前 helper 可用正确 pre_task、空 details 且无 why/what
+  的 ProcessTaskError 结束，因为原生明确忽略该调用返回值。无匹配点击、
+  未完成点击、已结束调用及重复尾部错误不能获得豁免。
+- 战斗完成后，`first=[Copilot@WaitUntilEndOfAction]` 的 Skip/Confirm
+  属于结算流程，可经 Wait 再次进入剧情。其 ProcessTaskError 不被忽略。
+- 每个剧情节点必须有匹配的 Start/Completed、task、pre_task、ClickSelf、
+  MatchTemplate、原生模板和有效 score；身份与阶段由外层新鲜证明提供。
+  任务生命周期必须关闭，之后的完整战斗、三星和终态仍独立必需。
+
+兼容依据及脱敏协议见[样本说明](../../tests/fixtures/copilot/README.md)。
+v5.28.0 与 v6.18.0 的战中 helper 与 Skip 自循环机制相同，战后 root
+已发生变化；因此采用小型共享状态机，支持已知任务边上的任意有限重复，
+不为未知 scope 自动扩展错误豁免。无关附加字段可以接受；原生语义或
+任务边变化时需复核该 adapter。两版本比较不能估算破坏频率，也不代表
+旧版三星回调全兼容。回放与合成场景不替代新的实机验收；不修改或追认
+原运行结果。
+
 ---
 
 ## 不允许

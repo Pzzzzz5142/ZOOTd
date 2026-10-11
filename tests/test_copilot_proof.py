@@ -1,5 +1,7 @@
 import copy
+import json
 import unittest
+from pathlib import Path
 
 from maa_planner.copilot_proof import battle_proof
 from tests.test_copilot_run import events
@@ -30,6 +32,21 @@ def prove(records, **changes):
                    started_ns=100, finished_ns=200, exit_code=0, support_used=False)
     context.update(changes)
     return battle_proof(records, **context)
+
+
+def plot_protocol():
+    return json.loads((Path(__file__).parent / 'fixtures/copilot/plot-lifecycle.json').read_text())
+
+
+def plot_observations(during=None, after=None):
+    """Replay native projected clicks in a synthetic, freshly stamped chain."""
+    protocol = plot_protocol()
+    records = observations()
+    records[4:4] = copy.deepcopy(protocol['after_battle'] if after is None else after)
+    records[3:3] = [{'message': 20001, 'details': {
+        'uuid': 'device', 'taskid': 7, 'taskchain': 'Copilot', 'subtask': 'BattleProcessTask'}}] + copy.deepcopy(
+        protocol['during_battle'] if during is None else during)
+    return stamp(records)
 
 
 class CopilotProofTests(unittest.TestCase):
@@ -160,47 +177,107 @@ class CopilotProofTests(unittest.TestCase):
             records.insert(2, changed)
             self.assert_unproven(stamp(records))
 
-    def test_completed_plot_skip_error_requires_both_clicks_during_battle(self):
-        def event(msg, **fields):
-            return {'message': msg, 'details': dict(uuid='device', taskid=7,
-                    taskchain='Copilot', **fields)}
-        sequence = [event(20001, subtask='BattleProcessTask')]
-        for task, previous in [('SkipThePreBattlePlot', ''),
-                               ('SkipThePreBattlePlotConfirm', 'SkipThePreBattlePlot')]:
-            e = event(20002, subtask='ProcessTask', first=['SkipThePreBattlePlot'], pre_task=previous,
-                      details={'task': task, 'action': 'ClickSelf', 'algorithm': 'MatchTemplate',
-                               'result': {'template': task + '.png', 'score': .9}})
-            e['details']['class'] = 'asst::ProcessTask'
-            sequence.append(e)
-        e = event(20000, subtask='ProcessTask', first=['SkipThePreBattlePlot'], pre_task='', details={})
-        e['details']['class'] = 'asst::ProcessTask'
-        sequence.append(e)
-        def insert(seq, index=3):
+    def test_native_plot_protocol_replay_and_repeated_helper_invocations(self):
+        protocol = plot_protocol()
+        self.assertTrue(prove(plot_observations())['three_star'])
+        # Confirm ends the standalone helper; BattleHelper can start another
+        # invocation. A matched Skip followed by its empty native error is also
+        # auxiliary, even without a prior successful Confirm invocation.
+        for sequence in (protocol['during_battle'][:4], protocol['during_battle'][4:],
+                         [copy.deepcopy(e) for _ in range(5) for e in protocol['during_battle']]):
+            self.assertTrue(prove(plot_observations(during=sequence))['three_star'])
+        repeated = [copy.deepcopy(e) for _ in range(6) for e in protocol['after_battle']]
+        self.assertTrue(prove(plot_observations(after=repeated))['three_star'])
+        extended = plot_observations()
+        for e in extended:
+            if e['details'].get('subtask') == 'ProcessTask':
+                e['details']['new_optional_metadata'] = {'trace': 'synthetic'}
+                if e['details'].get('details'):
+                    e['details']['details']['new_optional_timing'] = 20
+        self.assertTrue(prove(extended)['three_star'])
+        # The next recognition can match Skip again before Confirm; this is an
+        # explicit task-resource edge, not another standalone invocation.
+        for scope in ('during_battle', 'after_battle'):
+            sequence = copy.deepcopy(protocol[scope][:4])
+            again = copy.deepcopy(sequence[:2])
+            for e in again:
+                e['details']['pre_task'] = ('Copilot@' if scope == 'after_battle' else '') + 'SkipThePreBattlePlot'
+            sequence[2:2] = [copy.deepcopy(e) for _ in range(3) for e in again]
+            self.assertTrue(prove(plot_observations(**{'during' if scope == 'during_battle' else 'after': sequence}))['three_star'])
+        again = copy.deepcopy(protocol['during_battle'][4:6])
+        error = copy.deepcopy(protocol['during_battle'][-1])
+        for e in again + [error]:
+            e['details']['pre_task'] = 'SkipThePreBattlePlot'
+        sequence = protocol['during_battle'][4:6] + again + [error]
+        self.assertTrue(prove(plot_observations(during=sequence))['three_star'])
+
+    def test_plot_click_identity_scope_and_match_remain_strict(self):
+        for scope in ('during_battle', 'after_battle'):
+            sequence = plot_protocol()[scope]
+            key = 'during' if scope == 'during_battle' else 'after'
+            for index in range(len(sequence)):
+                for field, value in [('uuid', 'wrong'), ('taskid', 8), ('taskid', True),
+                                     ('taskchain', 'Custom'), ('class', 'Other'), ('subtask', 'Other'),
+                                     ('why', 'error'), ('what', 'ExceededLimit'),
+                                     ('first', ['OtherTask']), ('pre_task', 'Other')]:
+                    changed = copy.deepcopy(sequence)
+                    changed[index]['details'][field] = value
+                    with self.subTest(scope=scope, index=index, field=field):
+                        self.assert_unproven(plot_observations(**{key: changed}))
+                if sequence[index]['message'] not in (20001, 20002):
+                    continue
+                for field, value in [('template', 'Other.png'), ('score', True), ('score', 0),
+                                     ('score', float('nan')), ('score', 1.1)]:
+                    changed = copy.deepcopy(sequence)
+                    changed[index]['details']['details']['result'][field] = value
+                    self.assert_unproven(plot_observations(**{key: changed}))
+                for field, value in [('task', 'Other'), ('action', 'ClickRect'), ('algorithm', 'JustReturn')]:
+                    changed = copy.deepcopy(sequence)
+                    changed[index]['details']['details'][field] = value
+                    self.assert_unproven(plot_observations(**{key: changed}))
+
+    def test_plot_lifecycle_rejects_missing_clicks_unknown_errors_and_wrong_phase(self):
+        protocol = plot_protocol()
+        for scope in ('during_battle', 'after_battle'):
+            sequence = protocol[scope]
+            key = 'during' if scope == 'during_battle' else 'after'
+            for index in range(len(sequence)):
+                self.assert_unproven(plot_observations(**{key: sequence[:index] + sequence[index + 1:]}))
+            self.assert_unproven(plot_observations(**{key: sequence + [sequence[-1]]}))
+        error = protocol['during_battle'][-1]
+        self.assert_unproven(plot_observations(during=[error]))
+        self.assert_unproven(plot_observations(during=protocol['during_battle'][:4] + [error]))
+        self.assert_unproven(plot_observations(during=protocol['during_battle'][:-1]))
+        changed = copy.deepcopy(protocol['during_battle'])
+        changed[-1]['details']['details'] = {'error': 'UnknownError'}
+        self.assert_unproven(plot_observations(during=changed))
+        settlement_error = copy.deepcopy(error)
+        settlement_error['details']['first'] = ['Copilot@WaitUntilEndOfAction']
+        self.assert_unproven(plot_observations(after=protocol['after_battle'] + [settlement_error]))
+        self.assert_unproven(plot_observations(during=protocol['after_battle'], after=[]))
+        self.assert_unproven(plot_observations(during=[], after=protocol['during_battle']))
+        for index in (0, 2, 5, 6):
             records = observations()
-            records[index:index] = copy.deepcopy(seq)
-            return stamp(records)
-        self.assertTrue(prove(insert(sequence))['three_star'])
-        self.assertTrue(prove(insert(sequence[:-1]))['three_star'])
-        for i in range(len(sequence) - 1):
-            self.assert_unproven(insert(sequence[:i] + sequence[i + 1:]))
-        for i in (0, 1, 2, 4, 5, 6):
-            self.assert_unproven(insert(sequence, i))
-        self.assert_unproven(insert(sequence + [sequence[-1]]))
-        for index, field, value in [(1, 'uuid', 'wrong'), (2, 'taskid', 8),
-                                     (3, 'why', 'battle error'), (3, 'first', ['OtherTask'])]:
-            changed = copy.deepcopy(sequence)
-            changed[index]['details'][field] = value
-            self.assert_unproven(insert(changed))
-        for field, value in [('template', 'Other.png'), ('score', True), ('score', 0)]:
-            changed = copy.deepcopy(sequence)
-            changed[2]['details']['details']['result'][field] = value
-            self.assert_unproven(insert(changed))
-        # A valid skip never substitutes for the battle result or its terminal.
-        for index in (3, 4, 5, 6):
-            records = observations()
-            del records[index]
-            records[3:3] = copy.deepcopy(sequence)
+            records[index:index] = copy.deepcopy(protocol['during_battle'])
             self.assert_unproven(stamp(records))
+
+    def test_plot_never_substitutes_for_fresh_stars_or_battle_terminal(self):
+        records = plot_observations()
+        for index, e in enumerate(records):
+            value = e['details']
+            if (e['message'] in (10001, 10002, 3)
+                    or value.get('subtask') in ('BattleFormationTask', 'BattleProcessTask')
+                    or value.get('details', {}).get('task') == 'StageDrops-Stars-3'):
+                self.assert_unproven(stamp(copy.deepcopy(records[:index] + records[index + 1:])))
+        early = copy.deepcopy(records[-3])
+        early['details']['details'].update(task='StageDrops-Stars-2', result={
+            'template': 'StageDrops-Stars-2.png', 'score': .98})
+        records.insert(-3, early)
+        self.assert_unproven(stamp(records))
+        for field, value in [('run_id', 'old'), ('recorded_ns', 99)]:
+            records = plot_observations()
+            records[4][field] = value
+            self.assert_unproven(records)
 
     def test_malformed_evidence_fails_closed(self):
         for value in (None, [], 'text', 1):

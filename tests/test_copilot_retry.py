@@ -14,7 +14,7 @@ from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity
 from maa_planner.operator_box import OperatorBox, Operator
 from maa_planner.prts import PrtsError
 from tests.test_copilot_run import candidate, raid_confirmation
-from tests.test_copilot_proof import observations, support_helpers
+from tests.test_copilot_proof import observations, support_helpers, plot_protocol, plot_observations
 
 
 def event(msg, **kw):
@@ -101,6 +101,34 @@ def classify(records, **kw):
 
 
 class RetryClassificationTests(unittest.TestCase):
+    def test_native_plot_lifecycle_is_auxiliary_to_proven_failure_and_cost(self):
+        protocol = plot_protocol()
+        for kind, cost in [('zero_star_complete', 'refunded'), ('two_star_complete', 'charged_or_unknown')]:
+            records = failed_events(kind)
+            # Both snippets precede the independently recognized result.
+            records[6:6] = copy.deepcopy(protocol['after_battle'])
+            records[5:5] = copy.deepcopy(protocol['during_battle'])
+            outcome = classify(stamp(records))
+            self.assertEqual(outcome['category'], 'battle_failed', outcome)
+            self.assertTrue(outcome['retryable'])
+            self.assertEqual(outcome['sanity_outcome'], cost)
+            for field, value in [('uuid', 'wrong'), ('taskid', 8), ('taskchain', 'Custom'),
+                                 ('first', ['Other']), ('why', 'unknown error')]:
+                changed = copy.deepcopy(records)
+                changed[11]['details'][field] = value
+                self.assertFalse(classify(stamp(changed))['retryable'])
+            unknown = event(20000, subtask='ProcessTask', first=['OtherTask'],
+                            pre_task='', details={}, **{'class': 'asst::ProcessTask'})
+            for index in (5, len(records) - 2):
+                changed = copy.deepcopy(records)
+                changed.insert(index, unknown)
+                self.assertFalse(classify(stamp(changed))['retryable'])
+        # A plot error and successful native cleanup do not establish failure,
+        # a refund, or permission to try a second candidate.
+        records = plot_observations()
+        records[1]['details']['details']['file_name'] = '/attempt/execution.json'
+        self.assertFalse(classify(stamp(records))['retryable'])
+
     def test_native_support_search_allows_only_proven_formation_failure_retry(self):
         records = failed_events('missing')
         records[3:3] = support_helpers()
@@ -698,6 +726,42 @@ class RetryIntegrationTests(unittest.TestCase):
             self.assertEqual(json.loads((path / 'result.json').read_text()), result['attempts'][i])
         self.assertNotIn('private', json.dumps(result))
         self.assertFalse((self.root / 'var/state/planner/capabilities.json').exists())
+
+    def test_normal_terminal_without_fresh_star_proof_stops_without_retry(self):
+        for kind in ('missing_star', 'wrong_scope', 'unknown_error'):
+            with self.subTest(kind=kind):
+                records = observations()
+                if kind == 'missing_star':
+                    del records[4]
+                elif kind == 'wrong_scope':
+                    records[4]['details']['first'] = ['OtherTask']
+                else:
+                    records.insert(3, event(20000, subtask='ProcessTask', first=['OtherTask'],
+                                          pre_task='', details={}, **{'class': 'asst::ProcessTask'}))
+                self.outcomes = ['success', 'success']
+                self.paths = []
+                with patch(__name__ + '.observations', return_value=records):
+                    result = self.run_experiment()
+                self.assertEqual(result['status'], 'failed', result)
+                self.assertEqual(len(result['attempts']), 1)
+                self.assertEqual(len(self.paths), 1)
+                attempt = result['attempts'][0]
+                self.assertEqual(attempt['execution']['status'], 'success')
+                self.assertEqual(attempt['battle_proof']['status'], 'unproven')
+                self.assertEqual(attempt['failure']['category'], 'unknown_execution_failure')
+                self.assertFalse(attempt['failure']['retryable'])
+                self.assertEqual(result['budget']['sanity_reserved'], 18)
+                self.assertEqual(result['budget']['sanity_released'], 0)
+                self.assertIn('三星通关证明不完整', result['message'])
+
+    def test_native_plot_replay_only_advances_with_fresh_star_proof(self):
+        self.outcomes = ['success']
+        with patch(__name__ + '.observations', return_value=plot_observations()):
+            result = self.run_experiment()
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(len(result['attempts']), 1)
+        self.assertEqual(result['attempts'][0]['battle_proof']['status'], 'observed')
+        self.assertTrue(result['attempts'][0]['battle_proof']['three_star'])
 
     def test_explicit_local_source_uses_same_budget_navigation_and_battle_proof(self):
         content = dict(self.content, doc={'title': 'Local strategy'}, difficulty=3)

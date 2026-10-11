@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import math
 
 from .copilot_core import callbacks_are_fresh, raid_recognized, two_star_recognized, zero_star_recognized, formation_auxiliary
+from .copilot_plot import PlotLifecycle
 
 
 @dataclass(frozen=True)
@@ -126,8 +127,19 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
     mission_failed = cleared = unsuccessful_stars = battle_completed = successful_stars = False
     zero_stars = False
     evidence = []
+    plots = PlotLifecycle()
     for event in events:
         msg, value = event['message'], event['details']
+        bound = (active is not None and value.get('taskchain') == 'Copilot'
+                 and active == (value.get('uuid'), value.get('taskid'))
+                 and type(value.get('taskid')) is int and not chain_failed)
+        plot = plots.observe(msg, value,
+                             during_battle=bound and battling and not battle_completed,
+                             after_battle=bound and battle_completed and not successful_stars and not unsuccessful_stars)
+        if plot == 'invalid':
+            return failure('unknown_execution_failure')
+        if plot in ('accepted', 'ignored_error'):
+            continue
         if value.get('taskchain') != 'Copilot':
             continue
         key = (value.get('uuid'), value.get('taskid'))
@@ -182,7 +194,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 return failure('unknown_execution_failure')
             battling = True
         if msg == 20002 and subtask == 'BattleProcessTask':
-            if not battling or battle_completed:
+            if not battling or battle_completed or not plots.complete:
                 return failure('unknown_execution_failure')
             battle_completed = True
         if msg == 20003 and what == 'BattleFormationOperUnavailable' and subtask == 'BattleFormationTask' and forming and not formed:
@@ -220,7 +232,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 battle_failed = True
                 mission_failed |= task == 'FightMissionFailed'
                 evidence.append({'sequence': event['sequence'], 'task': task})
-        if msg == 20000 and subtask == 'ProcessTask' and not battle_failed:
+        if msg == 20000 and subtask == 'ProcessTask':
             # v6.18.0 MultiCopilotTaskPlugin explicitly ignores this one
             # optional probe. A later, complete formation failure is still
             # required; no other process/navigation error is exempted.
@@ -236,7 +248,7 @@ def classify_failure(events, *, run_id, started_ns, finished_ns, task_id,
                 unexpected = True
         if msg == 20000 and subtask not in {'BattleFormationTask', 'BattleProcessTask', 'ProcessTask'}:
             unexpected = True
-    if (not loaded or not chain_failed or not all_done or unexpected
+    if (not loaded or not chain_failed or not all_done or unexpected or not plots.complete
             or (unsuccessful_stars and successful_stars)
             or (cleared and (mission_failed or zero_stars))):
         return failure('unknown_execution_failure')

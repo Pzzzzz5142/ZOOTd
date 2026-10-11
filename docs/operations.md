@@ -376,11 +376,11 @@ PRTS 同一列表中的双模式作业可能使用突袭 Tile ID。仅在游戏�
 
 每次运行在 `var/state/copilot/<run-id>/` 保存一次 `snapshot.json`（候选页、排序、Box 哈希及静态来源）和整轮 `result.json`。每个候选在 `attempts/<run-id>-NN/` 独立保存 `selection.json`、原始/固定编队后的作业、任务参数、`callbacks.jsonl`、`worker-result.json` 和 `result.json`；失败文件不覆盖。目录私有，不提交。结果记录 Box 哈希和时间而非完整账号数据，保留作业、静态数据、回调哈希。
 
-整轮 `success` 要求至少一个候选产生当次相同任务和设备的加载、编队、战斗、任务链及全部任务完成回调，加上正常进程退出；仅代表执行终态，不写代理能力账本。整轮结果中的 `attempts` 保留所有失败及成功，`stop_reason` 解释停止原因；每次尝试的 `failure.category`、`failure.retryable`、`failure_phase` 与日志用于诊断。不能把失败链发出的 `AllTasksCompleted` 当成功。
+普通关整轮 `success` 要求至少一个候选有新鲜、同任务和设备的加载、编队、战斗、三星模板观察、任务链及全部任务完成回调，加上正常进程退出。`execution.status=success` 仅表示原生执行终态；若 `battle_proof=unproven`，尝试及整轮均失败，不换候选、不自动继续。突袭仍按独立执行终态契约，不生成普通三星/代理证明。整轮结果中的 `attempts` 保留所有失败及成功，`stop_reason` 解释停止原因；每次尝试的 `failure.category`、`failure.retryable`、`failure_phase` 与日志用于诊断。不能把失败链发出的 `AllTasksCompleted` 当成功，也不因此写代理能力账本。
 
 Phase 5 的 `battle_proof` 位于各尝试结果：默认 `observed` 只表示当次三星模板观察，`unproven` 表示证据不足，不登记账本。显式证明模式如下：
 
-MAA 跳过战中剧情后可能发出 `SkipThePreBattlePlot` 的 ProcessTask 错误。只有同一已开始战斗链先完成跳过按钮与确认按钮的模板识别和点击，才将其视为已完成剧情跳过的尾部错误；无前置识别、错误身份、乱序、重复尾部错误及其他错误仍拒绝。随后仍必须收到本次完整战斗、三星模板和任务终态，剧情跳过不能代替通关证据。
+剧情辅助流程按[原生生命周期契约](copilot/phase-5-proof.md#剧情辅助回调与普通关成功)校验，允许同一战斗中多次独立跳过，以及结算等待链中的重复剧情。只有战中已匹配 Skip 的当前独立 helper，可将同 scope、正确 pre_task 且无附加原因的空 ProcessTaskError 作为原生忽略的尾部；结算等待链的错误与未知错误仍停止。剧情点击不能代替通关、重试或退款证据。
 
 MAA 技能列表向下滑动的辅助 ProcessTask 可能使用默认任务 ID 0。证明模块只在同设备、已加载作业且正在编队时接受该具名 Swipe/JustReturn 辅助回调；它不能代替属于本次真实任务 ID 的编队、战斗、三星或终态证据，错误回调和其他默认 ID 回调仍拒绝。查找助战时，详情退出同样可能使用默认 ID 0：只接受同设备、真实编队阶段的 `SupportList-DetailPanel-Leave` 入口、`ClickRect` 动作及原生详情标记模板，仍不能替代编队或战斗终态。
 
