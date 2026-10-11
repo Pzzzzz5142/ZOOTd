@@ -6,6 +6,7 @@ import math
 import time
 
 from .copilot_core import callbacks_are_fresh, formation_auxiliary
+from .copilot_plot import PlotLifecycle
 from .navigation_vision import resource_file
 from .copilot_navigation import zero_result_friend_tasks
 
@@ -38,13 +39,21 @@ class LeakGuard:
         self.uuid = None
         self.loaded = self.formed = self.active = False
         self.baseline = None
+        self.plots = PlotLifecycle()
 
     def observe(self, message, value):
-        if value.get('taskchain') != 'Copilot' or value.get('taskid') != self.task_id:
+        if (value.get('taskchain') != 'Copilot' or type(value.get('taskid')) is not int
+                or value.get('taskid') != self.task_id):
             return
         if message == 10001 and isinstance(value.get('uuid'), str) and value['uuid']:
             self.uuid = value['uuid']
         if value.get('uuid') != self.uuid or self.uuid is None:
+            return
+        plot = self.plots.observe(message, value, during_battle=self.active, after_battle=False)
+        if plot in ('accepted', 'ignored_error'):
+            return
+        if plot == 'invalid':
+            self.active = False
             return
         if message == 20003 and value.get('what') == 'CopilotListLoadTaskFileSuccess':
             self.loaded = True
@@ -57,7 +66,11 @@ class LeakGuard:
             self.active = False
 
     def inspect(self, image):
-        """Stop on red even if polling missed blue; refund proof still needs both."""
+        """Best-effort red-flag detection; blue is not a full numeric HP proof.
+
+        A red first sample can trigger abandonment; refund still needs both
+        ordered image witnesses and the independently proven native return.
+        """
         import cv2
         if not self.active:
             return None
@@ -175,8 +188,9 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
     except (KeyError, TypeError, ValueError, OSError):
         return rejected
 
-    loaded = forming = formed = battling = stopped = custom = completed = done = False
+    loaded = forming = formed = battling = battle_returned = stopped = custom = completed = done = False
     chain_started = False
+    plots = PlotLifecycle()
     observed = []
     battle_start = None
     abort_id = witness['abort_task_id']
@@ -216,6 +230,15 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                 and value.get('taskid') == task_id and value.get('uuid') == uuid
                 and event['recorded_ns'] >= requested):
             return rejected
+        bound = (value.get('taskchain') == 'Copilot' and value.get('uuid') == uuid
+                 and type(value.get('taskid')) is int and value.get('taskid') == task_id)
+        plot = plots.observe(msg, value,
+                             during_battle=bound and battling and not battle_returned and not stopped,
+                             after_battle=False)
+        if plot == 'invalid':
+            return rejected
+        if plot in ('accepted', 'ignored_error'):
+            continue
         if value.get('taskchain') == 'Copilot':
             if (not forming and msg == 20000 and value.get('subtask') == 'ProcessTask'
                     and value.get('first') == ['NotUsePrts'] and detail == {}):
@@ -250,8 +273,13 @@ def abort_proof(events, receipt, *, run, resources, started_ns, finished_ns,
                     and event['recorded_ns'] < requested
                     or 'Stars-' in str(detail.get('task', ''))):
                 return rejected
+            if msg == 20002 and value.get('subtask') == 'BattleProcessTask':
+                if not plots.complete:
+                    return rejected
+                battle_returned = True
             if msg == 10004:
-                if not battling or not battle_start <= witness['baseline']['recorded_ns'] <= requested <= event['recorded_ns']:
+                if (not battling or not plots.complete
+                        or not battle_start <= witness['baseline']['recorded_ns'] <= requested <= event['recorded_ns']):
                     return rejected
                 stopped = True
         elif value.get('taskchain') == 'Custom' and value.get('taskid') == abort_id:

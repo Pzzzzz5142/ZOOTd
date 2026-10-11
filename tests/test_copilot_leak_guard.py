@@ -15,6 +15,7 @@ from maa_planner.copilot_core import worker
 from maa_planner.copilot_leak_guard import LeakGuard, abort_proof, abort_tasks
 from maa_planner.copilot_retry import classify_failure
 from tests.test_copilot_preflight import FakeCore, Function
+from tests.test_copilot_proof import plot_protocol
 
 
 class LeakGuardTests(unittest.TestCase):
@@ -77,6 +78,113 @@ class LeakGuardTests(unittest.TestCase):
                        task_id=7, stage='stage', code='MN-EX-7', filename='/execution.json', exit_code=0, raid=False)
         context.update(changes)
         return abort_proof(records, receipt, **context)
+
+    def with_plot(self, sequence, index=5):
+        rows = self.records()
+        rows[index:index] = copy.deepcopy(sequence)
+        for i, row in enumerate(rows):
+            row.update(run_id=self.run.name, sequence=i, recorded_ns=100+i)
+        return rows
+
+    def plot_receipt(self, rows, receipt):
+        result = copy.deepcopy(receipt)
+        witness = result['leak_abort']
+        # Keep image/stop timing valid when plot insertion shifts callbacks;
+        # phase counterexamples must fail on their helper, not a stale witness.
+        for row in rows:
+            if row['details'].get('subtask') == 'BattleProcessTask':
+                if row['message'] == 20001:
+                    witness['baseline']['recorded_ns'] = row['recorded_ns']
+                elif row['message'] == 20002:
+                    witness['leak']['recorded_ns'] = witness['requested_ns'] = row['recorded_ns']
+        return result
+
+    def test_native_plot_helpers_keep_guard_active_and_preserve_full_refund_proof(self):
+        old = plot_protocol()['during_battle']
+        current = plot_protocol('plot-zero-match.json')['during_battle']
+        sequences = (old, current, [current[-1]],
+                     [copy.deepcopy(e) for _ in range(4) for e in old + current])
+        receipt = self.receipt()
+        for sequence in sequences:
+            guard = LeakGuard([self.resource], self.run, 7)
+            for row in self.with_plot(sequence)[:5+len(sequence)]:
+                guard.observe(row['message'], row['details'])
+            self.assertTrue(guard.active)
+            self.assertTrue(guard.plots.complete)
+            rows = self.with_plot(sequence)
+            proof = self.prove(rows, self.plot_receipt(rows, receipt))
+            self.assertEqual(proof['status'], 'verified', proof)
+            self.assertEqual(proof['sanity_outcome'], 'refunded')
+        # Auxiliary calls do not replace any part of the stop/abandonment chain.
+        rows = self.with_plot(current)
+        receipt = self.plot_receipt(rows, receipt)
+        for index in range(5+len(current), len(rows)):
+            if rows[index]['details'].get('subtask') == 'BattleProcessTask':
+                continue  # Native unwind completion is optional after stop.
+            changed = copy.deepcopy(rows)
+            changed.pop(index)
+            for i, row in enumerate(changed):
+                row['sequence'] = i
+            self.assertEqual(self.prove(changed, receipt)['status'], 'unproven')
+        del receipt['leak_abort']['baseline']
+        self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+
+    def test_plot_refund_rejects_wrong_identity_phase_pending_and_unknown_errors(self):
+        sequence = plot_protocol('plot-zero-match.json')['during_battle']
+        receipt = self.receipt()
+        for field, value in [('uuid', 'wrong'), ('taskid', 8), ('taskid', True),
+                             ('taskchain', 'Custom'), ('class', 'Other'), ('subtask', 'Other'),
+                             ('first', ['Other']), ('first', ['Copilot@WaitUntilEndOfAction']),
+                             ('pre_task', 'SkipThePreBattlePlot'), ('why', 'UnknownError'),
+                             ('what', 'ExceededLimit'), ('details', {'error': 'UnknownError'})]:
+            changed = copy.deepcopy(sequence)
+            changed[-1]['details'][field] = value
+            with self.subTest(field=field):
+                self.assertEqual(self.prove(self.with_plot(changed), receipt)['status'], 'unproven')
+        for index in (0, 2, 3, 4, 6, 7, 8):
+            rows = self.with_plot(sequence, index)
+            self.assertEqual(self.prove(rows, self.plot_receipt(rows, receipt))['status'], 'unproven')
+        for partial in (sequence[:1], sequence[:2], sequence[:3],
+                        sequence[:1] + [sequence[-1]]):
+            rows = self.with_plot(partial)
+            self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+            rows = [e for e in rows if e['details'].get('subtask') != 'BattleProcessTask'
+                    or e['message'] != 20002]
+            for i, row in enumerate(rows):
+                row['sequence'] = i
+            self.assertEqual(self.prove(rows, receipt)['status'], 'unproven')
+
+    def test_guard_known_helpers_do_not_hide_unknown_errors_or_expand_phase(self):
+        sequence = plot_protocol('plot-zero-match.json')['during_battle']
+        cases = [sequence[:1] + [sequence[-1]]]
+        for field, value in [('first', ['Other']), ('class', 'Other'),
+                             ('pre_task', 'SkipThePreBattlePlot'), ('why', 'UnknownError')]:
+            changed = copy.deepcopy(sequence)
+            changed[-1]['details'][field] = value
+            cases.append(changed)
+        for changed in cases:
+            guard = LeakGuard([self.resource], self.run, 7)
+            for row in self.with_plot(changed)[:5+len(changed)]:
+                guard.observe(row['message'], row['details'])
+            self.assertFalse(guard.active)
+            self.assertIsNone(guard.inspect(self.images['BattleHpFlag2']))
+        for index in (0, 3, 4, 6, 7):
+            guard = LeakGuard([self.resource], self.run, 7)
+            rows = self.records()[:index] + copy.deepcopy(sequence)
+            for row in rows:
+                guard.observe(row['message'], row['details'])
+            self.assertFalse(guard.active)
+        # Other identities cannot create a pending helper in this guard.
+        guard = LeakGuard([self.resource], self.run, 7)
+        for row in self.records()[:5]:
+            guard.observe(row['message'], row['details'])
+        for field, value in [('uuid', 'other'), ('taskid', 8), ('taskchain', 'Fight')]:
+            row = copy.deepcopy(sequence[0])
+            row['details'][field] = value
+            guard.observe(row['message'], row['details'])
+        guard.observe(sequence[-1]['message'], sequence[-1]['details'])
+        self.assertTrue(guard.active)
+        self.assertTrue(guard.plots.complete)
 
     def test_only_bound_started_battle_can_trigger(self):
         guard = LeakGuard([self.resource], self.run, 7)
@@ -298,6 +406,9 @@ class LeakGuardTests(unittest.TestCase):
                     self.emit(20003, what='CopilotListLoadTaskFileSuccess')
                     self.emit(20002, subtask='BattleFormationTask')
                     self.emit(20001, subtask='BattleProcessTask')
+                    for row in plot_protocol('plot-zero-match.json')['during_battle']:
+                        self.emit(row['message'], **{k: v for k, v in row['details'].items()
+                                  if k not in ('uuid', 'taskid', 'taskchain')})
                     self.running = True
                     return 1
                 self.running = False
