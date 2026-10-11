@@ -1,5 +1,6 @@
 import copy
 import json
+import sys
 import tempfile
 import time
 import unittest
@@ -440,8 +441,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.provider.get.side_effect = [self.content,
             dict(self.content, actions=[{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}])]
         original = self.fake_execute
-        def execute_abort(root, run, address):
-            status = original(root, run, address)
+        def execute_abort(root, run, address, *, interpreter):
+            status = original(root, run, address, interpreter=interpreter)
             if len(self.paths) == 1:
                 (run / 'worker-result.json').write_text(json.dumps({
                     'run_id': run.name, 'phase': 'battle_aborted', 'exit_code': status}))
@@ -533,7 +534,8 @@ class RetryIntegrationTests(unittest.TestCase):
         self.paths = []
         self.execute = mock('execute', side_effect=self.fake_execute)
 
-    def fake_execute(self, root, run, address):
+    def fake_execute(self, root, run, address, *, interpreter):
+        self.assertEqual(interpreter, sys.executable)
         self.paths.append(run)
         params = json.loads((run / 'params.json').read_text())
         self.assertEqual(params['loop_times'], 1)

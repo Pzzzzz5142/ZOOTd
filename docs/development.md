@@ -13,7 +13,7 @@
 - `bin/zootd`：统一宿主入口；`run` 转入完整启动器。
 - `bin/zootd-codex-advisor` / `bin/zootd-codex-supervisor`：分别承载规划 NOOP 诊断和非完整模式异常分类；两者均为只读结构化 adapter。
 - `bin/zootd-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
-- `requirements.txt` / `.venv/`：官方 Python Codex SDK 的项目本地运行环境；不固定 SDK 版本，随最新稳定版升级，SDK 自动安装配套 Codex runtime。
+- `requirements.txt` / `.venv/`：官方 Python Codex SDK 与 Copilot 导航/证明视觉依赖的项目本地运行环境；不固定 SDK 版本，随最新稳定版升级，SDK 自动安装配套 Codex runtime。Copilot 父进程和 worker 使用同一解释器，在设备及预算操作前检查所需模块；新增证明依赖时同步更新直接依赖声明和该检查。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
 - `maa_planner/dashboard.py` / `skland_monitor.py` / `web/`：默认监听所有 IPv4 接口的标准库 HTTP 服务与无构建步骤的中文 Web 面板；森空岛后台只读同步独立于运行证据。`tests/test_dashboard.py` 验证历史证据、分页及只读 HTTP 边界；`tests/test_skland_monitor.py` 验证监控字段最小化、周期、并发、旧数据与错误边界。
 - `maa_planner/operator_box.py` / `skland.py` / `box_cli.py`：独立 experimental Box 模型、森空岛协议与本机交互登录；`tests/test_skland.py` 使用合成 fixture 离线验证，不发送短信或调用真实账号。进度见 [Copilot 路线图](copilot/README.md)。

@@ -349,7 +349,11 @@ case "${command_name}" in
     copilot-run)
         shift
         export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
-        exec python3 -m maa_planner.copilot_run --project-root "${project_root}" "$@"
+        copilot_python="${project_root}/.venv/bin/python"
+        if [[ ! -x "${copilot_python}" ]]; then
+            copilot_python=python3
+        fi
+        exec "${copilot_python}" -m maa_planner.copilot_run --project-root "${project_root}" "$@"
         ;;
     copilot-query|copilot-get)
         shift

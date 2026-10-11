@@ -1,2 +1,4 @@
 openai-codex
+numpy
+opencv-python
 rapidocr-onnxruntime==1.2.3
