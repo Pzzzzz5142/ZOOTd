@@ -2,6 +2,7 @@ import copy
 import io
 import json
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -469,7 +470,8 @@ class CopilotRunTests(unittest.TestCase):
                 def fake_device(*_):
                     yield 'fixture-device'
                 dev = mock('device', side_effect=fake_device)
-                def fake_execute(root, run, address):
+                def fake_execute(root, run, address, *, interpreter):
+                    self.assertEqual(interpreter, sys.executable)
                     params = json.loads((run / 'params.json').read_text())
                     self.assertEqual(params['loop_times'], 1)
                     self.assertIs(params['use_sanity_potion'], potion)

@@ -307,6 +307,8 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 
 ### 单次 Copilot 通关实验（Phase 3）
 
+`copilot-run` 的父进程优先使用可执行的项目 `.venv/bin/python`，worker 固定复用父进程的 `sys.executable`，不读取仅属于 Codex adapter 的 `MAA_CODEX_SDK_PYTHON`。项目环境缺失时可使用 PATH 中的 `python3`，但所选环境必须能实际导入 `cv2`、`numpy` 和 `rapidocr_onnxruntime`；依赖检查在与项目环境更新器共用的设备锁内执行；缺依赖或二进制导入失败会在 Box 同步、理智预留及任何设备操作之前以 `python_environment` 失败，并提示通过 `./scripts/bootstrap.sh` 修复项目环境。已存在但依赖损坏的项目环境不会静默换用另一个解释器。正常通关与漏怪弃战证明在同一环境读取；结果记录 `python_environment` 中的解释器和依赖名称。视觉依赖由 `requirements.txt` 声明并随 bootstrap 的项目环境安装，不向系统 Python 临时安装。
+
 ```bash
 # 禁止借干员（默认配置）
 ./bin/zootd copilot-run NL-8 --profile no-support

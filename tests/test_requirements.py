@@ -503,10 +503,9 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertNotIn("subprocess", sdk)
         self.assertIn("ephemeral=False", recovery_adapter)
         self.assertFalse((ROOT / "maa_planner/codex_exec.py").exists())
-        self.assertEqual(
-            (ROOT / "requirements.txt").read_text().strip(),
-            "openai-codex\nrapidocr-onnxruntime==1.2.3",
-        )
+        requirements = set((ROOT / "requirements.txt").read_text().splitlines())
+        self.assertTrue({"openai-codex", "numpy", "opencv-python",
+                         "rapidocr-onnxruntime==1.2.3"}.issubset(requirements))
         for adapter_name in (
             "zootd-codex-advisor",
             "zootd-codex-supervisor",

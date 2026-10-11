@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import copy
 import fcntl
+import importlib
 import json
 import os
 import re
@@ -36,6 +37,7 @@ from .util import atomic_write_json, canonical_json, sha256_bytes
 ACCOUNT_NOTICE = ('账号提示：请确保森空岛 Box 与游戏当前登录的是同一国服官服账号；'
                   '程序不自动识别或核对游戏 UID，能力记录归入配置的本地 account 别名。')
 DEFAULT_ADD_TRUST = True
+COPILOT_PYTHON_DEPENDENCIES = ('cv2', 'numpy', 'rapidocr_onnxruntime')
 
 
 def failure_message(result):
@@ -71,6 +73,7 @@ def failure_message(result):
             and attempt.get('battle_proof', {}).get('status') == 'unproven'):
         return '任务已结束，但本次三星通关证明不完整，已停止继续执行；请查看本次运行记录。'
     return {
+        'python_environment': 'Copilot 的 Python 视觉依赖不可用；请运行 ./scripts/bootstrap.sh 修复项目 .venv 后再试。',
         'readiness': '运行准备失败；请检查工作区是否干净、运行锁及 MAA runtime 状态。',
         'box': '森空岛 Box 同步失败；请检查登录凭据、绑定角色和网络。',
         'proof_context': '无法准备能力记录；请检查本地 account 配置和关卡活动数据。',
@@ -81,6 +84,21 @@ def failure_message(result):
 
 class ExperimentError(RuntimeError):
     pass
+
+
+def require_python_environment():
+    """Check the actual parent before budget/device work; its worker shares it."""
+    unavailable = []
+    for name in COPILOT_PYTHON_DEPENDENCIES:
+        try:
+            importlib.import_module(name)
+        except Exception:
+            # Missing modules and broken binary dependencies are both unusable.
+            # Do not echo arbitrary import diagnostics into the account audit.
+            unavailable.append(name)
+    if unavailable:
+        raise ExperimentError('Copilot Python dependencies unavailable: ' + ', '.join(unavailable)
+                              + '; run ./scripts/bootstrap.sh to repair the project .venv')
 
 
 def command(args, **kwargs):
@@ -230,14 +248,17 @@ def bind_formation(content, result, catalog):
     return content
 
 
-def execute(root, run, address):
+def execute(root, run, address, *, interpreter=None):
     child = None
     with (run / 'worker.log').open('x') as output:
         env = dict(os.environ, PYTHONPATH=str(root),
                    LD_LIBRARY_PATH=str(root / 'var/data/lib'))
         try:
             python = root / '.venv/bin/python'
-            interpreter = str(python) if python.exists() else sys.executable
+            # Navigation retains its existing default; Copilot explicitly binds
+            # the worker to the same environment that passed parent readiness.
+            if interpreter is None:
+                interpreter = str(python) if python.exists() else sys.executable
             child = subprocess.Popen([interpreter, '-m', 'maa_planner.copilot_core',
                                       str(root), str(run), address],
                                      cwd=run, env=env, stdout=output, stderr=subprocess.STDOUT)
@@ -371,7 +392,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             audit['reset_strategy'] = 'fresh_core_startup_navigation'
         phase = 'execution'
         started_ns = time.monotonic_ns()
-        status = execute(root, run, address)
+        status = execute(root, run, address, interpreter=sys.executable)
         finished_ns = time.monotonic_ns()
         audit['worker_exit_code'] = status
         phase = 'terminal'
@@ -520,7 +541,16 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
     phase = 'readiness'
     budget = None
     try:
+        audit['python_environment'] = {'executable': sys.executable,
+                                       'dependencies': list(COPILOT_PYTHON_DEPENDENCIES),
+                                       'ready': False}
         with device_lock(root):
+            # The project environment updater holds this same lock, so its
+            # dependencies stay stable from this check through worker exit.
+            phase = 'python_environment'
+            require_python_environment()
+            audit['python_environment']['ready'] = True
+            phase = 'readiness'
             if command(['git', '-C', str(root), 'status', '--porcelain']).strip():
                 raise ExperimentError('Copilot execution requires a clean Git worktree')
             audit['git_head'] = command(['git', '-C', str(root), 'rev-parse', 'HEAD']).strip()
