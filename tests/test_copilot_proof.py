@@ -34,8 +34,8 @@ def prove(records, **changes):
     return battle_proof(records, **context)
 
 
-def plot_protocol():
-    return json.loads((Path(__file__).parent / 'fixtures/copilot/plot-lifecycle.json').read_text())
+def plot_protocol(filename='plot-lifecycle.json'):
+    return json.loads((Path(__file__).parent / 'fixtures/copilot' / filename).read_text())
 
 
 def plot_observations(during=None, after=None):
@@ -236,6 +236,55 @@ class CopilotProofTests(unittest.TestCase):
                     changed[index]['details']['details'][field] = value
                     self.assert_unproven(plot_observations(**{key: changed}))
 
+    def test_native_zero_match_helpers_before_between_and_after_clicks(self):
+        protocol = plot_protocol('plot-zero-match.json')
+        zero_match = protocol['during_battle'][-1]
+        matched_error = plot_protocol()['during_battle'][4:]
+        # The native outer Matcher has no callback; each fresh helper can emit
+        # only an empty error. Confirm and error both end that invocation.
+        for sequence in ([zero_match], [zero_match] * 7,
+                         protocol['during_battle'],
+                         [zero_match] * 3 + protocol['during_battle'] + matched_error
+                         + [zero_match] * 4 + protocol['during_battle']):
+            with self.subTest(callbacks=len(sequence)):
+                self.assertTrue(prove(plot_observations(
+                    during=[copy.deepcopy(e) for e in sequence],
+                    after=protocol['after_battle']))['three_star'])
+
+    def test_zero_match_helpers_preserve_identity_phase_and_error_guards(self):
+        error = plot_protocol('plot-zero-match.json')['during_battle'][-1]
+        for field, value in [('uuid', 'wrong'), ('taskid', 8), ('taskid', True),
+                             ('taskchain', 'Fight'), ('class', 'Other'), ('subtask', 'Other'),
+                             ('first', ['Other']), ('first', ['Copilot@SkipThePreBattlePlot']),
+                             ('first', ['Copilot@WaitUntilEndOfAction']),
+                             ('why', 'UnknownError'), ('what', 'ExceededLimit'),
+                             ('pre_task', 'SkipThePreBattlePlot'), ('pre_task', None),
+                             ('details', {'error': 'UnknownError'}), ('details', None)]:
+            changed = copy.deepcopy(error)
+            changed['details'][field] = value
+            with self.subTest(field=field, value=value):
+                self.assert_unproven(plot_observations(during=[changed]))
+        for missing in ('first', 'pre_task', 'details'):
+            changed = copy.deepcopy(error)
+            del changed['details'][missing]
+            self.assert_unproven(plot_observations(during=[changed]))
+        # A zero-match error cannot close an in-progress click or a helper whose
+        # last matched Skip had a different native predecessor.
+        clicks = plot_protocol()['during_battle'][:2]
+        self.assert_unproven(plot_observations(during=clicks[:1] + [error]))
+        again = copy.deepcopy(clicks)
+        for e in again:
+            e['details']['pre_task'] = 'SkipThePreBattlePlot'
+        self.assert_unproven(plot_observations(during=clicks + again + [error]))
+        for index in (0, 2, 3, 4, 5, 6):
+            records = observations()
+            records[index:index] = [copy.deepcopy(error)]
+            self.assert_unproven(stamp(records))
+        for field, value in [('run_id', 'old-run'), ('recorded_ns', 99)]:
+            records = plot_observations(during=[error])
+            records[4][field] = value
+            self.assert_unproven(records)
+
     def test_plot_lifecycle_rejects_missing_clicks_unknown_errors_and_wrong_phase(self):
         protocol = plot_protocol()
         for scope in ('during_battle', 'after_battle'):
@@ -243,10 +292,11 @@ class CopilotProofTests(unittest.TestCase):
             key = 'during' if scope == 'during_battle' else 'after'
             for index in range(len(sequence)):
                 self.assert_unproven(plot_observations(**{key: sequence[:index] + sequence[index + 1:]}))
-            self.assert_unproven(plot_observations(**{key: sequence + [sequence[-1]]}))
+            # Duplicate click completion is invalid. Duplicate standalone empty
+            # errors can instead represent consecutive fresh zero-match probes.
+            completed = sequence[1]
+            self.assert_unproven(plot_observations(**{key: sequence[:2] + [completed] + sequence[2:]}))
         error = protocol['during_battle'][-1]
-        self.assert_unproven(plot_observations(during=[error]))
-        self.assert_unproven(plot_observations(during=protocol['during_battle'][:4] + [error]))
         self.assert_unproven(plot_observations(during=protocol['during_battle'][:-1]))
         changed = copy.deepcopy(protocol['during_battle'])
         changed[-1]['details']['details'] = {'error': 'UnknownError'}
@@ -262,7 +312,8 @@ class CopilotProofTests(unittest.TestCase):
             self.assert_unproven(stamp(records))
 
     def test_plot_never_substitutes_for_fresh_stars_or_battle_terminal(self):
-        records = plot_observations()
+        protocol = plot_protocol('plot-zero-match.json')
+        records = plot_observations(during=protocol['during_battle'], after=protocol['after_battle'])
         for index, e in enumerate(records):
             value = e['details']
             if (e['message'] in (10001, 10002, 3)

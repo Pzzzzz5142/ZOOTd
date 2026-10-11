@@ -81,19 +81,24 @@ copilot ID/hash
 剧情语法，不依赖活动名称、场景数或固定尝试次数：
 
 - 战中 BattleHelper 的 `first=[SkipThePreBattlePlot]` helper 可重复匹配
-  Skip；Confirm 无 next，会结束当前调用，之后可创建新 helper。已完成
-  Skip 点击的当前 helper 可用正确 pre_task、空 details 且无 why/what
-  的 ProcessTaskError 结束，因为原生明确忽略该调用返回值。无匹配点击、
-  未完成点击、已结束调用及重复尾部错误不能获得豁免。
+  Skip；Confirm 无 next，会结束当前调用，之后可创建新 helper。外层
+  Matcher 与新 helper 分别截图，内部首次匹配可能失败，此时只有
+  `pre_task=''`、空 details 且无 why/what 的 ProcessTaskError，没有点击
+  回调。这类新探测可在确认或失败后重复。已匹配 Skip 的 helper 也可
+  以空错误结束，其 pre_task 必须等于最后完成的 Skip 点击所记录的
+  前驱。原生明确忽略上述 helper 返回值；缺失 details、错误前驱及
+  未完成点击不能获得豁免。
 - 战斗完成后，`first=[Copilot@WaitUntilEndOfAction]` 的 Skip/Confirm
   属于结算流程，可经 Wait 再次进入剧情。其 ProcessTaskError 不被忽略。
 - 每个剧情节点必须有匹配的 Start/Completed、task、pre_task、ClickSelf、
   MatchTemplate、原生模板和有效 score；身份与阶段由外层新鲜证明提供。
-  任务生命周期必须关闭，之后的完整战斗、三星和终态仍独立必需。
+  零匹配探测没有剧情节点，不能补出缺失的点击或战斗事实。任务生命周期
+  必须关闭，之后的完整战斗、三星和终态仍独立必需。
 
 兼容依据及脱敏协议见[样本说明](../../tests/fixtures/copilot/README.md)。
 v5.28.0 与 v6.18.0 的战中 helper 与 Skip 自循环机制相同，战后 root
-已发生变化；因此采用小型共享状态机，支持已知任务边上的任意有限重复，
+及失败时前驱更新时机已发生变化；当前前驱契约以 v6.18.0 为准。因此
+采用小型共享状态机，支持已知任务边上的任意有限重复，
 不为未知 scope 自动扩展错误豁免。无关附加字段可以接受；原生语义或
 任务边变化时需复核该 adapter。两版本比较不能估算破坏频率，也不代表
 旧版三星回调全兼容。回放与合成场景不替代新的实机验收；不修改或追认

@@ -101,6 +101,34 @@ def classify(records, **kw):
 
 
 class RetryClassificationTests(unittest.TestCase):
+    def test_zero_match_optional_helper_cannot_supply_failure_or_refund_evidence(self):
+        protocol = plot_protocol('plot-zero-match.json')
+        error = protocol['during_battle'][-1]
+        for kind, cost in [('zero_star_complete', 'refunded'), ('two_star_complete', 'charged_or_unknown')]:
+            records = failed_events(kind)
+            records[6:6] = copy.deepcopy(protocol['after_battle'])
+            records[5:5] = [copy.deepcopy(error) for _ in range(3)] + copy.deepcopy(protocol['during_battle'])
+            outcome = classify(stamp(records))
+            self.assertEqual(outcome['category'], 'battle_failed', outcome)
+            self.assertTrue(outcome['retryable'])
+            self.assertEqual(outcome['sanity_outcome'], cost)
+            for field, value in [('uuid', 'wrong'), ('taskid', 8), ('taskchain', 'Custom'),
+                                 ('first', ['Other']), ('pre_task', 'SkipThePreBattlePlot'),
+                                 ('class', 'Other'), ('why', 'unknown error'),
+                                 ('details', {'error': 'UnknownError'})]:
+                changed = copy.deepcopy(records)
+                changed[5]['details'][field] = value
+                self.assertFalse(classify(stamp(changed))['retryable'])
+        records = plot_observations(during=[error], after=[])
+        records[1]['details']['details']['file_name'] = '/attempt/execution.json'
+        for include_stars in (True, False):
+            changed = copy.deepcopy(records)
+            if not include_stars:
+                changed = [e for e in changed if e['details'].get('details', {}).get('task') != 'StageDrops-Stars-3']
+            outcome = classify(stamp(changed))
+            self.assertFalse(outcome['retryable'])
+            self.assertEqual(outcome['sanity_outcome'], 'charged_or_unknown')
+
     def test_native_plot_lifecycle_is_auxiliary_to_proven_failure_and_cost(self):
         protocol = plot_protocol()
         for kind, cost in [('zero_star_complete', 'refunded'), ('two_star_complete', 'charged_or_unknown')]:
@@ -762,6 +790,17 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertEqual(len(result['attempts']), 1)
         self.assertEqual(result['attempts'][0]['battle_proof']['status'], 'observed')
         self.assertTrue(result['attempts'][0]['battle_proof']['three_star'])
+
+    def test_zero_match_plot_replay_advances_with_full_proof(self):
+        protocol = plot_protocol('plot-zero-match.json')
+        self.outcomes = ['success']
+        records = plot_observations(during=protocol['during_battle'], after=protocol['after_battle'])
+        with patch(__name__ + '.observations', return_value=records):
+            result = self.run_experiment()
+        self.assertEqual(result['status'], 'success', result)
+        self.assertEqual(len(result['attempts']), 1)
+        self.assertEqual(result['attempts'][0]['battle_proof']['status'], 'observed')
+        self.assertEqual(result['budget']['sanity_released'], 0)
 
     def test_explicit_local_source_uses_same_budget_navigation_and_battle_proof(self):
         content = dict(self.content, doc={'title': 'Local strategy'}, difficulty=3)

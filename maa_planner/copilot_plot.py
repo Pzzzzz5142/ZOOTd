@@ -13,9 +13,10 @@ class PlotLifecycle:
     """Recognize a finite task grammar, not a fixed number of story scenes.
 
     Callers supply the fresh execution identity and battle phase. Standalone
-    BattleHelper calls end at Confirm, or at an empty native error after a
-    matched Skip. The settlement process loops through Wait; its errors are
-    never optional. Neither lifecycle establishes battle success or a refund.
+    BattleHelper calls end at Confirm, or at an empty native error, including
+    failure before their first match. The settlement process loops through
+    Wait; its errors are never optional. Neither lifecycle establishes battle
+    success or a refund.
     """
 
     def __init__(self):
@@ -45,10 +46,15 @@ class PlotLifecycle:
         previous = self.previous[root]
         if message == 20000:
             # BattleHelper deliberately ignores this ProcessTask return value.
-            # Confirm normally ends that helper; an error must belong to a
-            # currently open Skip attempt, not a prior successful invocation.
-            if (not standalone or previous != SKIP or self.pending is not None
-                    or detail != {} or value.get('pre_task') != self.error_previous):
+            # Its outer Matcher and the new ProcessTask use separate images:
+            # a fresh helper can fail before matching any node. Such a call
+            # emits only an error with an empty pre_task, even after Confirm or
+            # another failed probe. Once Skip matched, native pre_task instead
+            # retains the predecessor captured for that completed click.
+            expected_error_previous = self.error_previous if previous == SKIP else ''
+            if (not standalone or self.pending is not None
+                    or value.get('details') != {}
+                    or value.get('pre_task') != expected_error_previous):
                 return 'invalid'
             self.previous[root] = None
             self.error_previous = None
