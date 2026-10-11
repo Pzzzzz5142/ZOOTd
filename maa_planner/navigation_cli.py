@@ -17,25 +17,68 @@ from .runtime_receipt import validate_runtime_receipt
 from .util import atomic_write_json
 
 
+def _startup_zero_limit(value):
+    """Native StartUp disables these nodes instead of executing their clicks."""
+    detail = value.get('details', {})
+    return (value.get('taskchain') == 'StartUp' and value.get('subtask') == 'ProcessTask'
+            and value.get('what') == 'ExceededLimit' and isinstance(detail, dict)
+            and detail.get('task') in ('ReturnButton', 'StartButton1')
+            and type(detail.get('exec_times')) is int and detail['exec_times'] == 0
+            and type(detail.get('max_times')) is int and detail['max_times'] == 0
+            and detail.get('action') is None)
+
+
 def navigation_complete(events, code, *, route=None):
     """Bind target OCR to the same completed Custom chain and final task list."""
     active = completed = None
     matched = finished = False
     chain_start = 0
+    startup = transition_device = None
+    startup_process_ids = set()
+    startup_completed = startup_transition = False
     for index, event in enumerate(events):
         msg, value = event['message'], event['details']
+        key = (value.get('uuid'), value.get('taskid'))
+        if (msg == 20003 and startup is not None and not startup_completed
+                and key[0] == startup[0] and type(key[1]) is int
+                and key[1] in startup_process_ids and _startup_zero_limit(value)):
+            # A Runout notification follows an observed native ProcessTask;
+            # it is harmless only if the enclosing StartUp later completes.
+            startup_transition = True
+            transition_device = startup[0]
+            continue
         if (msg in (0, 1, 10000, 10004, 20000, 20004)
                 or value.get('what') in ('GameOffline', 'Disconnect', 'Reconnecting', 'ExceededLimit')
                 or value.get('taskchain') in ('Fight', 'Copilot')):
             return False
-        key = (value.get('uuid'), value.get('taskid'))
         if msg == 10001:
+            if startup_transition or (transition_device is not None and key[0] != transition_device):
+                return False
+            startup = key if (value.get('taskchain') == 'StartUp' and type(key[1]) is int
+                              and key[1] >= 0 and isinstance(key[0], str) and key[0]) else None
+            startup_process_ids.clear()
+            startup_completed = False
             completed = None
             finished = False
             active = key if (value.get('taskchain') == 'Custom' and type(key[1]) is int
                              and isinstance(key[0], str) and key[0]) else None
             matched = False
             chain_start = index
+        if startup is not None and key[0] == startup[0] and value.get('taskchain') == 'StartUp':
+            if (msg in (20001, 20002) and value.get('subtask') == 'ProcessTask'
+                    and type(key[1]) is int and key[1] >= 0 and not startup_completed):
+                startup_process_ids.add(key[1])
+            if msg == 10002 and type(key[1]) is int and key == startup:
+                startup_completed = True
+        if msg == 3 and startup is not None:
+            if startup_transition:
+                if (not startup_completed or type(key[1]) is not int or key != startup
+                        or value.get('taskchain') != 'StartUp'
+                        or value.get('finished_tasks') != [startup[1]]
+                        or type(value['finished_tasks'][0]) is not int):
+                    return False
+                startup_transition = False
+            startup = None
         if (active is not None and key == active and value.get('first') == ['ZootdNavigate']
                 and map_recognized(msg, value, code)):
             matched = True
@@ -48,7 +91,7 @@ def navigation_complete(events, code, *, route=None):
         if (msg == 3 and active is not None and special_panel_complete(
                 events[chain_start:index + 1], task_id=active[1], code=code, route=route)):
             finished = True
-    return finished
+    return finished and not startup_transition
 
 
 def navigate(root, stage, *, plan_only=False, refresh=False):
