@@ -84,6 +84,49 @@ function date(value) {
   }) : '—';
 }
 
+function renderAttendance(value) {
+  const record = value?.record;
+  const service = value?.service;
+  const interrupted = record?.status === 'running' && service?.available &&
+    ['inactive', 'failed'].includes(service.ActiveState);
+  const previous = value?.state === 'previous';
+  const active = service?.available && ['active', 'activating'].includes(service.ActiveState);
+  const unknown = record?.status === 'running' && !service?.available;
+  const failedService = service?.ActiveState === 'failed' && (record?.status !== 'ok' || previous);
+  const labels = {pending:'等待签到', running:'签到中', succeeded:'签到成功',
+    already_signed:'今日已签到', failed:'签到失败', unbound:'未绑定角色'};
+  let heading = !record ? '等待早晨日常' : previous ? '上次签到记录' :
+    interrupted ? '签到中断' : unknown ? '签到状态未知' : record.status === 'running' ? '正在签到' :
+    record.status === 'ok' ? '今日签到完成' : '签到需处理';
+  if (active) heading = '正在签到';
+  if (value?.error || failedService) heading = '签到需处理';
+  $('attendance-state').textContent = heading;
+  $('attendance-state').className = 'badge ' +
+    (heading === '今日签到完成' ? 'success' : ['签到需处理','签到中断'].includes(heading) ? 'failed' : 'unfinished');
+  $('attendance-games').replaceChildren();
+  for (const [game, name] of [['arknights','明日方舟'], ['endfield','明日方舟：终末地']]) {
+    const result = record?.games?.[game];
+    const unconfirmed = (interrupted || unknown) && ['pending','running'].includes(result?.status);
+    const status = unconfirmed ? 'failed' : result?.status;
+    const card = node('article', undefined, 'attendance-game');
+    card.dataset.game = game;
+    const head = node('div', undefined, 'resource-heading');
+    head.append(node('strong', name), node('span', unconfirmed ? '结果未确认' : previous && status === 'already_signed' ? '当日已签到' : labels[status] || '尚无记录',
+      'badge ' + (['succeeded','already_signed'].includes(status) ? 'success' : ['failed','unbound'].includes(status) ? 'failed' : 'unfinished')));
+    card.append(head);
+    if (result?.rewards?.length) card.append(node('p', result.rewards.map(r => `${r.name} ×${r.count}`).join('、')));
+    if (result?.error) card.append(node('p', result.error.message, 'muted'));
+    if (result?.checked_at) card.append(node('p', `执行于 ${date(new Date(result.checked_at * 1000))}`, 'card-footnote'));
+    $('attendance-games').append(card);
+  }
+  $('attendance-message').textContent = value?.error?.message || (interrupted ? '上次执行中断，签到结果未确认。' :
+    unknown ? '无法确认签到是否仍在执行，请检查签到服务。' :
+    failedService ? '签到服务执行失败，请查看两款游戏的结果与服务日志。' :
+    previous ? `记录日期 ${record.day}，今天尚无签到结果；等待早晨日常完成。` :
+    record?.finished_at ? `最近完成 ${date(new Date(record.finished_at * 1000))}` :
+    active || record?.status === 'running' ? '签到正在执行，结果会自动更新。' : '等待下一轮早晨日常完成。');
+}
+
 function duration(run) {
   if (!run.finished_at) return '—';
   const s = Math.max(0, Math.round((new Date(run.finished_at) - new Date(run.started_at)) / 1000));
@@ -622,6 +665,7 @@ async function refresh() {
     state.runs = list.runs;
     state.total = list.total;
     const activity = status.activity;
+    renderAttendance(status.attendance);
     $('service').textContent = {
       running: '运行中',
       idle: '空闲',

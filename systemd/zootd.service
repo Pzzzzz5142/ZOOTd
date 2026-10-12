@@ -9,6 +9,7 @@ ConditionPathExists=%h/Projects/zootd/bin/zootd
 Type=oneshot
 WorkingDirectory=%h/Projects/zootd
 ExecStart=%h/Projects/zootd/bin/zootd run --morning-slot
+ExecStartPost=-/usr/bin/systemctl --user start --no-block zootd-skland-sign.service
 # Both slots allow 9h50m plus 4m cleanup. A scheduled 18:00 run ends before 04:00.
 TimeoutStartSec=590m
 TimeoutStopSec=4m

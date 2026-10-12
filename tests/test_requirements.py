@@ -532,6 +532,13 @@ class HighLevelRequirementTests(unittest.TestCase):
         post_service = (ROOT / "systemd/zootd.service").read_text()
         self.assertIn("zootd run --evening-slot", pre_service)
         self.assertIn("zootd run --morning-slot", post_service)
+        self.assertIn("ExecStartPost=-/usr/bin/systemctl --user start --no-block zootd-skland-sign.service", post_service)
+        self.assertNotIn("skland-sign", pre_service)
+        sign_service = (ROOT / "systemd/zootd-skland-sign.service").read_text()
+        self.assertIn("After=network-online.target zootd.service", sign_service)
+        self.assertIn("ExecStart=%h/Projects/zootd/bin/zootd skland-sign", sign_service)
+        self.assertIn("TimeoutStartSec=3m", sign_service)
+        self.assertFalse((ROOT / "systemd/zootd-skland-sign.timer").exists())
         farming = tomllib.loads((ROOT / "config/farming.toml").read_text())
         self.assertEqual(farming["annihilation"]["transaction_timeout_minutes"], 30)
         self.assertEqual(

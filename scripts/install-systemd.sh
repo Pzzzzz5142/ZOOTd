@@ -17,6 +17,7 @@ install -m 0644 -- "${project_root}/systemd/zootd-codex-update.timer" "${unit_di
 install -m 0644 -- "${project_root}/systemd/zootd-log-cleanup.service" "${unit_dir}/zootd-log-cleanup.service"
 install -m 0644 -- "${project_root}/systemd/zootd-log-cleanup.timer" "${unit_dir}/zootd-log-cleanup.timer"
 install -m 0644 -- "${project_root}/systemd/zootd-dashboard.service" "${unit_dir}/zootd-dashboard.service"
+install -m 0644 -- "${project_root}/systemd/zootd-skland-sign.service" "${unit_dir}/zootd-skland-sign.service"
 systemctl --user daemon-reload
 
 printf 'Installed user units in %s\n' "${unit_dir}"

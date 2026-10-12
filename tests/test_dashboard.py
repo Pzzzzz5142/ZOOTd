@@ -132,22 +132,23 @@ class DashboardTests(unittest.TestCase):
         idle = {'available': True, 'ActiveState': 'inactive'}
         failed = {'available': True, 'ActiveState': 'failed', 'Result': 'exit-code',
                   'ExecMainStatus': '1', 'ExecMainExitTimestamp': 'yesterday'}
-        with patch('maa_planner.dashboard.service_status', side_effect=[idle, failed]):
+        with patch('maa_planner.dashboard.service_status', side_effect=[idle, failed, failed]):
             result = overview(self.root)
         self.assertEqual(result['activity']['state'], 'idle')
         self.assertEqual(result['latest_run']['run_id'], latest)
         self.assertEqual(result['latest_run']['status'], 'success')
         self.assertEqual(result['service_failures'][0]['unit'], 'zootd-prereset.service')
         self.assertEqual(result['service_failures'][0]['ExecMainStatus'], '1')
+        self.assertEqual(result['attendance']['service']['ActiveState'], 'failed')
 
     def test_running_and_partial_service_availability(self):
         active = {'available': True, 'ActiveState': 'activating', 'MainPID': '123'}
-        with patch('maa_planner.dashboard.service_status', side_effect=[active, {'available': False}]):
+        with patch('maa_planner.dashboard.service_status', side_effect=[active, {'available': False}, {'available': False}]):
             result = overview(self.root)
         self.assertEqual(result['activity']['state'], 'running')
         self.assertIsNone(result['latest_run'])
         with patch('maa_planner.dashboard.service_status', side_effect=[
-                {'available': True, 'ActiveState': 'inactive'}, {'available': False}]):
+                {'available': True, 'ActiveState': 'inactive'}, {'available': False}, {'available': False}]):
             self.assertEqual(overview(self.root)['activity']['state'], 'unknown')
 
     def test_latest_unfinished_or_invalid_run_is_not_skipped(self):
@@ -178,6 +179,14 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)['state'], 'unavailable')
         self.assertEqual(request('/api/runs')[0], 200)
+        with patch('maa_planner.dashboard.service_status', return_value={'available': False}), \
+                patch('maa_planner.skland_attendance.sign_target') as sign:
+            for _ in range(2):
+                status, body = request('/api/status')
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(body)['attendance']['state'], 'unavailable')
+            self.assertEqual(request('/api/skland-sign', 'POST')[0], 501)
+            sign.assert_not_called()
         self.assertEqual(request('/api/runs?limit=101')[0], 400)
         self.assertEqual(request('/api/runs?offset=-1')[0], 400)
         self.assertEqual(request('/api/runs?limit=no')[0], 400)
