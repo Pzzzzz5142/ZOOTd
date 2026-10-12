@@ -83,6 +83,7 @@ class DashboardBrowserTests(unittest.TestCase):
         elif path == 'status':
             payload = dict(activity={'state': 'idle', 'units': []}, latest_run=self.run,
                            service_failures=[], services={}, runtime={'receipt': {'core': {'active_version': 'v6.17.0'}}},
+                           attendance=getattr(self, 'attendance', dict(state='unavailable', record=None, error=None)),
                            observed_at='2026-09-24T10:22:00Z')
         elif path.startswith('runs?'):
             runs = getattr(self, 'history_runs', [self.run])
@@ -90,6 +91,50 @@ class DashboardBrowserTests(unittest.TestCase):
         else:
             payload = self.run
         route.fulfill(content_type='application/json', body=json.dumps(payload))
+
+    def test_attendance_results_previous_day_failure_and_mobile_layout(self):
+        self.attendance = dict(state='current', error=None,
+            service=dict(available=True, ActiveState='inactive'),
+            record=dict(status='ok', day='2033-05-18', finished_at=2000000000,
+                games=dict(arknights=dict(status='succeeded', checked_at=2000000000,
+                    rewards=[dict(name='<img src=x onerror=alert(1)>', count=200)], error=None),
+                    endfield=dict(status='already_signed', checked_at=2000000000, rewards=[], error=None))))
+        self.page.locator('#nav-overview').click()
+        self.page.evaluate('refresh()')
+        expect(self.page.locator('#attendance-state')).to_have_text('今日签到完成')
+        self.assertIn('今日已签到', self.page.locator('[data-game=endfield]').inner_text())
+        self.assertIn('<img src=x onerror=alert(1)> ×200', self.page.locator('[data-game=arknights]').inner_text())
+        self.assertEqual(self.page.locator('#attendance img').count(), 0)
+        self.attendance['service']['ActiveState'] = 'failed'
+        self.page.evaluate('refresh()')
+        expect(self.page.locator('#attendance-state')).to_have_text('今日签到完成')
+        self.attendance['service']['ActiveState'] = 'inactive'
+        self.attendance['state'] = 'previous'
+        self.page.evaluate('refresh()')
+        expect(self.page.locator('#attendance-state')).to_have_text('上次签到记录')
+        self.assertIn('今天尚无签到结果', self.page.locator('#attendance-message').inner_text())
+        self.assertIn('当日已签到', self.page.locator('[data-game=endfield]').inner_text())
+        self.attendance['state'] = 'current'
+        self.attendance['record']['status'] = 'failed'
+        self.attendance['record']['games']['endfield'].update(status='failed', error=dict(message='登录已失效'))
+        self.page.evaluate('refresh()')
+        expect(self.page.locator('#attendance-state')).to_have_text('签到需处理')
+        self.assertIn('签到成功', self.page.locator('[data-game=arknights]').inner_text())
+        self.assertIn('登录已失效', self.page.locator('[data-game=endfield]').inner_text())
+        self.attendance['record']['status'] = 'running'
+        self.attendance['record']['games']['endfield'].update(status='running', error=None)
+        self.page.evaluate('refresh()')
+        expect(self.page.locator('#attendance-state')).to_have_text('签到中断')
+        self.assertIn('结果未确认', self.page.locator('#attendance-message').inner_text())
+        self.attendance['service']['available'] = False
+        self.page.evaluate('refresh()')
+        expect(self.page.locator('#attendance-state')).to_have_text('签到状态未知')
+        self.assertIn('结果未确认', self.page.locator('[data-game=endfield]').inner_text())
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 390)
+        cards = self.page.locator('.attendance-game')
+        self.assertGreater(cards.nth(1).bounding_box()['y'], cards.nth(0).bounding_box()['y'])
+        self.assertFalse(self.errors)
 
     def test_counts_details_filter_and_refresh(self):
         self.assertIn('已记录 5 / 9', self.page.locator('#rows').inner_text())

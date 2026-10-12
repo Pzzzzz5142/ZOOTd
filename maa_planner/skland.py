@@ -97,14 +97,22 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise BoxError("protocol", "森空岛接口发生重定向；请求已停止。")
 
 
+def body_bytes(body: dict | None) -> bytes | None:
+    return None if body is None else json.dumps(body, separators=(",", ":")).encode()
+
+
 def request_json(method: str, url: str, headers: dict, body: dict | None = None) -> dict:
+    return _request_json(method, url, headers, body, routes=ROUTES)
+
+
+def _request_json(method: str, url: str, headers: dict, body: dict | None, *, routes: dict) -> dict:
     parsed = urllib.parse.urlsplit(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
-    if ROUTES.get((origin, parsed.path)) != method or parsed.fragment:
+    if routes.get((origin, parsed.path)) != method or parsed.fragment:
         raise protocol_error()
     if parsed.query and parsed.path != "/api/v1/game/player/info":
         raise protocol_error()
-    data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
+    data = body_bytes(body)
     request = urllib.request.Request(url, data=data, headers={
         "User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json",
         **headers,
@@ -154,10 +162,12 @@ class Credentials:
     signing_token: str = field(repr=False)
 
 
-def signed_headers(credentials: Credentials, url: str, timestamp: int) -> dict:
+def signed_headers(credentials: Credentials, url: str, timestamp: int, body: dict | None = None) -> dict:
     parsed = urllib.parse.urlsplit(url)
     signed = {"platform": "", "timestamp": str(timestamp), "dId": "", "vName": ""}
-    message = parsed.path + parsed.query + str(timestamp) + json.dumps(signed, separators=(",", ":"))
+    payload = body_bytes(body)
+    query_body = parsed.query if payload is None else payload.decode()
+    message = parsed.path + query_body + str(timestamp) + json.dumps(signed, separators=(",", ":"))
     digest = hmac.new(credentials.signing_token.encode(), message.encode(), hashlib.sha256).hexdigest()
     return {"cred": credentials.cred, "sign": hashlib.md5(digest.encode()).hexdigest(), **signed}
 

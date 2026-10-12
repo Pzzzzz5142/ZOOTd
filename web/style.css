@@ -413,3 +413,9 @@ footer p { width: 100%; font-size: 9px; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+#attendance .section-heading { margin-bottom: 8px; }
+.attendance-panel { margin-bottom: 28px; }
+.attendance-games { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 16px; margin: 16px 0; }
+.attendance-game { padding: 16px; border: 1px solid var(--line); min-width: 0; }
+.attendance-game .resource-heading { margin-bottom: 12px; }
+.attendance-game p { margin: 8px 0 0; overflow-wrap: anywhere; }

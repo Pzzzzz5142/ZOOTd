@@ -96,6 +96,14 @@ Core 库、Core 基础资源、Git overlay 和 API cache 全部位于同一个 `
 
 `web/app.js` 以 API 的服务端时间和浏览器单调时间计算时间差，每秒重算自然恢复与倒计时；每 10 秒读取缓存，重新回到前台时校时。理智按回满时间倒推 360 秒一个恢复周期，保留超上限数量；无人机依据 lastUpdateTime/remainSecs 线性推算并封顶。公招原始状态和推算时间同时展示；状态 1 按客户端 [ArkCard.recruit_finished](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/schemas/arknights/card.py) 解释为招募结束，其余状态需有正数起止时间才能计算倒计时。0/-1 的无效时间规范为 null，未知状态不猜成未开放或待聘用，计时结束也不作为实际完成证据。游戏区域与 supervisor 事件链相互独立，不授权执行或判断托管成功，也不写入 Box、运行审计、runtime receipt 或能力账本。
 
+## 森空岛签到边界
+
+`maa_planner/skland_attendance.py` 只由显式 `skland-sign` 命令或早晨 service 成功退出后的独立签到 service 调用；`After=zootd.service` 保证异步签到在日常与清理完成后开始。它复用现有凭据认证和绑定查询，但领取奖励的 POST 白名单独立于 Box/监控的只读 `ROUTES`，仅包含明日方舟 `/api/v1/game/attendance` 与终末地 `/web/v1/game/endfield/attendance`。签名与运输使用同一份请求体编码；终末地发送空 body，以 `sk-game-role: 3_{roleId}_{serverId}` 指定已验证的国服角色。协议依据为固定 revision 的[客户端请求实现](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/api/request.py)、[绑定结构](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/schemas/binding.py)与[终末地奖励结构](https://github.com/FrostN0v0/nonebot-plugin-skland/blob/886d19decf32a7bfb2980adba9254b41d1aadb2f/nonebot_plugin_skland/schemas/endfield/sign.py)；它们是开源客户端的观察，不是官方稳定 API 承诺。本机只读绑定核对不能替代真实奖励领取验收。
+
+每款游戏独立选择唯一可用官服角色、提交与验收；未知身份、错误类型、重复角色、未识别业务错误或奖励结构停止受影响游戏，额外无关字段与其它游戏不影响本次请求。`10001` 也可能表示设备或角色错误，只有与已验证的“请勿重复签到”消息同时出现才记为已签到；成功必须有 `code/status=0` 和合法奖励明细，不能靠退出码或旧文件证明。下一次已知协议变化集中修改此 adapter，未知路由或 schema 不自动放宽。
+
+schema 1 的 `var/state/skland-attendance.json` 是当前签到展示状态，以 0600 原子写入；执行前清除本次旧结果，每款游戏开始/结束均更新，保留另一款游戏当次成功。记录只包含上海日期、时间、状态、奖励名称/数量及固定错误类别，不保存身份或原始响应；独立文件锁约束并发，历史成功不授权本次跳过。面板 `/api/status` 投影校验后字段，并读取签到 service 状态区分中断；未知 schema 显示不可用，前一天记录不显示今日完成。面板 GET 不领取奖励。此状态不写入或代替 supervisor 追加式审计，不改变完整游戏阶段、奖励末位规则、恢复 scope、Box、能力账本或 generation receipt。
+
 ## 实验性 Operator Box 边界
 
 独立 `box-login` / `box-sync` 入口位于 `maa_planner/box_cli.py`；Skland 的认证、签名、官服绑定、字段校验和错误分类集中在 `skland.py`，下游只消费 `operator_box.py` 的 `BoxProvider → OperatorBox`。凭据和原始玩家响应不进入 HTTP 公共缓存、普通日志或受管任务审计；只有最小规范快照落入本地状态目录。失败不会写出空 Box 代替错误。

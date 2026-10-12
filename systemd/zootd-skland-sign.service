@@ -1,0 +1,15 @@
+[Unit]
+Description=Claim Skland daily rewards after the successful morning ZOOTd run
+After=network-online.target zootd.service
+Wants=network-online.target
+ConditionPathExists=%h/Projects/zootd/bin/zootd
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/zootd
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=%h/Projects/zootd/bin/zootd skland-sign
+TimeoutStartSec=3m
+TimeoutStopSec=10s
+NoNewPrivileges=true
+UMask=0077

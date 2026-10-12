@@ -319,6 +319,8 @@ Commands:
   update                Alias for the transactional stable runtime update
   dashboard [--host IP] [--port N]
                         Serve the read-only web panel (default: 0.0.0.0:8765)
+  skland-sign [--dry-run] [--uid UID] [--endfield-role ROLE]
+                        Claim daily Skland rewards for Arknights and Endfield
   status                Show Waydroid and systemd timer status
   log-cleanup [--dry-run] Rotate logs and expire project history older than seven days
   logs                  Follow logs from the user service
@@ -364,6 +366,11 @@ case "${command_name}" in
         shift
         export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
         exec python3 -m maa_planner.box_cli --project-root "${project_root}" "${command_name}" "$@"
+        ;;
+    skland-sign)
+        shift
+        export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec python3 -m maa_planner.skland_attendance --project-root "${project_root}" "$@"
         ;;
     proxy-status|proxy-reset)
         shift

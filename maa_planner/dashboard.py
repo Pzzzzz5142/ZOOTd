@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 
 from .supervisor import ACCEPTED_RESULTS, RUN_MODES, SupervisorError, load_run_events, runtime_snapshot
 from .skland_monitor import SklandMonitor
+from .skland_attendance import read_attendance
 
 RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
 
@@ -145,6 +146,7 @@ def overview(root: Path) -> dict:
                          "units": active},
             "service_failures": failures,
             "latest_run": latest[0] if latest else None,
+            "attendance": {**read_attendance(root), "service": service_status("zootd-skland-sign.service")},
             "runtime": runtime_snapshot(root)}
 
 

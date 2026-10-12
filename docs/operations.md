@@ -259,6 +259,30 @@ journalctl --user -u zootd-dashboard.service -n 50
 
 面板默认监听 `0.0.0.0:8765`，允许通过服务器任意 IPv4 地址或主机名访问，无需登录，适用于可信内网；无需新增 Python 或 Node 依赖。如需仅本机访问，将 `--host` 改为 `127.0.0.1`。面板不启动游戏、不修改 runtime 或审计记录，也不提供执行任务的接口。
 
+## 森空岛自动签到
+
+每天 06:00（Asia/Shanghai）启动的 `zootd.service` 完成整轮日常、普通奖励领取、资源清理及成功验收后，通过 `ExecStartPost` 异步启动 `zootd-skland-sign.service`，为明日方舟和明日方舟：终末地的国服官服角色领取森空岛每日游戏签到奖励。签到没有独立定时器；18:00 的晚间任务不触发，早晨任务失败或被中止也不触发。签到服务有独立的三分钟超时，失败不会改写游戏任务的验收结果。这里领取的是两款游戏的每日签到奖励，不包含社区积分的登岛检票。
+
+复用下文 `box-login` 保存的本机凭据，不需要再次登录。升级后安装单元并重启面板即可，安装本身不执行签到或游戏日常：
+
+```bash
+./scripts/install-systemd.sh
+systemctl --user restart zootd-dashboard.service
+./bin/zootd skland-sign --dry-run
+```
+
+`--dry-run` 只认证并核对绑定，不领取奖励、不改写签到记录。每款游戏只有一个可用官服角色时自动选择；存在多个角色时停止对应游戏的签到，需通过 `systemctl --user edit zootd-skland-sign.service` 覆盖 `ExecStart`（先写空 `ExecStart=`），在 `bin/zootd skland-sign` 后添加 `--uid UID` 和/或 `--endfield-role ROLE_ID`。终末地使用绑定列表 `roles[].roleId`，不会用父级 UID 替代，也不会选择其他服务器、已删除或封禁角色。没有绑定的游戏显示“未绑定角色”，另一款游戏仍独立执行。
+
+显式重试与检查：
+
+```bash
+./bin/zootd skland-sign
+systemctl --user status zootd-skland-sign.service --no-pager
+journalctl --user -u zootd-skland-sign.service -n 50
+```
+
+面板概览的“森空岛每日签到”显示两款游戏的结果、奖励和执行时间，每 10 秒读取本机 `var/state/skland-attendance.json`（0600）。失败显示固定错误提示，昨天的成功标为上次记录；未知结果不会显示今日完成。并发执行由独立文件锁阻止；重试仍请求远端确认，不根据本机旧结果跳过。刷新面板不会触发签到。服务日志只输出最小化结果，不输出账号 ID、凭据、完整接口响应。签到状态独立于 supervisor 审计、Box 和 runtime receipt。
+
 ## 森空岛登录与 Box 同步（experimental）
 
 `box-login` 与 `box-sync` 是用户单独调用的实验命令；不接入 `run`、daily、托管定时器或自动恢复，不启动 Waydroid、MAA 或游戏。Web 面板另有独立的只读监控，复用本机凭据但不执行 Box 同步，见[监控面板](#web-监控面板)。未来查找并执行 Copilot 也只允许显式实验命令触发，进度见 [Copilot 路线图](copilot/README.md)。`copilot-run` 为单次真实战斗实验，见下文。
