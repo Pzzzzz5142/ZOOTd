@@ -182,8 +182,11 @@ class DashboardBrowserTests(unittest.TestCase):
             self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width)
         self.page.locator('#nav-overview').click()
         expect(self.page.locator('#game-overview')).to_be_visible()
-        self.assertLess(self.page.locator('#detail').bounding_box()['y'], self.page.locator('#game-overview').bounding_box()['y'])
-        self.page.locator('#game-view').click()
+        for width in (360, 390, 768, 1280):
+            self.page.set_viewport_size({'width': width, 'height': 1000})
+            self.assertLess(self.page.locator('#game-overview').bounding_box()['y'], self.page.locator('#overview').bounding_box()['y'])
+            self.assertLess(self.page.locator('#overview').bounding_box()['y'], self.page.locator('#detail').bounding_box()['y'])
+            self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width)
         self.assertFalse(self.errors)
 
     def test_counts_details_filter_and_refresh(self):

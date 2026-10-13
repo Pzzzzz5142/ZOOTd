@@ -913,7 +913,6 @@ async function refresh() {
 $('latest-view').addEventListener('click', () => {
   if (state.latest) $('detail').scrollIntoView({block:'start'});
 });
-$('game-view').addEventListener('click', () => $('game-overview').scrollIntoView({block:'start'}));
 $('refresh').addEventListener('click', () => { refresh(); refreshUpstream(); refreshSkland(); });
 $('search').addEventListener('input', render);
 for (const b of document.querySelectorAll('[data-filter]')) b.addEventListener('click', () => {
