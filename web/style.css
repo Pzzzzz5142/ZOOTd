@@ -287,7 +287,6 @@ select { border: 1px solid var(--line); color: var(--text); background: var(--pa
 .operation-log li { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; border-bottom: 1px solid var(--line); padding: 8px 0; }
 .operation-log time { font-size: 10px; color: var(--dim); }
 .operation-log .warning { color: var(--amber); }
-#game-overview { margin-top: 32px; }
 .stage-body > .muted, .stage-body details { font-size: 11px; }
 .stage-body details { color: var(--muted); margin-top: 12px; }
 summary { cursor: pointer; }
