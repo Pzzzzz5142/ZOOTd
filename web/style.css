@@ -247,6 +247,8 @@ main { margin-left: var(--nav-width); max-width: 1760px; padding: 32px clamp(24p
 .stage-nav .failed, .stage-nav .degraded { color: var(--red); border-color: #ff939e44; }
 .stage-nav .pending { border-style: dashed; color: var(--muted); background: transparent; }
 .stage-filter { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 16px; }
+.stage-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.stage-controls .stage-filter { margin: 0 auto 0 0; }
 select { border: 1px solid var(--line); color: var(--text); background: var(--panel-deep); padding: 6px 10px; border-radius: 5px; cursor: pointer; font-size: 11px; }
 .stage-card { margin: 8px 0; border: 1px solid var(--line); border-radius: 7px; background: #0e1924; }
 .stage-card > summary { position: relative; display: flex; align-items: center; gap: 12px; padding: 14px 36px 14px 16px; list-style: none; cursor: pointer; }
@@ -254,11 +256,38 @@ select { border: 1px solid var(--line); color: var(--text); background: var(--pa
 .stage-card > summary::after { content: '+'; position: absolute; right: 16px; color: var(--muted); font: 16px var(--mono); }
 .stage-card[open] > summary::after { content: '−'; }
 .stage-card > summary > strong { font-size: 12px; font-weight: 500; }
+.stage-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.stage-copy strong { font-size: 14px; font-weight: 550; }
+.stage-headline { color: var(--muted); font-size: 12px; }
 .stage-number { font: 10px var(--mono); color: var(--dim); }
 .stage-time { margin-left: auto; font: 9px/1.5 var(--mono); color: var(--dim); }
 .stage-card.failed, .stage-card.degraded { border-left: 2px solid var(--red); }
 .stage-body { padding: 16px 20px; border-top: 1px solid var(--line); }
 .stage-body .outcome { font-size: 13px; margin-bottom: 8px; }
+.stage-body h4 { font-size: 13px; font-weight: 550; margin: 20px 0 8px; }
+.phase-purpose { color: var(--muted); margin-bottom: 16px; }
+.selection-explanation { color: var(--text); font-size: 14px; margin-bottom: 8px; }
+.run-story { margin: 20px 0; padding: 20px; border: 1px solid #3c635a; background: #58e0bf06; border-radius: 8px; }
+.run-story dl { margin: 12px 0 0; }
+.run-story dl > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; padding: 8px 0; }
+.run-story dt { color: var(--muted); }
+.run-story dd { margin: 0; }
+.task-observations { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-block: 16px; }
+.task-observations article, .battle-observations article { padding: 12px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.task-observations h4 { margin: 0 0 6px; }
+.task-observations p { color: var(--muted); font-size: 12px; }
+.battle-observations { display: grid; gap: 8px; margin-bottom: 16px; }
+.battle-observations p { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.battle-observations .drop-list { color: var(--green); }
+.candidate-table { white-space: normal; margin: 16px 0; min-width: 460px; font-size: 12px; }
+.candidate-table :is(th, td) { padding: 12px; }
+.candidate-table small { display: block; margin-top: 4px; }
+.observation-note { font-size: 11px; color: var(--muted); margin: 12px 0; }
+.operation-log { padding: 0; list-style: none; max-height: 380px; overflow: auto; }
+.operation-log li { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; border-bottom: 1px solid var(--line); padding: 8px 0; }
+.operation-log time { font-size: 10px; color: var(--dim); }
+.operation-log .warning { color: var(--amber); }
+#game-overview { margin-top: 32px; }
 .stage-body > .muted, .stage-body details { font-size: 11px; }
 .stage-body details { color: var(--muted); margin-top: 12px; }
 summary { cursor: pointer; }
@@ -404,6 +433,10 @@ footer p { width: 100%; font-size: 9px; }
   .stage-time { margin-left: 22px; }
   .stage-body { padding: 16px 12px; }
   .fields { grid-template-columns: minmax(0, 1fr); }
+  .task-observations { grid-template-columns: minmax(0, 1fr); }
+  .run-story { padding: 16px; }
+  .run-story dl > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .operation-log li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .toolbar, .pagination { padding: 16px; flex-direction: column; align-items: flex-start; }
   .search { width: 100%; }
   input { width: 100%; }

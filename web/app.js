@@ -210,7 +210,9 @@ const outcomes = {
   'contracts-or-helper-unavailable': '契约或辅助工具不可用',
   'activity-sanity-below-global-minimum': '活动刷图后剩余理智低于最低门槛',
   'no-client-authorized-fight': '没有客户端授权的可执行战斗',
-  'no-authorized-fight': '没有已授权的刷图任务'
+  'no-authorized-fight': '没有已授权的刷图任务',
+  'activity-fight-plus-sanity-below-global-minimum': '活动关刷图完成，已用常驻关清理尾数',
+  'regular-fallback-sanity-below-global-minimum': '常驻关刷图完成，剩余理智低于 6'
 };
 const fieldLabels = {
   receipt_mode: '环境校验模式',
@@ -224,7 +226,8 @@ const fieldLabels = {
   farm_mode: '刷图模式',
   stage: '关卡',
   purpose: '执行用途',
-  exit_status: '退出码'
+  exit_status: '退出码',
+  launcher_started_session: '本轮启动的设备会话'
 };
 const valueLabels = {
   true: '是',
@@ -274,12 +277,201 @@ function disclosure(title, child, key, defaultOpen = false) {
   return d;
 }
 
+const phaseHelp = {
+  'runtime-readiness': '检查 MAA 与资源版本能否安全执行托管任务。',
+  'device-readiness': '准备游戏设备，并检查连接、画面尺寸和网络。',
+  depot: '读取库存，为无人机用途和材料选关提供依据。',
+  daily: '依次处理设施换班、宿舍、公招和信用商店。',
+  'source-refresh': '刷新活动日历、材料掉落和效率数据。',
+  annihilation: '按本周排程补齐剿灭奖励，或说明本轮为什么跳过。',
+  farming: '按库存缺口选择活动关，最后清理剩余理智。',
+  award: '在刷图结束后领取普通任务奖励。',
+  cleanup: '释放本轮设备会话和临时资源。'
+};
+const reasonLabels = {
+  ELIGIBLE_STAGE_SELECTED: '按库存缺口、优先级和掉落效率排序',
+  CLIENT_WEEKLY_CAP_RECORDED: '客户端已证明本周奖励达到上限',
+  OPERATOR_WEEKLY_CAP_CONFIRMED: '本周满额已由人工确认',
+  CLIENT_ANNIHILATION_PROXY_UNSTABLE: '剿灭代理不稳定，本周停止自动尝试',
+  FUTURE_NO_ACTIVITY_WINDOW: '等待本周后续的活动空窗',
+  CURRENT_WINDOW_HAS_NO_ACTIVITY: '当前没有活动冲突，可以执行剿灭',
+  FULL_WEEK_ACTIVITY_MONDAY: '活动覆盖整周，安排在周一执行',
+  FULL_WEEK_ACTIVITY_MONDAY_CATCH_UP: '活动覆盖整周，本轮补做周一的剿灭',
+  SOURCE_UNCERTAIN_WAIT_FOR_MONDAY: '活动来源不确定，等待周一保守排程',
+  SOURCE_UNCERTAIN_MONDAY_CATCH_UP: '活动来源不确定，本轮按保守排程补做',
+  WEEK_DEADLINE_CATCH_UP: '临近周末，补做尚未完成的剿灭',
+  INSUFFICIENT_WEEK_WINDOW: '剩余周窗口不足以安全完成一笔剿灭'
+};
+
+function insight(r, name) { return r.insights?.phases?.[name] || {}; }
+function phaseOutcome(p) {
+  if (!p) return '等待阶段结果';
+  return outcomes[p.outcome] || (p.outcome?.startsWith('planner-noop-')
+    ? '活动规划本轮没有可执行候选，查看选关说明' : `结果说明：${p.outcome}`);
+}
+function logsFor(r, name) { return insight(r, name).logs || []; }
+function battlesFor(r, name = 'farming') {
+  return logsFor(r, name).filter(log => log.kind === 'fight' || log.kind === 'annihilation');
+}
+function taskCount(logs, task) {
+  return logs.reduce((sum, log) => sum + (log.tasks?.[task]?.completed || 0), 0);
+}
+function dailySummary(r) {
+  const logs = logsFor(r, 'daily');
+  if (!logs.length) return null;
+  const rooms = new Set(logs.flatMap(log => log.rooms || []));
+  const recruited = logs.reduce((sum, log) => sum + (log.recruit_confirmed || 0), 0);
+  return `访问 ${rooms.size} 间设施 · 确认 ${recruited} 项公招 · 信用商店${taskCount(logs, 'Mall') ? '已结束' : '结果待确认'}`;
+}
+function farmingSummary(r) {
+  const battles = battlesFor(r), reported = battles.filter(log => log.reported_battles > 0);
+  if (!battles.length) return null;
+  const route = reported.map(log => `${log.stage} ×${log.reported_battles}`).join(' → ');
+  const remaining = battles.findLast(log => log.last_sanity != null)?.last_sanity;
+  return (route || '日志尚未报告战斗掉落') + (remaining == null ? '' : ` · 剩余 ${remaining} 理智`);
+}
+function phaseHeadline(r, name) {
+  const p = r.phases.find(p => p.phase === name), info = insight(r, name);
+  if (name === 'daily' && dailySummary(r)) return dailySummary(r);
+  if (name === 'farming' && farmingSummary(r)) return farmingSummary(r);
+  if (name === 'depot' && info.inventory) return `已识别 ${info.inventory.observed_items} 项库存 · 赤金 ${info.inventory.pure_gold ?? '未知'}`;
+  if (name === 'annihilation' && info.plan) {
+    const plan = info.plan;
+    const progress = plan.current != null && plan.total != null ? `规划时 ${plan.current} / ${plan.total} · ` : '';
+    return progress + (reasonLabels[plan.reason] || phaseOutcome(p));
+  }
+  if (name === 'source-refresh' && info.activities?.length) return `活动来源已读取 · ${info.activities.join('、')}`;
+  if (!p) {
+    const latest = (info.logs || []).flatMap(log => log.entries || []).sort((a, b) => a.at.localeCompare(b.at)).at(-1);
+    return latest ? `最近日志：${latest.text} · 等待阶段结果` : '尚无结果记录';
+  }
+  return phaseOutcome(p);
+}
+
+function facts(pairs) {
+  const dl = node('dl', undefined, 'fields');
+  for (const [label, value] of pairs) {
+    const pair = node('div');
+    pair.append(node('dt', label), node('dd', value == null ? '未知' : String(value)));
+    dl.append(pair);
+  }
+  return dl;
+}
+
+function renderPhaseInsights(r, name, body) {
+  const info = insight(r, name), logs = info.logs || [];
+  if (info.inventory) body.append(facts([
+    ['库存采集时间', date(info.inventory.captured_at)], ['识别物品', `${info.inventory.observed_items} 项`],
+    ['赤金库存', info.inventory.pure_gold], ['库存用途', '本轮选关与无人机策略；采集后不会实时扣减']
+  ]));
+  if (name === 'daily' && logs.length) {
+    const steps = node('div', undefined, 'task-observations');
+    const rooms = [...new Set(logs.flatMap(log => log.rooms || []))];
+    const recruit = logs.reduce((n, log) => n + (log.recruit_confirmed || 0), 0);
+    const refreshes = logs.reduce((n, log) => n + (log.tag_refreshes || 0), 0);
+    for (const [title, text] of [
+      ['设施换班', rooms.filter(room => !room.startsWith('宿舍')).join('、') || '日志未记录设施明细'],
+      ['宿舍恢复', rooms.filter(room => room.startsWith('宿舍')).join('、') || '日志未记录宿舍明细'],
+      ['公开招募', `确认 ${recruit} 项招募，刷新 ${refreshes} 次标签；${taskCount(logs, 'Recruit')} 段任务结束`],
+      ['信用商店', taskCount(logs, 'Mall') ? '任务已结束；日志未提供商品明细' : '尚无任务结束记录']
+    ]) {
+      const step = node('article');
+      step.append(node('h4', title), node('p', text));
+      steps.append(step);
+    }
+    body.append(steps);
+    if (logs.length > 1) body.append(node('p', `本轮保存了 ${logs.length} 份日常尝试日志，可在下方核对重试过程。`, 'muted'));
+  }
+  const plan = info.plan;
+  if (plan && name === 'annihilation') body.append(facts([
+    ['排程原因', reasonLabels[plan.reason] || plan.reason], ['本游戏周', plan.week],
+    ['规划时奖励进度', plan.current != null && plan.total != null ? `${plan.current} / ${plan.total}` : '尚无客户端进度'],
+    ['计划执行时间', plan.due_at ? date(plan.due_at) : '本轮无需等待新的执行时间']
+  ]));
+  if (plan && name === 'farming') {
+    const chosen = plan.candidates.find(row => row.stage === plan.selected_stage);
+    const why = chosen && chosen.deficit > 0
+      ? `选择 ${plan.selected_stage}：${chosen.material} 等价库存 ${chosen.inventory ?? '未知'} / ${chosen.target ?? '未知'}，缺口 ${chosen.deficit}。${reasonLabels[plan.reason] || plan.reason}。`
+      : `选关说明：${reasonLabels[plan.reason] || plan.reason || '原因未记录'}。`;
+    body.append(node('h4', '为什么选这关'), node('p', why, 'selection-explanation'));
+    body.append(node('p', `${plan.activity || '活动名称未知'} · 库存采集 ${date(plan.inventory_at)} · 候选顺序 ${(plan.order || []).join(' → ') || '暂无'}`, 'muted'));
+    const table = node('table', undefined, 'candidate-table'), head = node('thead'), header = node('tr');
+    for (const label of ['关卡 / 材料', '等价库存 / 目标', '缺口', '候选状态']) header.append(node('th', label));
+    head.append(header); table.append(head);
+    const rows = node('tbody');
+    for (const candidate of plan.candidates || []) {
+      const row = node('tr'), material = node('td');
+      material.append(node('strong', candidate.stage), node('small', candidate.material));
+      const inventory = node('td', `${candidate.inventory ?? '未知'} / ${candidate.target ?? '未知'}`);
+      if (candidate.craftable > 0) inventory.append(node('small', `蓝材料 ${candidate.direct} + 绿色合成折算 ${candidate.craftable}`));
+      row.append(material, inventory, node('td', candidate.deficit ?? '未知'),
+        node('td', candidate.stage === plan.selected_stage ? '本轮首选' : candidate.eligible ? '备用候选' : `不可用：${(candidate.rejected_by || []).join('、') || '原因未知'}`));
+      rows.append(row);
+    }
+    table.append(rows);
+    const wrap = node('div', undefined, 'table-scroll'); wrap.append(table); body.append(wrap);
+  }
+  if (name === 'farming') {
+    const p = r.phases.find(p => p.phase === name);
+    if (p?.outcome?.startsWith('activity-fight-plus-')) {
+      body.append(node('p', '为什么还打 1-7：活动关理智不足后，按 AP-5 → 1-7 清理尾数，直到剩余理智低于 6。', 'notice tail-explanation'));
+    }
+  }
+  const battles = battlesFor(r, name);
+  if (battles.length) {
+    body.append(node('h4', '实际刷图记录'));
+    const list = node('div', undefined, 'battle-observations');
+    for (const battle of battles) {
+      const card = node('article'), head = node('div', undefined, 'resource-heading');
+      head.append(node('strong', battle.stage), node('span', battle.reported_battles
+        ? `日志报告 ${battle.reported_battles} 场 · 费用 ${battle.sanity_cost} 理智` : '未报告战斗掉落', 'muted'));
+      card.append(head, node('p', `理智读数 ${battle.first_sanity ?? '未知'} → ${battle.last_sanity ?? '未知'} · ${battle.complete ? '任务日志正常结束' : '尚无正常结束记录'}`));
+      if (battle.drops?.length) card.append(node('p', battle.drops.map(drop => `${drop.name} ×${drop.count}`).join('、'), 'drop-list'));
+      list.append(card);
+    }
+    body.append(list);
+  }
+  if (logs.length) {
+    const entries = logs.flatMap(log => log.entries || []).sort((a, b) => a.at.localeCompare(b.at));
+    const warnings = entries.filter(entry => entry.tone === 'warning');
+    if (warnings.length) body.append(node('p', `过程提醒：${[...new Set(warnings.map(entry => entry.text))].join('；')}。最终结果见阶段状态。`, 'notice'));
+    const list = node('ol', undefined, 'operation-log');
+    for (const entry of entries.slice(-100)) {
+      const li = node('li', undefined, entry.tone), at = node('time', date(entry.at));
+      at.dateTime = entry.at;
+      li.append(at, node('span', entry.text)); list.append(li);
+    }
+    body.append(disclosure(`操作记录 · ${entries.length} 条`, list, `${r.run_id}:${name}:operations`));
+    body.append(node('p', '操作摘要来自日志；按本轮时间关联的日志用于解释过程，阶段是否通过以审计终态为准。', 'observation-note'));
+  }
+  const missing = (info.files || []).filter(file => file.state !== 'verified');
+  if (missing.length) body.append(node('p', `部分过程明细${missing.some(file => file.state === 'changed') ? '已变化，与原记录不一致' : '已清理或暂时无法读取'}，保留原始阶段结果。`, 'observation-note'));
+}
+
+function runStory(r) {
+  const box = node('section', undefined, 'run-story');
+  box.append(node('h3', '本轮做了什么'));
+  const list = node('dl');
+  for (const name of ['daily', 'annihilation', 'farming', 'award']) {
+    if (!r.expected_phases.includes(name)) continue;
+    const item = node('div');
+    item.append(node('dt', phases[name]), node('dd', phaseHeadline(r, name))); list.append(item);
+  }
+  box.append(list);
+  const problems = r.phases.filter(p => !accepted.includes(p.result));
+  if (problems.length) box.append(node('p', `需要关注：${problems.map(p => `${phases[p.phase] || p.phase} · ${phaseOutcome(p)}`).join('；')}`, 'notice error'));
+  if (r.insights?.logs_truncated) box.append(node('p', '日志较多，仅展示最近 64 份的操作摘要。', 'observation-note'));
+  return box;
+}
+
 function phaseCard(r, name, index) {
   const p = r.phases.find(p => p.phase === name),
     result = p?.result || 'pending';
   const body = node('div', undefined, 'stage-body');
+  body.append(node('p', phaseHelp[name] || '查看此阶段的已记录操作与结果。', 'phase-purpose'));
+  renderPhaseInsights(r, name, body);
   if (p) {
-    body.append(node('p', outcomes[p.outcome] || `已记录结果：${p.outcome}`, 'outcome'));
+    body.append(node('p', phaseOutcome(p), 'outcome'));
     const fields = node('dl', undefined, 'fields');
     for (const [key, value] of Object.entries(p.details || {})) {
       const pair = node('div');
@@ -299,11 +491,13 @@ function phaseCard(r, name, index) {
     }
     body.append(disclosure('原始阶段记录 · JSON', node('pre', JSON.stringify(p, null, 2)), `${r.run_id}:${name}:raw`));
   } else body.append(node('p', r.finished_at ? '本轮已结束，但没有此阶段的终态记录。' : '尚未收到此阶段的终态记录；无法据此判断是否已开始执行。', 'muted'));
-  const card = disclosure('', body, `${r.run_id}:${name}`, !!p && !accepted.includes(p.result));
+  const card = disclosure('', body, `${r.run_id}:${name}`, !!p && (!accepted.includes(p.result) || ['daily', 'farming'].includes(name)));
   card.className = 'stage-card ' + result;
   card.id = 'stage-' + name;
   const summary = card.firstChild;
-  summary.replaceChildren(node('span', String(index + 1).padStart(2, '0'), 'stage-number'), node('strong', phases[name] || name), badge(result), node('span', p ? date(p.recorded_at) : '尚无终态时间', 'stage-time'));
+  const copy = node('span', undefined, 'stage-copy');
+  copy.append(node('strong', phases[name] || name), node('span', phaseHeadline(r, name), 'stage-headline'));
+  summary.replaceChildren(node('span', String(index + 1).padStart(2, '0'), 'stage-number'), copy, badge(result), node('span', p ? date(p.recorded_at) : '尚无终态时间', 'stage-time'));
   return card;
 }
 
@@ -321,6 +515,7 @@ function detail(r) {
     content.append(node('p', r.error, 'notice error'));
     return;
   }
+  content.append(runStory(r));
   const c = counts(r),
     metrics = node('div', undefined, 'run-metrics');
   for (const [label, value] of [
@@ -337,7 +532,6 @@ function detail(r) {
   }
   content.append(metrics, segments(r));
   content.append(node('p', `开始 ${date(r.started_at)} · ${r.finished_at?'结束 '+date(r.finished_at)+' · 总耗时 '+duration(r):'最近事件 '+date(r.updated_at)}`, 'muted'));
-  content.append(node('p', '阶段数按已记录的终态统计，不代表战斗次数或耗时进度。中间过程仅展示审计已保存的字段；未结束不等于仍在运行。', 'notice'));
   const journey = node('div', undefined, 'journey'),
     stagePane = node('section'),
     timeline = node('section', undefined, 'timeline-pane');
@@ -391,7 +585,16 @@ function detail(r) {
   }
   select.addEventListener('change', filterCards);
   filter.append(select);
-  stagePane.append(filter, ...cards, empty);
+  const controls = node('div', undefined, 'stage-controls');
+  controls.append(filter);
+  for (const [label, open] of [['展开全部', true], ['收起全部', false]]) {
+    const button = node('button', label);
+    button.addEventListener('click', () => cards.forEach((card, i) => {
+      if (!card.hidden) { card.open = open; expanded.set(`${r.run_id}:${r.expected_phases[i]}`, open); }
+    }));
+    controls.append(button);
+  }
+  stagePane.append(controls, ...cards, empty);
   filterCards();
   timeline.append(node('h3', '过程时间线'), node('p', '按事件时间排列 · 北京时间', 'muted'));
   const events = [{
@@ -403,7 +606,7 @@ function detail(r) {
     ...r.phases.map(p => ({
       at: p.recorded_at,
       title: phases[p.phase] || p.phase,
-      text: outcomes[p.outcome] || p.outcome,
+      text: phaseHeadline(r, p.phase),
       status: p.result
     })),
     ...(r.recovery || []).map(e => ({
@@ -435,7 +638,7 @@ function detail(r) {
   timeline.append(list);
   if (r.recovery?.length) timeline.append(node('p', '恢复重跑作为独立运行展示；本轮原始结果保留。', 'notice'));
   journey.append(stagePane, timeline);
-  content.append(journey, node('p', `代码版本 ${r.repository?.head?.slice(0,12)||'未知'} · 事件哈希链已校验（不代表重新校验证据文件内容）`, 'muted'));
+  content.append(journey, node('p', `代码版本 ${r.repository?.head?.slice(0,12)||'未知'} · 阶段数按已保存终态统计。事件哈希链已校验；未结束不等于仍在运行。`, 'muted'));
 }
 function select(id) {
   location.hash = 'run/' + encodeURIComponent(id);
@@ -450,6 +653,7 @@ function route(initial = false) {
   for (const id of ['overview', 'history', 'detail', 'breadcrumb']) {
     $(id).hidden = id === 'detail' ? !['overview', 'detail'].includes(view) : (id === 'breadcrumb' ? 'detail' : id) !== view;
   }
+  $('game-overview').hidden = view !== 'overview';
   const titles = {overview:'运行概览', history:'历史记录', detail:'运行详情'};
   $('page-title').textContent = titles[view];
   document.title = titles[view] + ' · ZOOTd';
@@ -709,6 +913,7 @@ async function refresh() {
 $('latest-view').addEventListener('click', () => {
   if (state.latest) $('detail').scrollIntoView({block:'start'});
 });
+$('game-view').addEventListener('click', () => $('game-overview').scrollIntoView({block:'start'}));
 $('refresh').addEventListener('click', () => { refresh(); refreshUpstream(); refreshSkland(); });
 $('search').addEventListener('input', render);
 for (const b of document.querySelectorAll('[data-filter]')) b.addEventListener('click', () => {

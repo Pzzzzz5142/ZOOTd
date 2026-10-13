@@ -40,8 +40,18 @@
   </header>
   <nav id="breadcrumb" class="breadcrumb" aria-label="当前位置" hidden><a href="#history">历史记录</a><span aria-hidden="true">/</span><span aria-current="page">运行详情</span></nav>
   <section id="overview" aria-label="状态概览">
+    <div class="section-heading"><div><span class="eyebrow">01 / AUTOMATION STATUS</span><h2>托管运行</h2></div><span class="section-hint"><span class="dot"></span>本地状态每 10 秒更新</span><button id="game-view">理智与公招 ↓</button></div>
+    <div class="stats">
+      <article class="system-card" id="service-card"><div class="metric-heading"><span class="label">当前运行状态</span><svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg></div><h2 id="service">—</h2><small id="service-detail">等待数据</small></article>
+      <article class="system-card" id="latest-card"><div class="metric-heading"><span class="label">最近运行结果</span><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></div><div class="metric-result"><h2 id="latest-result">—</h2><button id="latest-view" class="view" hidden>定位本轮记录 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button></div><small id="latest-detail">等待数据</small></article>
+      <article class="system-card" id="failure-card"><div class="metric-heading"><span class="label">服务历史失败</span><svg class="icon" aria-hidden="true"><use href="#i-warning"/></svg></div><h2 id="service-failures">—</h2><small id="failure-detail">等待数据</small></article>
+      <article class="runtime-card"><div class="runtime-version"><svg class="icon" aria-hidden="true"><use href="#i-cpu"/></svg><div><span class="label">本地 MAA CORE</span><h2 id="core">—</h2></div></div><small id="runtime">最近一次 runtime receipt</small><div id="upstream" class="upstream" role="status"><small>正在查询上游稳定版…</small></div></article>
+    </div>
+  </section>
+  <section id="detail" class="panel"><div class="panel-heading"><div><div class="eyebrow">02 / EXECUTION JOURNEY</div><h2 id="detail-title">最近一次执行</h2></div><a id="all-history" class="button-link" href="#history">全部历史 →</a><button id="close" hidden>← 返回历史记录</button></div><div id="detail-content"></div></section>
+  <section id="game-overview" aria-label="游戏状态">
     <section id="skland" class="game-panel" aria-labelledby="skland-title">
-      <div class="section-heading"><div><span class="eyebrow">01 / GAME TELEMETRY</span><h2 id="skland-title">罗德岛状态</h2></div><span id="skland-state" class="badge" role="status">正在读取森空岛…</span></div>
+      <div class="section-heading"><div><span class="eyebrow">03 / GAME TELEMETRY</span><h2 id="skland-title">罗德岛状态</h2></div><span id="skland-state" class="badge" role="status">正在读取森空岛…</span></div>
       <p id="skland-message" class="notice" hidden></p>
       <div class="game-grid">
         <article class="sanity-card panel">
@@ -72,15 +82,7 @@
       <div id="attendance-games" class="attendance-games"></div>
       <p id="attendance-message" class="card-footnote">等待下一轮早晨日常完成。</p>
     </section>
-    <div class="section-heading"><div><span class="eyebrow">02 / AUTOMATION STATUS</span><h2>托管运行</h2></div><span class="section-hint"><span class="dot"></span>本地状态每 10 秒更新</span></div>
-    <div class="stats">
-      <article class="system-card" id="service-card"><div class="metric-heading"><span class="label">当前运行状态</span><svg class="icon" aria-hidden="true"><use href="#i-pulse"/></svg></div><h2 id="service">—</h2><small id="service-detail">等待数据</small></article>
-      <article class="system-card" id="latest-card"><div class="metric-heading"><span class="label">最近运行结果</span><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg></div><div class="metric-result"><h2 id="latest-result">—</h2><button id="latest-view" class="view" hidden>定位本轮记录 <svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button></div><small id="latest-detail">等待数据</small></article>
-      <article class="system-card" id="failure-card"><div class="metric-heading"><span class="label">服务历史失败</span><svg class="icon" aria-hidden="true"><use href="#i-warning"/></svg></div><h2 id="service-failures">—</h2><small id="failure-detail">等待数据</small></article>
-      <article class="runtime-card"><div class="runtime-version"><svg class="icon" aria-hidden="true"><use href="#i-cpu"/></svg><div><span class="label">本地 MAA CORE</span><h2 id="core">—</h2></div></div><small id="runtime">最近一次 runtime receipt</small><div id="upstream" class="upstream" role="status"><small>正在查询上游稳定版…</small></div></article>
-    </div>
   </section>
-  <section id="detail" class="panel"><div class="panel-heading"><div><div class="eyebrow">03 / EXECUTION JOURNEY</div><h2 id="detail-title">最近一次执行</h2></div><a id="all-history" class="button-link" href="#history">全部历史 →</a><button id="close" hidden>← 返回历史记录</button></div><div id="detail-content"></div></section>
   <section id="history" class="panel" hidden>
     <div class="panel-heading"><div><div class="eyebrow">RUN HISTORY</div><h2>全部运行</h2></div><span id="total" class="muted"></span></div>
     <div class="toolbar"><div class="filters" role="group" aria-label="当前页状态筛选"><button data-filter="all" aria-pressed="true" class="selected">全部</button><button data-filter="success" aria-pressed="false">已通过</button><button data-filter="attention" aria-pressed="false">需关注</button></div><label class="search">⌕ <input id="search" type="search" aria-label="搜索当前页运行 ID" placeholder="搜索当前页运行 ID"></label></div>

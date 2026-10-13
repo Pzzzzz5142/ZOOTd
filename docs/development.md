@@ -15,7 +15,7 @@
 - `bin/zootd-codex-recovery`：完整 run 失败后的无 sandbox 操作型恢复 adapter。
 - `requirements.txt` / `.venv/`：官方 Python Codex SDK 与 Copilot 导航/证明视觉依赖的项目本地运行环境；不固定 SDK 版本，随最新稳定版升级，SDK 自动安装配套 Codex runtime。Copilot 父进程和 worker 使用同一解释器，在设备及预算操作前检查所需模块；新增证明依赖时同步更新直接依赖声明和该检查。
 - `scripts/run-daily.sh`：Waydroid、自动刷图和 daily 的一键编排。
-- `maa_planner/dashboard.py` / `skland_monitor.py` / `web/`：默认监听所有 IPv4 接口的标准库 HTTP 服务与无构建步骤的中文 Web 面板；森空岛后台只读同步独立于运行证据。`tests/test_dashboard.py` 验证历史证据、分页及只读 HTTP 边界；`tests/test_skland_monitor.py` 验证监控字段最小化、周期、并发、旧数据与错误边界。
+- `maa_planner/dashboard.py` / `dashboard_insights.py` / `skland_monitor.py` / `web/`：默认监听所有 IPv4 接口的标准库 HTTP 服务与无构建步骤的中文 Web 面板；本轮日志、库存和规划的只读解释独立于成功验收，森空岛后台同步独立于运行证据。`tests/test_dashboard.py` 验证历史证据、分页及只读 HTTP 边界；`tests/test_dashboard_insights.py` 验证文件哈希、运行窗口、完整刷图路线、明细缺失与字段最小化；`tests/test_skland_monitor.py` 验证监控字段最小化、周期、并发、旧数据与错误边界。
 - `maa_planner/skland_attendance.py` / `systemd/zootd-skland-sign.service`：早晨日常成功及清理完成后的森空岛双游戏签到，复用凭据但使用独立 POST 白名单与当前展示状态；`tests/test_skland_attendance.py` 离线验证角色、签名/请求体、奖励验收、重复签到、部分失败、并发锁与旧日期。
 - `maa_planner/operator_box.py` / `skland.py` / `box_cli.py`：独立 experimental Box 模型、森空岛协议与本机交互登录；`tests/test_skland.py` 使用合成 fixture 离线验证，不发送短信或调用真实账号。进度见 [Copilot 路线图](copilot/README.md)。
 - `maa_planner/prts.py` / `prts_cli.py`：独立 experimental PRTS adapter、关卡映射和查询/获取入口；`tests/test_prts.py` 使用合成 fixture 验证，不访问真实 API。

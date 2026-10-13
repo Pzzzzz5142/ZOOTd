@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 from .supervisor import ACCEPTED_RESULTS, RUN_MODES, SupervisorError, load_run_events, runtime_snapshot
 from .skland_monitor import SklandMonitor
 from .skland_attendance import read_attendance
+from .dashboard_insights import run_insights
 
 RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
 
@@ -72,7 +73,7 @@ class ReleaseCache:
 release_cache = ReleaseCache()
 
 
-def read_run(root: Path, run_id: str) -> dict:
+def read_run(root: Path, run_id: str, *, explain: bool = False) -> dict:
     result = {"run_id": run_id, "status": "invalid", "phases": []}
     try:
         events = load_run_events(root, run_id)
@@ -105,6 +106,8 @@ def read_run(root: Path, run_id: str) -> dict:
                                 for e in events if e["event_type"].startswith("recovery-")])
     except (SupervisorError, OSError, ValueError, KeyError, TypeError, AttributeError):
         result.update(status="invalid", error="运行证据无法读取或校验未通过；请检查本地审计记录。")
+    if explain and result["status"] != "invalid":
+        result["insights"] = run_insights(root, result)
     return result
 
 
@@ -141,6 +144,8 @@ def overview(root: Path) -> dict:
     failures = [{"unit": unit, **service} for unit, service in services.items()
                 if service.get("available") and service.get("ActiveState") == "failed"]
     latest = history(root, limit=1)["runs"]
+    if latest and latest[0]["status"] != "invalid":
+        latest[0]["insights"] = run_insights(root, latest[0])
     return {"observed_at": datetime.now(UTC).isoformat(), "services": services,
             "activity": {"state": "running" if active else "idle" if known_idle else "unknown",
                          "units": active},
@@ -191,7 +196,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not (self.root / "var/state/supervisor/runs" / url.path[10:]).exists():
                     self.send_body(404, b"Not found", "text/plain")
                     return
-                data = read_run(self.root, url.path[10:])
+                data = read_run(self.root, url.path[10:], explain=True)
             else:
                 self.send_body(404, b"Not found", "text/plain")
                 return
