@@ -136,6 +136,56 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertGreater(cards.nth(1).bounding_box()['y'], cards.nth(0).bounding_box()['y'])
         self.assertFalse(self.errors)
 
+    def test_readable_all_phase_summaries_selection_route_and_operation_logs(self):
+        self.run['phases'].append(dict(phase='daily', result='succeeded', outcome='protected-daily-complete',
+            recorded_at='2026-09-24T10:03:00Z', details={}, evidence_files=[]))
+        self.run['phases'][-2].update(result='succeeded', outcome='activity-fight-plus-sanity-below-global-minimum')
+        daily = dict(path='var/state/host/synthetic-daily.log', binding='audit', rooms=['制造站 1', '宿舍 1'],
+            tasks={'Infrast': {'completed': 2}, 'Recruit': {'completed': 2}, 'Mall': {'completed': 1}},
+            recruit_confirmed=4, tag_refreshes=1, entries=[
+                dict(at='2026-09-24T10:01:00Z', text='游戏断线', tone='warning'),
+                dict(at='2026-09-24T10:03:00Z', text='信用商店完成', tone='normal')])
+        def battle(stage, count, cost, first, last, drops):
+            return dict(stage=stage, kind='fight', reported_battles=count, sanity_cost=cost,
+                        first_sanity=first, last_sanity=last, complete=True, drops=drops, entries=[])
+        self.run['insights'] = dict(phases={
+            'daily': dict(logs=[daily], files=[]),
+            'depot': dict(logs=[], files=[], inventory=dict(captured_at='2026-09-24T00:00:00Z', observed_items=83, pure_gold=1042)),
+            'annihilation': dict(logs=[], files=[], plan=dict(reason='CLIENT_WEEKLY_CAP_RECORDED', current=1800, total=1800, week='2026-09-21')),
+            'farming': dict(files=[], plan=dict(selected_stage='YW-8', reason='ELIGIBLE_STAGE_SELECTED', activity='昨日海',
+                inventory_at='2026-09-24T00:00:00Z', order=['YW-8', 'YW-6'], candidates=[
+                    dict(stage='YW-8', material='液化高能气体', inventory=15, target=200, deficit=185, eligible=True),
+                    dict(stage='YW-6', material='全新装置', inventory=118, direct=10, craftable=108, target=200, deficit=82, eligible=True)]),
+                logs=[battle('YW-8', 4, 84, 97, 15, [dict(name='液化高能气体', count=4)]),
+                      battle('AP-5', 0, 0, 15, 15, []),
+                      battle('1-7', 2, 12, 15, 4, [dict(name='<img src=x onerror=alert(1)>', count=2)])])})
+        self.page.evaluate('refresh()')
+        expect(self.page.locator('.run-story')).to_contain_text('YW-8 ×4 → 1-7 ×2 · 剩余 4 理智')
+        self.assertEqual(self.page.locator('.stage-headline').count(), 9)
+        self.assertIn('缺口 185', self.page.locator('#stage-farming').inner_text())
+        self.assertIn('绿色合成折算 108', self.page.locator('.candidate-table').inner_text())
+        self.assertIn('为什么还打 1-7', self.page.locator('.tail-explanation').inner_text())
+        self.assertIn('未报告战斗掉落', self.page.locator('.battle-observations').inner_text())
+        self.assertEqual(self.page.locator('#stage-farming img').count(), 0)
+        self.assertIn('游戏断线', self.page.locator('#stage-daily').inner_text())
+        self.assertEqual(self.page.locator('.task-observations article').count(), 4)
+        self.page.get_by_role('button', name='收起全部', exact=True).click()
+        self.assertEqual(self.page.locator('.stage-card[open]').count(), 0)
+        self.assertTrue(self.page.locator('#stage-farming .stage-headline').is_visible())
+        self.page.get_by_role('button', name='展开全部', exact=True).click()
+        self.assertEqual(self.page.locator('.stage-card[open]').count(), 9)
+        self.page.locator('#stage-daily .stage-body summary', has_text='操作记录').click()
+        self.page.evaluate('refresh()')
+        self.assertTrue(self.page.locator('#stage-daily .operation-log').is_visible())
+        for width in (360, 390, 768, 1280):
+            self.page.set_viewport_size({'width': width, 'height': 1000})
+            self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width)
+        self.page.locator('#nav-overview').click()
+        expect(self.page.locator('#game-overview')).to_be_visible()
+        self.assertLess(self.page.locator('#detail').bounding_box()['y'], self.page.locator('#game-overview').bounding_box()['y'])
+        self.page.locator('#game-view').click()
+        self.assertFalse(self.errors)
+
     def test_counts_details_filter_and_refresh(self):
         self.assertIn('已记录 5 / 9', self.page.locator('#rows').inner_text())
         self.assertEqual(self.page.locator('.run-metrics strong').all_text_contents(),
