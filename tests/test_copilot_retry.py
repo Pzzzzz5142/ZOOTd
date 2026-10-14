@@ -542,7 +542,7 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertFalse(params['use_sanity_potion'])
         self.assertFalse(params['ignore_requirements'])
         selection = json.loads((run / 'selection.json').read_text())
-        self.assertGreaterEqual(selection['budget']['sanity_reserved'], 18)
+        self.assertGreaterEqual(selection['budget']['sanity_reserved'], 0 if params.get('zootd_practice') else 18)
         self.assertLessEqual(selection['budget']['sanity_reserved'], selection['budget']['sanity_limit'])
         kind = self.outcomes.pop(0)
         if kind == 'interrupt':
@@ -558,6 +558,9 @@ class RetryIntegrationTests(unittest.TestCase):
                 'run_id': run.name, 'phase': 'raid_preflight', 'exit_code': 1}))
             return 1
         records = observations() if kind == 'success' else failed_events('missing' if kind in ('offline', 'timeout', 'old') else kind)
+        if kind == 'success' and params.get('zootd_practice'):
+            from tests.test_copilot_practice import practice_observations
+            records = practice_observations()
         if params['copilot_list'][0]['is_raid'] and self.confirm_raid:
             records.insert(2, raid_confirmation())
         if kind == 'offline':
@@ -808,7 +811,7 @@ class RetryIntegrationTests(unittest.TestCase):
         content = dict(self.content, doc={'title': 'Local strategy'}, difficulty=3)
         source = self.root / 'local.json'
         source.write_text(json.dumps(content))
-        self.outcomes = ['success']
+        self.outcomes = ['success'] * 4
         result = experiment(self.root, 'NL-8', None, copilot_file=source)
         self.assertEqual(result['status'], 'success', result)
         self.assertEqual(result['source']['kind'], 'local')
@@ -820,7 +823,10 @@ class RetryIntegrationTests(unittest.TestCase):
         self.assertEqual(Path(result['source']['snapshot']).read_bytes(), source.read_bytes())
         self.provider.query.assert_not_called()
         self.provider.get.assert_not_called()
-        self.execute.assert_called_once()
+        self.assertEqual(self.execute.call_count, 4)
+        self.assertEqual(len(result['practices']), 3)
+        self.assertEqual(result['attempts'][0]['practice_gate']['status'], 'passed')
+        self.assertTrue(all(a['budget']['stage_cost'] == 0 for a in result['practices']))
 
     def test_local_source_cannot_bypass_difficulty_or_owned_requirements(self):
         source = self.root / 'local.json'
@@ -832,6 +838,39 @@ class RetryIntegrationTests(unittest.TestCase):
                 self.assertEqual(result['budget']['sanity_reserved'], 0)
                 self.dev.assert_not_called()
                 self.execute.assert_not_called()
+
+    def test_practice_failure_stops_before_any_live_reservation(self):
+        source = self.root / 'local.json'
+        source.write_text(json.dumps(dict(self.content, doc={'title': 'Local strategy'})))
+        for fail_at in range(3):
+            with self.subTest(fail_at=fail_at):
+                self.outcomes = ['success'] * fail_at + ['missing']
+                self.paths = []
+                result = experiment(self.root, 'NL-8', None, copilot_file=source)
+                self.assertEqual(result['status'], 'failed')
+                self.assertEqual(result['stop_reason'], 'practice_failed')
+                self.assertEqual(len(result['practices']), fail_at + 1)
+                self.assertEqual(result['attempts'], [])
+                self.assertEqual(result['budget']['battle_reservations'], 0)
+                self.assertEqual(result['budget']['sanity_reserved'], 0)
+
+    def test_practice_only_cannot_run_live_or_record_proxy(self):
+        self.outcomes = ['success'] * 3
+        result = experiment(self.root, 'NL-8', None, practice_only=True)
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['stop_reason'], 'practice_only_success')
+        self.assertEqual(result['attempts'], [])
+        self.assertEqual(result['budget']['battle_reservations'], 0)
+        self.assertTrue(all(a['battle_proof']['saved_proxy'] == 'not_applicable' for a in result['practices']))
+
+    def test_candidate_change_after_three_practices_never_reserves_live(self):
+        self.outcomes = ['success'] * 3
+        self.provider.get.side_effect = [self.content] * 3 + [dict(self.content, actions=[])]
+        result = experiment(self.root, 'NL-8', None, practice_first=True)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['attempts'][0]['failure_phase'], 'practice_gate')
+        self.assertEqual(result['budget']['battle_reservations'], 0)
+        self.assertEqual(len(self.paths), 3)
 
     def test_local_file_changed_after_matching_stops_before_battle_reservation(self):
         from maa_planner.copilot_local import LocalCopilotClient
@@ -846,7 +885,7 @@ class RetryIntegrationTests(unittest.TestCase):
         with patch.object(LocalCopilotClient, 'get', changed):
             result = experiment(self.root, 'NL-8', None, copilot_file=source)
         self.assertEqual(result['status'], 'failed')
-        self.assertEqual(result['attempts'][0]['failure_phase'], 'download_recheck')
+        self.assertEqual(result['practices'][0]['failure_phase'], 'download_recheck')
         self.assertEqual(result['budget']['battle_reservations'], 0)
         self.assertEqual(result['budget']['sanity_reserved'], 0)
         self.execute.assert_not_called()

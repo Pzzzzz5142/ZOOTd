@@ -28,6 +28,7 @@ from .navigation_catalog import load_navigation
 from .copilot_matcher import match_candidate, rank_candidates, skill_placeholder
 from .copilot_static import fetch_catalog
 from .copilot_local import LocalCopilotClient
+from .copilot_practice import REQUIRED_PRACTICES, practice_tasks, practice_proof, admit_live
 from .prts import PrtsError, CopilotCandidate, PrtsCopilotClient, decode, operators
 from .runtime_receipt import validate_runtime_receipt
 from .skland import SklandBoxProvider, SklandClient
@@ -302,10 +303,12 @@ def acceptance_formation_failure(content, box, catalog, battle):
 
 def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             code, route, budget, get_address, restart, snapshot_sha256, acceptance_failure=False,
-            proof_context=None, use_sanity_potion=False, add_trust=DEFAULT_ADD_TRUST, failed_executions=None):
+            proof_context=None, use_sanity_potion=False, add_trust=DEFAULT_ADD_TRUST, failed_executions=None,
+            practice=False, required_practices=None):
     audit = {'status': 'failed', 'copilot_id': candidate.id, 'run_dir': str(run),
              'snapshot_sha256': snapshot_sha256, 'raid': route['raid'],
-             'stage': canonical, 'battle_id': route['battle_id']}
+             'stage': canonical, 'battle_id': route['battle_id'],
+             'run_id': run.name, 'mode': 'practice' if practice else 'live'}
     audit['source'] = copilot_source(prts)
     phase = 'download_recheck'
     reservation = None
@@ -335,6 +338,13 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             content, audit['acceptance_injection'] = acceptance_formation_failure(
                 content, box, catalog, decode((root / 'var/data/resource/battle_data.json').read_bytes()))
         audit['execution_sha256'] = sha256_bytes(canonical_json(content))
+        if not practice and required_practices is not None:
+            phase = 'practice_gate'
+            if not admit_live(required_practices, execution_sha256=audit['execution_sha256'],
+                              snapshot_sha256=snapshot_sha256):
+                raise ExperimentError('Live battle requires three consecutive fresh practices of this execution')
+            audit['practice_gate'] = {'status': 'passed', 'required': REQUIRED_PRACTICES,
+                'run_ids': [a['run_id'] for a in required_practices]}
         filename = run / 'execution.json'
         atomic_write_json(filename, content, mode=0o600)
         if failed_executions and audit['execution_sha256'] in failed_executions:
@@ -344,11 +354,12 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
                                        sanity_outcome='not_spent')
             raise CandidateRejected('Identical bound execution already failed a battle in this snapshot')
         params = {'copilot_list': [{'filename': str(filename), 'stage_name': code, 'is_raid': route['raid']}],
-                  'formation': True, 'loop_times': 1, 'use_sanity_potion': use_sanity_potion,
+                  'formation': True, 'loop_times': 1, 'use_sanity_potion': use_sanity_potion and not practice,
                   'abort_on_leak': not route['raid'],
                   'recover_zero_result': True,
                   'add_trust': add_trust, 'ignore_requirements': False,
                   'support_unit_usage': 2 if checked.support_needed else 0}
+        params['zootd_practice'] = practice
         if checked.support_needed:
             support = next(m for m in checked.slots[checked.support_slot]
                            if m.operator_id == checked.support_operator)
@@ -360,6 +371,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
         tasks = navigation_tasks(route)
         tasks.update(copilot_result_tasks())
         tasks.update(zero_result_recovery_tasks())
+        if practice:
+            tasks.update(practice_tasks())
         if params['abort_on_leak']:
             # A late two-star screen cannot be refunded by withholding a click.
             # Still stop there instead of advancing its settlement or retrying.
@@ -431,6 +444,8 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             copilot_sha256=audit['copilot_sha256'], execution_sha256=audit['execution_sha256'],
             started_ns=started_ns, finished_ns=finished_ns, exit_code=status,
             support_used=checked.support_needed, raid=route['raid'])
+        if practice:
+            audit['battle_proof'] = practice_proof(battle_events, audit['battle_proof'])
         if status != 0 or result['status'] != 'success':
             if worker_phase == 'battle_aborted':
                 audit['early_abort'] = abort_proof(
@@ -460,6 +475,7 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
             proof = copilot_capability.complete_proof(
                 events, audit['battle_proof'], proof_context,
                 started_ns=started_ns, finished_ns=finished_ns)
+            proof['source_kind'] = audit['source']['kind']
             audit['battle_proof'] = proof
             if proof['status'] != 'verified':
                 raise ExperimentError('Saved proxy proof incomplete: ' + proof['reason'])
@@ -494,14 +510,24 @@ def attempt(root, run, *, candidate, selected, box, catalog, prts, canonical,
 def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimits | None = None,
                acceptance_failure: bool = False, prove_capability: bool = False, raid: bool = False,
                use_sanity_potion: bool = False, add_trust: bool = DEFAULT_ADD_TRUST, copilot_id: int | None = None,
-               exclude_copilot_ids=(), copilot_file: Path | None = None) -> dict:
+               exclude_copilot_ids=(), copilot_file: Path | None = None,
+               practice_first: bool = False, practice_only: bool = False) -> dict:
     limits = limits or RetryLimits()
     policy = load_policy(root, profile)
     print(ACCOUNT_NOTICE, file=sys.stderr, flush=True)
     excluded_ids = set(exclude_copilot_ids)
-    if copilot_file is not None and (copilot_id is not None or excluded_ids
-                                    or acceptance_failure or prove_capability):
-        raise ExperimentError('Local copilot cannot combine with remote ID selection, acceptance or capability proof')
+    if type(practice_first) is not bool or type(practice_only) is not bool:
+        raise ExperimentError('Practice mode must be an explicit boolean')
+    practice_first = practice_first or practice_only or (copilot_file is not None and not raid)
+    if practice_first and (raid or acceptance_failure or policy.get('allow_support')):
+        raise ExperimentError('Practice admission currently requires normal difficulty, no support, no failure injection')
+    if practice_only and (prove_capability or use_sanity_potion):
+        raise ExperimentError('Practice-only cannot prove saved proxy or authorize medicine')
+    if practice_first:
+        # Fixed formation: extra trust units can alter passive buffs and RNG.
+        add_trust = False
+    if copilot_file is not None and (copilot_id is not None or excluded_ids or acceptance_failure):
+        raise ExperimentError('Local copilot cannot combine with remote ID selection or failure injection')
     if any(type(value) is not int or value <= 0 for value in excluded_ids) or (
             copilot_id is not None and (type(copilot_id) is not int or copilot_id <= 0)):
         raise ExperimentError('Copilot IDs must be positive integers')
@@ -529,10 +555,13 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
     audit = {'schema': 2, 'experimental': True, 'requested_stage': stage,
              'policy': policy, 'run_dir': str(run), 'status': 'failed', 'attempts': [],
              'proof_requested': prove_capability, 'account_binding': 'user_managed',
+             'practices': [],
              'authorization': {'max_candidates': limits.max_candidates, 'max_battles': limits.max_battles,
                                'sanity_budget': limits.sanity_budget,
                                'medicine': 'as_needed' if use_sanity_potion else 0,
                                'stone': 0, 'raid': raid, 'add_trust': add_trust,
+                               'practice_first': practice_first, 'practice_only': practice_only,
+                               'max_practices': REQUIRED_PRACTICES if practice_first else 0,
                                'copilot_id': copilot_id,
                                'exclude_copilot_ids': sorted(excluded_ids),
                                'copilot_file': str(copilot_file) if copilot_file is not None else None}}
@@ -629,6 +658,38 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                     attempt_dir = run / 'attempts' / f'{run.name}-{budget.candidates:02d}'
                     attempt_dir.mkdir(parents=True, mode=0o700)
                     candidate = next(c for c in candidates if c.id == chosen.copilot_id)
+                    practices = []
+                    if practice_first:
+                        if len(audit['practices']) >= REQUIRED_PRACTICES:
+                            audit['stop_reason'] = 'practice_budget_exhausted'
+                            break
+                        for number in range(REQUIRED_PRACTICES):
+                            exercise_dir = run / 'practices' / f'{run.name}-practice-{number + 1:02d}'
+                            exercise_dir.mkdir(parents=True, mode=0o700)
+                            exercise = attempt(root, exercise_dir, candidate=candidate, selected=chosen,
+                                box=box, catalog=catalog, prts=prts, canonical=canonical,
+                                code=code, route=route,
+                                budget=RetryBudget(RetryLimits(), 0), get_address=get_address,
+                                restart=dispatched, snapshot_sha256=audit['snapshot_sha256'],
+                                add_trust=False, practice=True)
+                            dispatched |= 'worker_exit_code' in exercise
+                            practices.append(exercise)
+                            audit['practices'].append(exercise)
+                            atomic_write_json(run / 'practice-progress.json',
+                                {'required': REQUIRED_PRACTICES, 'practices': audit['practices']}, mode=0o600)
+                            if exercise['status'] != 'success':
+                                break
+                        if len(practices) != REQUIRED_PRACTICES or any(a['status'] != 'success' for a in practices):
+                            audit['stop_reason'] = 'practice_failed'
+                            break
+                        if practice_only:
+                            if not admit_live(practices, execution_sha256=practices[-1]['execution_sha256'],
+                                              snapshot_sha256=audit['snapshot_sha256']):
+                                audit['stop_reason'] = 'practice_identity_changed'
+                                break
+                            audit.update(status='success', stop_reason='practice_only_success',
+                                         copilot_id=candidate.id)
+                            break
                     outcome = attempt(root, attempt_dir, candidate=candidate, selected=chosen,
                                       box=box, catalog=catalog, prts=prts, canonical=canonical,
                                       code=code, route=route, budget=budget, get_address=get_address,
@@ -636,7 +697,8 @@ def experiment(root: Path, stage: str, profile: str | None, *, limits: RetryLimi
                                       acceptance_failure=acceptance_failure and budget.candidates == 1,
                                       proof_context=proof_context, use_sanity_potion=use_sanity_potion,
                                       add_trust=add_trust,
-                                      failed_executions=failed_executions)
+                                      failed_executions=failed_executions,
+                                      required_practices=practices if practice_first else None)
                     dispatched |= 'worker_exit_code' in outcome
                     audit['attempts'].append(outcome)
                     audit['copilot_id'] = candidate.id
@@ -702,6 +764,10 @@ def main(argv=None):
                         help='Use only this ID from the first 50 difficulty-matched query results')
     parser.add_argument('--copilot-file', type=Path,
                         help='Explicit local full copilot JSON; same matching, navigation, budgets and proof')
+    parser.add_argument('--practice-first', action='store_true',
+                        help='Require three consecutive exercise three-stars before live battle; automatic for local normal scripts')
+    parser.add_argument('--practice-only', action='store_true',
+                        help='Run three exercises only; no sanity battle or saved-proxy capability')
     parser.add_argument('--exclude-copilot-id', type=int, action='append', default=[],
                         help='Exclude a known unsuitable ID; repeat to exclude more candidates')
     parser.add_argument('--acceptance-formation-failure', action='store_true',
@@ -724,7 +790,8 @@ def main(argv=None):
                             use_sanity_potion=args.use_sanity_potion,
                             add_trust=args.add_trust,
                             copilot_id=args.copilot_id, exclude_copilot_ids=args.exclude_copilot_id,
-                            copilot_file=args.copilot_file)
+                            copilot_file=args.copilot_file, practice_first=args.practice_first,
+                            practice_only=args.practice_only)
         if result['status'] != 'success':
             print(result.get('message') or failure_message(result), file=sys.stderr)
         print(json.dumps({k: result[k] for k in ('status', 'run_dir', 'copilot_id', 'source', 'failure_phase', 'error', 'message')

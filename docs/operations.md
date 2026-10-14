@@ -348,7 +348,7 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 
 两种助战策略内置，默认 `no-support`，本机可通过忽略的 `var/config/copilot.toml` 设置 `default_profile` 和 `profiles`（见[配置说明](configuration.md)）。命令默认授权普通难度战斗，`--raid` 显式授权突袭，可消耗所选难度的关卡理智；默认禁用所有理智药和源石。仅在用户明确允许补药时添加 `--use-sanity-potion`，启用 MAA 原生按需补药（包含普通药，不限制到期天数）；源石入口始终被 Stop overlay 禁用，不能通过参数授权碎石。整轮 `authorization.medicine` 为 `as_needed` 时表示补药授权，不表示已使用数量；理智预算仍限制战斗费用，不限制药品补充的理智。候选数和执行次数限制不变，NL-8 失败注入验收不接受补药。默认不执行第二候选，显式重试参数见下文，不调用自动恢复。保持工作区干净，先完成 `box-login` 并具备已验收的 MAA runtime；命令自动刷新 Box、查询前 50 个结果、匹配、下载选定作业、自动启动设备和编队。PRTS 视频攻略不作为可执行候选。
 
-`copilot-run` 默认开启“补充信赖位”，通过原生 Copilot 自动编队参数 `add_trust=true` 请求补齐空闲自有槽位；本地与 PRTS 作业均适用。Core 先选定作业所需干员并检查缺失，再按信赖升序补位，保持已匹配的干员、技能和练度要求；编队已满时无需补充。这是执行参数，不写入作业 JSON，也不调整 daily 编队或基建策略。需要保持作业的精简阵容时加 `--no-add-trust`。本轮 `authorization.add_trust` 和各尝试 `params.json` 记录所选开关，不证明实际补入数量；通关仍须满足原有新鲜证据检查。参数与补位流程依据 [Core v6.18.0 接口](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/Interface/CopilotTask.cpp)及[原生编队实现](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/Miscellaneous/BattleFormationTask.cpp)，升级改变参数或补位语义时需复核该边界。
+`copilot-run` 默认开启“补充信赖位”，通过原生 Copilot 自动编队参数 `add_trust=true` 请求补齐空闲自有槽位；未启用演习门槛的作业适用；普通本地作业的三次演习门槛固定关闭补位。Core 先选定作业所需干员并检查缺失，再按信赖升序补位，保持已匹配的干员、技能和练度要求；编队已满时无需补充。这是执行参数，不写入作业 JSON，也不调整 daily 编队或基建策略。需要保持作业的精简阵容时加 `--no-add-trust`。本轮 `authorization.add_trust` 和各尝试 `params.json` 记录所选开关，不证明实际补入数量；通关仍须满足原有新鲜证据检查。参数与补位流程依据 [Core v6.18.0 接口](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/Interface/CopilotTask.cpp)及[原生编队实现](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/Miscellaneous/BattleFormationTask.cpp)，升级改变参数或补位语义时需复核该边界。
 
 导航不再读取逐关白名单。游戏关卡、分区、活动及常驻活动数据从同一上游 Git revision 获取，保存到 `var/cache/copilot-navigation/catalog.json`，缓存最多使用 6 小时；过期刷新失败则停止，不回退到旧活动窗口。关卡代码支持大小写、空格和连字符的无歧义别名，例如 `nl 9`、`ds1`、`mn ex 7`。普通难度与突袭身份分开；`--raid` 要求游戏数据确有 `FOUR_STAR` 关卡及匹配的普通版本，仅有 EX 编号或手写 `#f#` 不构成授权。使用相同 code 或普通 stageId 选关时，程序按参数解析到对应难度；未加 `--raid` 时拒绝突袭 stageId。当前扩展不涵盖独立的 `TOUGH` 磨难环境。当期活动和分区必须处于开放窗口；常驻活动从其自己的分区数据生成路线，EX 不沿用普通区。`stages.json` 只用于兼容现有刷图身份，不再决定关卡是否存在；执行作业仍要求安装的 Tile 地图与所选难度身份一致。
 
@@ -368,11 +368,13 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 ./bin/zootd copilot-run NL-S-3 --raid --profile allow-support --copilot-file var/local-copilot.json
 ```
 
-本地作业须有 `stage_name`、`doc.title`、干员/分组及 `actions`，复用远端作业的内容、关卡身份与难度校验；仍刷新 Box、匹配练度、绑定准确 Tile，经同一 navigator、突袭确认、编队、结果和预算流程执行。标题半自动过滤、药品显式授权、源石停止保护和普通漏怪保护照常生效。不会请求 PRTS 或绕过不适配的匹配结果，不能与远端 ID 选择/排除、失败注入或 `--prove-capability` 合用。当前只执行一个本地候选，不自动改写或生成作业。
+本地作业须有 `stage_name`、`doc.title`、干员/分组及 `actions`，复用远端作业的内容、关卡身份与难度校验；仍刷新 Box、匹配练度、绑定准确 Tile，经同一 navigator、突袭确认、编队、结果和预算流程执行。标题半自动过滤、药品显式授权、源石停止保护和普通漏怪保护照常生效。不会请求 PRTS 或绕过不适配的匹配结果，不能与远端 ID 选择/排除或失败注入合用；自有阵容普通本地作业可在演习门槛后用 `--prove-capability` 核验真实战斗及代理保存，演习本身不登记能力。当前只执行一个本地候选，不自动改写或生成作业。
 
 本地文件最多 8 MiB；当轮保存原始字节快照和 SHA-256，执行前重新读取并要求字节完全一致，改动或删除后停止。`source.kind=local`、路径、哈希与快照位置同时写入父级、查询快照和尝试记录；此命名空间里的 `copilot_id=1` 是内部候选序号，不是 PRTS 编号。账号相关本地作业和验证证据放入忽略的 `var/`，不要提交。
 
-显式 `./bin/zootd battle-solver` 可获取关卡出怪数据图、分析部署覆盖、编译和校验本地作业；不会启动设备。PRTS 数据与求解 skill 的使用见[活动关求解](copilot/event-solver.md)。导航和地图校验按 Core 的 base、MaaResource、hot cache 资源层顺序读取有效的关卡表，避免新活动地图仅在已提升的更新层时误报缺失；同样保留精确关卡身份和正式 runtime 更新流程。
+普通本地作业自动启用连续三次演习三星后真实作战的门槛，固定自有阵容并关闭信赖补位。`--practice-only` 只进行三次演习；远端普通作业可加 `--practice-first`。失败、证据缺失或作业变化立即停止，演习不预留真实理智、不登记代理、不回落普通开始或补药。相同作业、Box/资源快照与三个不同新鲜 run 才能放行真实战斗；独立调用重新累计。详细规则及模型限制见[战斗评估与演习门槛](copilot/combat-model.md)。
+
+显式 `./bin/zootd battle-solver` 可获取关卡出怪数据图、分析部署覆盖、编译和校验本地作业；`evaluate` 计算受支持技能对本关敌人的伤害、回转和阻挡情景，未知机制明确保留；这些命令不会启动设备。PRTS 数据与求解 skill 的使用见[活动关求解](copilot/event-solver.md)。导航和地图校验按 Core 的 base、MaaResource、hot cache 资源层顺序读取有效的关卡表，避免新活动地图仅在已提升的更新层时误报缺失；同样保留精确关卡身份和正式 runtime 更新流程。
 
 PRTS 同一列表中的双模式作业可能使用突袭 Tile ID。仅在游戏数据已确认普通/突袭配对时，作业内容解析可将这个 ID 绑定到同一关卡；仍按 `difficulty` 筛选并绑定授权难度的执行地图。此内容别名不开放普通导航命令的突袭 ID 输入；其他关卡、不存在的突袭版本和歧义身份仍拒绝。
 

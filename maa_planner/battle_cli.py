@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .battle_data import _source, analyze_battle, fetch_battle, parse_battle, render_ascii
 from .battle_solver import analyze_candidates, compile_copilot
+from .combat_model import evaluate_plan
 from .copilot_static import build_catalog
 from .operator_box import ModuleProgress, Operator, OperatorBox, SkillProgress
 from .prts import PrtsError, decode, require
@@ -77,6 +78,21 @@ def static_inputs(root, graph, *, offline=False):
     return catalog, tables['character_table'], evidence
 
 
+def combat_inputs(root, graph, *, offline=False):
+    revision = graph['sources']['navigation']['revision']
+    require(isinstance(revision, str) and re.fullmatch('[0-9a-f]{40}', revision),
+            'Combat sources require a pinned game revision')
+    directory = root / 'var/cache/battle-data' / revision / 'static'
+    tables, evidence = {}, {}
+    for name in ('skill_table', 'range_table'):
+        filename = name + '.json'
+        require(not offline or (directory / filename).is_file()
+                and (directory / (filename + '.source.json')).is_file(), 'Combat source is not cached: ' + name)
+        url = f'https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/{revision}/zh_CN/gamedata/excel/{filename}'
+        tables[name], evidence[name] = _source(directory, filename, url)
+    return tables, evidence
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project-root', type=Path, default=Path.cwd())
@@ -97,14 +113,17 @@ def main(argv=None) -> int:
     analyze.add_argument('--candidates', action='store_true', help='Rank geometric deployment coverage')
     analyze.add_argument('--placement', choices=('MELEE', 'RANGED', 'ALL'), default='MELEE')
     analyze.add_argument('--limit', type=int, default=20)
-    for name in ('compile', 'validate'):
+    for name in ('compile', 'validate', 'evaluate'):
         child = commands.add_parser(name, help='Check a local plan or Copilot against graph and Box')
         child.add_argument('--graph', type=Path, required=True)
         child.add_argument('--box', type=Path)
         child.add_argument('--offline', action='store_true', help='Require already cached public static sources')
-        if name == 'compile':
+        if name in ('compile', 'evaluate'):
             child.add_argument('--plan', type=Path, required=True)
-            child.add_argument('--output', type=Path, required=True)
+            child.add_argument('--output', type=Path, required=name == 'compile')
+            if name == 'evaluate':
+                child.add_argument('--horizon', type=float, default=60,
+                                   help='Seconds in the explicit continuous-contact scenario (not global wave time)')
         else:
             child.add_argument('--copilot', type=Path, required=True)
             child.add_argument('--plan', type=Path, required=True,
@@ -139,10 +158,16 @@ def main(argv=None) -> int:
             plan = decode(plan_raw)
             box, box_evidence = read_box(args.box or args.project_root / 'var/state/operator-box.json')
             catalog, chars, sources = static_inputs(args.project_root, graph, offline=args.offline)
-            if args.command == 'compile':
+            if args.command in ('compile', 'evaluate'):
                 result = compile_copilot(graph, plan, box, catalog, character_table=chars)
                 output = result['analysis']
-                atomic_write_json(args.output, result['copilot'], mode=0o600)
+                if args.command == 'compile':
+                    atomic_write_json(args.output, result['copilot'], mode=0o600)
+                else:
+                    combat, combat_sources = combat_inputs(args.project_root, graph, offline=args.offline)
+                    output = evaluate_plan(graph, result['copilot'], box, catalog, chars,
+                                           combat['skill_table'], combat['range_table'], horizon=args.horizon)
+                    sources.update(combat_sources)
             else:
                 expected = compile_copilot(graph, plan, box, catalog, character_table=chars)
                 content = decode(args.copilot.read_bytes())
@@ -155,6 +180,8 @@ def main(argv=None) -> int:
             if args.command == 'compile':
                 output['output'] = str(args.output.resolve())
                 atomic_write_json(args.output.with_suffix('.analysis.json'), output, mode=0o600)
+            elif args.command == 'evaluate' and args.output:
+                atomic_write_json(args.output, output, mode=0o600)
         print(output if isinstance(output, str) else json.dumps(output, ensure_ascii=False,
                                                               indent=2, allow_nan=False))
         return 0
