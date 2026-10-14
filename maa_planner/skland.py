@@ -272,7 +272,9 @@ def normalize_player(data: dict, uid: str, fetched_at: str) -> OperatorBox:
         operators[char_id] = Operator(char_id, optional_int(raw.get("evolvePhase"), 0, 2),
                                      optional_int(raw.get("level"), 1, 90),
                                      None if potential is None else potential + 1,
-                                     optional_int(raw.get("mainSkillLvl"), 1, 7), skills, modules)
+                                     optional_int(raw.get("mainSkillLvl"), 1, 7), skills, modules,
+                                     optional_int(raw.get("favorPercent"), 0, 200),
+                                     identity(raw['defaultEquipId']) if raw.get('defaultEquipId') not in (None, '') else None)
     return OperatorBox("skland", fetched_at, "Official:" + uid, operators)
 
 

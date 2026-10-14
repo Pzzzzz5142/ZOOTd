@@ -1,12 +1,14 @@
 import copy
 import math
 import unittest
+from dataclasses import replace
 
 from maa_planner.battle_solver import BattleSolverError
 from maa_planner.combat_model import (attack_interval, blackboard, blocking_queue, damage_packet,
                                      duel, enemy_behavior, operator_attributes, route_segments,
-                                     skill_behavior)
-from maa_planner.operator_box import Operator
+                                     skill_behavior, equipment_effects)
+from maa_planner.operator_box import Operator, ModuleProgress
+from maa_planner.copilot_matcher import OperatorIdentity
 
 
 def fighter(**changes):
@@ -95,6 +97,48 @@ class DamageModelTests(unittest.TestCase):
         attrs, unknown = operator_attributes(char, Operator('unit', 0, 6, 2, 7, None, None))
         self.assertEqual(attrs['atk'], [160, 180])
         self.assertTrue(any('trust' in x for x in unknown))
+        known, unknown = operator_attributes(char, Operator('unit', 0, 6, 2, 7, None, None, 50))
+        self.assertEqual(known['atk'], [170, 170])
+        capped, _ = operator_attributes(char, Operator('unit', 0, 6, 2, 7, None, None, 200))
+        self.assertEqual(capped['atk'], [180, 180])
+        self.assertFalse(any('trust' in x for x in unknown))
+
+    def test_equipment_uses_selected_level_and_potential_not_unlocked_list_order(self):
+        identity = OperatorIdentity('unit', 'A', {}, {1: 'module'})
+        progress = Operator('unit', 2, 70, 1, 7, None, {'module': ModuleProgress(3, True)}, 100, 'module')
+        metadata = {'charEquip': {'unit': ['base', 'module']}, 'equipDict': {
+            'base': {'charEquipOrder': 0}, 'module': {'charEquipOrder': 1,
+                'unlockEvolvePhase': 'PHASE_2', 'unlockLevel': 60}}}
+        def candidate(value, rank=0):
+            return {'requiredPotentialRank': rank, 'unlockCondition': {'phase': 'PHASE_2', 'level': 60},
+                    'talentIndex': 0, 'blackboard': [{'key': 'atk_scale', 'value': value}]}
+        effects = {'module': {'phases': [
+            {'equipLevel': 1, 'attributeBlackboard': [{'key': 'atk', 'value': 10}], 'parts': []},
+            {'equipLevel': 3, 'attributeBlackboard': [{'key': 'atk', 'value': 30}], 'parts': [{
+                'addOrOverrideTalentDataBundle': {'candidates': [candidate(1.2), candidate(1.5, 4)]}}]}]}}
+        result = equipment_effects('unit', {}, identity, progress, effects, metadata)
+        self.assertEqual(result['attributes']['atk'], 30)
+        self.assertEqual(result['talents'][0]['atk_scale'], 1.2)
+        stronger = equipment_effects('unit', {}, identity, replace(progress, potential=5), effects, metadata)
+        self.assertEqual(stronger['talents'][0]['atk_scale'], 1.5)
+        base = equipment_effects('unit', {}, identity, replace(progress, default_equip_id='base'), effects, metadata)
+        self.assertEqual(base['attributes'], {})
+        for changed in (replace(progress, elite=1), replace(progress, default_equip_id='foreign'),
+                        replace(progress, modules={})):
+            with self.assertRaises(BattleSolverError):
+                equipment_effects('unit', {}, identity, changed, effects, metadata)
+        unknown = equipment_effects('unit', {}, identity, replace(progress, default_equip_id=None), effects, metadata)
+        self.assertIn('equipment:selection_unknown', unknown['unknown'])
+
+    def test_distinct_attack_packets_each_apply_defense(self):
+        profile = behavior()
+        profile.update(mode='permanent', attack_up=0, packets_skill=[2, .5, .5])
+        profile['sp'].update(initSp=1, spCost=1)
+        enemy = target()
+        enemy['attributes']['def'] = 60
+        result = duel(fighter(), profile, enemy, {'kind': 'ordinary'}, horizon=.1)
+        self.assertEqual(result['damage'], 145)
+        self.assertEqual(result['damage_instances'], 3)
 
     def test_unknown_skill_remains_unsupported_and_native_auto_skill_is_explicit(self):
         self.assertIsNone(skill_behavior('future_skill', {'spData': {}, 'duration': 0}, {'profession': 'CASTER'}))

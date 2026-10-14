@@ -49,6 +49,20 @@ class SklandTests(unittest.TestCase):
         for value in (oper.elite, oper.level, oper.potential, oper.main_skill_level, oper.skills, oper.modules):
             self.assertIsNone(value)
 
+    def test_trust_and_selected_equipment_are_optional_verified_progression(self):
+        data = copy.deepcopy(fixture('player')['data'])
+        row = data['chars'][0]
+        row.update(favorPercent=150, defaultEquipId='uniequip_fixture_x')
+        oper = normalize_player(data, '123456789', 'now').operators[row['charId']]
+        self.assertEqual(oper.favor_percent, 150)
+        self.assertEqual(oper.default_equip_id, 'uniequip_fixture_x')
+        row['defaultEquipId'] = ''
+        self.assertIsNone(normalize_player(data, '123456789', 'now').operators[row['charId']].default_equip_id)
+        for changes in ({'favorPercent': True}, {'favorPercent': 201}, {'defaultEquipId': 1}):
+            bad = copy.deepcopy(data)
+            bad['chars'][0].update(changes)
+            self.assert_category('protocol', lambda: normalize_player(bad, '123456789', 'now'))
+
     def test_malformed_player_rejected_not_empty(self):
         for bad in (None, {}, {"status": {"uid": "123456789"}}, {"status": {"uid": "123456789"}, "chars": {}}):
             with self.subTest(bad=bad):

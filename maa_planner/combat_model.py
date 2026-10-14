@@ -14,7 +14,7 @@ import math
 from .battle_solver import BattleSolverError, _require, _map, _shortest, _rotate
 from .util import canonical_json, sha256_bytes
 
-MODEL_VERSION = 1
+MODEL_VERSION = 2
 
 
 def number(value, label, minimum=0):
@@ -77,7 +77,7 @@ def operator_attributes(char, progress):
     phases = char['phases']
     _require(0 <= progress.elite < len(phases), 'Unknown combat elite phase')
     attrs = interpolate(phases[progress.elite]['attributesKeyFrames'], progress.level)
-    unknown = ['trust:account_snapshot_has_no_trust', 'attribute_rounding:linear_estimate']
+    unknown = ['attribute_rounding:linear_estimate']
     mapping = {'ATK': 'atk', 'DEF': 'def', 'MAX_HP': 'maxHp', 'COST': 'cost',
                'ATTACK_SPEED': 'attackSpeed', 'RESPAWN_TIME': 'respawnTime'}
     for potential in char.get('potentialRanks', [])[:progress.potential - 1]:
@@ -91,8 +91,81 @@ def operator_attributes(char, progress):
             else:
                 unknown.append('potential:unknown_modifier')
     maximum = (char.get('favorKeyFrames') or [{'data': {}}])[-1]['data']
-    bounds = {k: [v, v + maximum.get(k, 0)] for k, v in attrs.items()}
+    if progress.favor_percent is None:
+        unknown.append('trust:account_snapshot_has_no_trust')
+        bounds = {k: [v, v + maximum.get(k, 0)] for k, v in attrs.items()}
+    else:
+        # Source favor levels 0..50 map to displayed trust 0..100%; >100% is capped.
+        frames = char.get('favorKeyFrames') or []
+        _require(frames and frames[-1]['level'] == 50, 'Unsupported trust attribute scale')
+        trust = interpolate(frames, min(100, progress.favor_percent) / 2)
+        bounds = {k: [v + trust.get(k, 0)] * 2 for k, v in attrs.items()}
     return bounds, unknown
+
+
+def unlocked(candidate, progress):
+    c = candidate.get('unlockCondition', {})
+    phase = {'PHASE_0': 0, 'PHASE_1': 1, 'PHASE_2': 2}.get(c.get('phase'))
+    return (phase is not None and (progress.elite > phase or progress.elite == phase
+            and progress.level >= c['level']) and progress.potential - 1 >= candidate.get('requiredPotentialRank', 0))
+
+
+def equipment_effects(operator_id, spec, identity, progress, equipment, metadata):
+    slot = spec.get('requirements', {}).get('module', 0)
+    _require(not slot or slot in identity.modules, 'Unknown required equipment slot')
+    selected = identity.modules[slot] if slot else progress.default_equip_id
+    result = {'selected': selected, 'attributes': {}, 'talents': {}, 'trait': {}, 'unknown': []}
+    if selected is None:
+        result['unknown'].append('equipment:selection_unknown')
+        return result
+    _require(selected in metadata.get('charEquip', {}).get(operator_id, []), 'Equipment belongs to another operator')
+    if metadata['equipDict'][selected].get('charEquipOrder') == 0:
+        return result
+    entry = metadata['equipDict'][selected]
+    _require(unlocked({'unlockCondition': {'phase': entry['unlockEvolvePhase'],
+                                          'level': entry['unlockLevel']}}, progress),
+             'Selected equipment is not unlocked at this operator phase/level')
+    training = (progress.modules or {}).get(selected)
+    _require(training is not None and training.unlocked is True and training.level is not None,
+             'Selected equipment progression is unknown')
+    _require(selected in equipment, 'Selected equipment combat source missing')
+    phase = next((p for p in equipment[selected]['phases'] if p['equipLevel'] == training.level), None)
+    _require(phase is not None, 'Selected equipment level not in combat source')
+    result['attributes'] = blackboard(phase['attributeBlackboard'])
+    for part in phase['parts']:
+        if part.get('isToken') or part.get('validInGameTag') or part.get('validInMapTag'):
+            result['unknown'].append('equipment:conditional_or_token_part')
+            continue
+        for group in ('overrideTraitDataBundle', 'addOrOverrideTalentDataBundle'):
+            candidates = [c for c in part.get(group, {}).get('candidates') or [] if unlocked(c, progress)]
+            if not candidates:
+                continue
+            picked = max(candidates, key=lambda c: c.get('requiredPotentialRank', 0))
+            if picked.get('validModeIndices'):
+                result['unknown'].append('equipment:mode_conditional_talent')
+                continue
+            b = blackboard(picked.get('blackboard'))
+            if group == 'overrideTraitDataBundle':
+                result['trait'].update(b)
+            else:
+                index = picked.get('talentIndex')
+                if type(index) is int and index >= 0:
+                    result['talents'][index] = b
+                else:
+                    result['unknown'].append('equipment:additional_talent')
+    return result
+
+
+def operator_talents(char, progress, module):
+    result = []
+    for index, talent in enumerate(char.get('talents') or []):
+        candidates = [c for c in talent['candidates'] if unlocked(c, progress)]
+        if candidates:
+            b = blackboard(max(candidates, key=lambda c: (
+                c['unlockCondition']['phase'], c['unlockCondition']['level'],
+                c.get('requiredPotentialRank', 0)))['blackboard'])
+            result.append(module['talents'].get(index, b))
+    return result
 
 
 def skill_behavior(skill_id, level, char):
@@ -130,7 +203,7 @@ def skill_behavior(skill_id, level, char):
     elif skill_id == 'skchr_wisdel_3':
         result.update(mode='ammo', attack_up=b['atk'], attack_scale=b['attack@atk_scale_3'],
                       interval_add=b['base_attack_time'], ammo=int(b['attack@trigger_time']))
-        result['unknown'].append('wisadel:aftershocks_summons_and_marks_not_simulated')
+        result['unknown'].append('wisadel:summons_and_marks_not_simulated')
     elif skill_id == 'skchr_agoat2_1':
         result.update(mode='permanent', attack_up=b['atk'], targets=2)
         result['unknown'].append('elemental_healing_and_regeneration_not_simulated')
@@ -220,14 +293,18 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
             continue
         attack = attrs['atk'] * (1 + (behavior['attack_up'] if active else 0))
         multiplier = behavior['attack_scale'] if active else 1
-        for _ in range(behavior['hits'] if active else 1):
+        packets = behavior.get('packets_skill' if active else 'packets_normal')
+        packets = packets if packets is not None else [multiplier] * (behavior['hits'] if active else 1)
+        for packet in packets:
             if hp <= 0:
                 break
             reduction = stacks * mechanics.get('reduction_per_stack', 0) if now >= stunned_until else 0
             resistance = e['magicResistance'] * (1 + behavior.get('resistance_debuff', 0)
                 if now < debuffed_until else 1)
-            damage = damage_packet(attack * multiplier, behavior['damage_type'],
-                defense=e['def'], resistance=resistance, reduction=reduction)
+            damage = damage_packet(attack * packet, behavior['damage_type'],
+                defense=e['def'], resistance=resistance, reduction=reduction,
+                flat_penetration=behavior.get('flat_penetration', 0),
+                percent_penetration=behavior.get('percent_penetration', 0))
             # Sum damage against HP, excluding overkill, so multi-hit ordering matters.
             total += min(hp, damage)
             hp -= damage
@@ -314,7 +391,8 @@ def blocking_queue(capacity, arrivals):
             'assumption': 'independent_service_times_without_shared_attack_or_survival'}
 
 
-def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizon=60):
+def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizon=60,
+                  equipment=None, equip_metadata=None):
     _, _, tiles = _map(graph)
     rows = []
     paths = {}
@@ -344,16 +422,49 @@ def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizo
         level_number = progress.main_skill_level + mastery.mastery
         _require(sid in skills and 1 <= level_number <= len(skills[sid]['levels']), 'Skill source missing level')
         behavior = skill_behavior(sid, skills[sid]['levels'][level_number - 1], char)
+        module = {'attributes': {}, 'talents': {}, 'trait': {}, 'unknown': []}
+        if equipment is not None and equip_metadata is not None:
+            module = equipment_effects(identity.id, spec, identity, progress, equipment, equip_metadata)
+            mapping = {'atk': 'atk', 'def': 'def', 'max_hp': 'maxHp', 'attack_speed': 'attackSpeed'}
+            for key, value in module['attributes'].items():
+                if key in mapping:
+                    bounds[mapping[key]] = [v + value for v in bounds[mapping[key]]]
+                else:
+                    unknown.append('equipment:attribute:' + key)
+            unknown.extend(module['unknown'])
+        elif spec.get('requirements', {}).get('module', 0) or progress.default_equip_id:
+            unknown.append('equipment:combat_source_not_supplied')
+        talents = operator_talents(char, progress, module)
+        if behavior is not None:
+            trait = module['trait']
+            behavior['flat_penetration'] = (trait.get('magic_resist_penetrate_fixed', 0)
+                                            if behavior['damage_type'] == 'arts' else 0)
+            if trait.get('attack_speed'):
+                bounds['attackSpeed'] = [v + trait['attack_speed'] for v in bounds['attackSpeed']]
+            if sid == 'skchr_wisdel_3' and talents:
+                t = talents[0]
+                count = 2 if trait.get('attack@enable_third_attack') == 1 else 1
+                aftershock = trait.get('attack@append_atk_scale', .5)
+                behavior['packets_normal'] = [t['attack@main_atk_scale']] + [aftershock] * count
+                behavior['packets_skill'] = [behavior['attack_scale'] * s for s in behavior['packets_normal']]
+                behavior['unknown'].append('wisadel:aftershock_delays_and_mark_explosions_not_simulated')
+            elif sid in ('skchr_amgoat_2', 'skchr_amgoat_3') and talents:
+                # This self-applicable caster talent shares the attack additive modifier zone.
+                bonus = talents[0].get('atk', 0)
+                behavior['attack_up'] += bonus
+                for key in ('atk',):
+                    bounds[key] = [v * (1 + bonus) for v in bounds[key]]
+                # The active modifier must not apply the talent twice.
+                behavior['attack_up'] = (1 + behavior['attack_up']) / (1 + bonus) - 1
         place = placements.get(spec['name'])
         _require(place is not None, 'Combat evaluation needs a fixed deployment')
         tile = tiles[tuple(place['location'])]
-        if spec.get('requirements', {}).get('module', 0):
-            unknown.append('equipment:stats_and_effects_not_simulated')
         if char.get('talents'):
             unknown.append('talents:effects_and_rng_not_simulated')
         entry = {'name': spec['name'], 'skill_id': sid, 'skill_level': level_number,
                  'attributes': bounds, 'location': place['location'], 'tile': tile['tile_key'],
                  'unknown': unknown, 'matchups': []}
+        entry['equipment'] = module
         if behavior is None:
             entry.update(status='unsupported_skill')
             rows.append(entry)
@@ -375,6 +486,13 @@ def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizo
             for cell in ranges[range_id]['grids'] for dx, dy in [
                 _rotate([cell['col'], -cell['row']], place['direction'])]}
         entry['range_tiles'] = [list(p) for p in sorted(footprint)]
+        skill_range_id = skills[sid]['levels'][level_number - 1].get('rangeId') or range_id
+        _require(skill_range_id in ranges, 'Missing authoritative skill attack range')
+        skill_footprint = {tuple((place['location'][0] + dx, place['location'][1] + dy))
+            for cell in ranges[skill_range_id]['grids'] for dx, dy in [
+                _rotate([cell['col'], -cell['row']], place['direction'])]}
+        entry['skill_range_tiles'] = [list(p) for p in sorted(skill_footprint)]
+        entry['covered_routes_skill'] = sorted(i for i, path in paths.items() if path & skill_footprint)
         entry['covered_routes'] = sorted(i for i, path in paths.items() if path & footprint)
         entry['intercepted_routes'] = sorted(i for i, path in paths.items() if tuple(place['location']) in path)
         entry['block_count_normal'] = base['blockCnt']
