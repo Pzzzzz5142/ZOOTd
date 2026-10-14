@@ -195,10 +195,11 @@ class Function:
 
 
 class FakeCore:
-    def __init__(self, records, navigation_records=None, recovery_stars=None):
+    def __init__(self, records, navigation_records=None, recovery_stars=None, practice_records=None):
         self.records = records
         self.navigation_records = navigation_records
         self.recovery_stars = recovery_stars
+        self.practice_records = practice_records
         self.appended = []
         self.loaded_tasks = []
         self.AsstCreateEx = Function(self.create)
@@ -232,6 +233,16 @@ class FakeCore:
 
     def start(self, _):
         kind, params = self.appended[-1]
+        if params.get('task_names') == ['ZootdPracticeReady']:
+            from tests.test_copilot_practice import readiness
+            for record in readiness() if self.practice_records is None else self.practice_records:
+                value = copy.deepcopy(record['details'])
+                if value.get('taskid') == 5:
+                    value['taskid'] = len(self.appended)
+                if value.get('finished_tasks') == [5]:
+                    value['finished_tasks'] = [len(self.appended)]
+                self.callback(record['message'], json.dumps(value).encode(), None)
+            return 1
         if params.get('task_names') == ['ZootdRecoverZeroResult']:
             self.emit(10001)
             if self.recovery_stars in (0, 2):
@@ -276,7 +287,8 @@ class FakeCore:
 
 class PreflightDispatchTests(unittest.TestCase):
     def run_worker(self, records, *, raid=True, navigation_only=False, navigation_records=None,
-                   recover_zero_result=False, recovery_stars=None, route=None, map_click=False):
+                   recover_zero_result=False, recovery_stars=None, route=None, map_click=False,
+                   practice=False, practice_records=None):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run = root / 'attempt'
@@ -284,8 +296,9 @@ class PreflightDispatchTests(unittest.TestCase):
             (run / 'navigation.json').write_text(json.dumps({
                 'code': 'MN-EX-7', 'raid': raid, 'navigation_only': navigation_only, **(route or {})}))
             (run / 'params.json').write_text(json.dumps({
-                'copilot_list': [], 'recover_zero_result': recover_zero_result}))
-            lib = FakeCore(records, navigation_records=navigation_records, recovery_stars=recovery_stars)
+                'copilot_list': [], 'recover_zero_result': recover_zero_result, 'zootd_practice': practice}))
+            lib = FakeCore(records, navigation_records=navigation_records, recovery_stars=recovery_stars,
+                           practice_records=practice_records)
             with patch('maa_planner.copilot_core.C.CDLL', return_value=lib), \
                     patch('maa_planner.copilot_core.launch_game'), \
                     patch('maa_planner.copilot_core.signal.signal'), \
@@ -298,6 +311,23 @@ class PreflightDispatchTests(unittest.TestCase):
             self.loaded_tasks = lib.loaded_tasks
             receipt = json.loads((run / 'worker-result.json').read_text())
             return status, receipt, lib.appended, (run / 'task-id.json').exists()
+
+    def test_practice_button_proof_is_required_before_appending_copilot(self):
+        from tests.test_copilot_practice import readiness
+        status, receipt, appended, task_file = self.run_worker([], raid=False, practice=True)
+        self.assertEqual(status, 0)
+        self.assertTrue(task_file)
+        self.assertEqual(appended[-2], ('Custom', {'task_names': ['ZootdPracticeReady']}))
+        self.assertEqual(appended[-1][0], 'Copilot')
+        for index in (1, 2, 3):
+            records = readiness()
+            del records[index]
+            status, receipt, appended, task_file = self.run_worker(
+                [], raid=False, practice=True, practice_records=records)
+            self.assertEqual(status, 1)
+            self.assertFalse(task_file)
+            self.assertEqual(receipt['phase'], 'practice_preflight')
+            self.assertFalse(any(kind == 'Copilot' for kind, _ in appended))
 
     def test_pending_two_star_stops_before_startup_or_battle(self):
         status, receipt, appended, task_file = self.run_worker(

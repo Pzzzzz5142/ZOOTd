@@ -89,7 +89,7 @@ class LocalCopilotTests(unittest.TestCase):
 
     def test_local_source_conflicts_stop_before_device_and_query(self):
         for options in ({'copilot_id': 1}, {'exclude_copilot_ids': [2]},
-                        {'acceptance_failure': True}, {'prove_capability': True}):
+                        {'acceptance_failure': True}, {'prove_capability': True, 'practice_only': True}):
             with self.subTest(options=options), \
                     patch('maa_planner.copilot_run.load_policy', return_value={}), \
                     patch('maa_planner.copilot_run.device') as device, \

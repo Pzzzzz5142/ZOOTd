@@ -541,8 +541,16 @@ def _worker(root: Path, run: Path, address: str, progress: dict) -> int:
                 overlay.mkdir(parents=True)
                 (overlay / 'tasks.json').write_text(json.dumps(special_panel_execution_tasks(route)))
                 check(lib.AsstLoadResource(str(overlay.parent.parent).encode()))
-            progress['phase'] = 'execution'
             params = (run / 'params.json').read_bytes()
+            if json.loads(params).get('zootd_practice') is True:
+                from .copilot_practice import practice_ready
+                progress['phase'] = 'practice_preflight'
+                with mutex:
+                    first = len(records)
+                practice_id = run_task(b'Custom', b'{"task_names":["ZootdPracticeReady"]}')
+                with mutex:
+                    check(practice_ready(records[first:], task_id=practice_id))
+            progress['phase'] = 'execution'
             task_id = lib.AsstAppendTask(handle, b'Copilot', params)
             check(task_id)
             (run / 'task-id.json').write_text(json.dumps(task_id))
