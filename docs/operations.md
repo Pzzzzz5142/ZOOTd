@@ -283,7 +283,7 @@ systemctl --user status zootd-skland-sign.service --no-pager
 journalctl --user -u zootd-skland-sign.service -n 50
 ```
 
-面板概览的“森空岛每日签到”显示两款游戏的结果、奖励和执行时间，每 10 秒读取本机 `var/state/skland-attendance.json`（0600）。失败显示固定错误提示，昨天的成功标为上次记录；未知结果不会显示今日完成。并发执行由独立文件锁阻止；重试仍请求远端确认，不根据本机旧结果跳过。刷新面板不会触发签到。服务日志只输出最小化结果，不输出账号 ID、凭据、完整接口响应。签到状态独立于 supervisor 审计、Box 和 runtime receipt。
+面板概览的“森空岛每日签到”显示两款游戏的结果、奖励和执行时间，每 10 秒读取本机 `var/state/skland-attendance.json`（0600）。签到区域沿用统一卡片内边距，两款游戏在空间充足时并排，窄屏自动纵向排列，标题与状态标签可换行。失败显示固定错误提示，昨天的成功标为上次记录；未知结果不会显示今日完成。并发执行由独立文件锁阻止；重试仍请求远端确认，不根据本机旧结果跳过。刷新面板不会触发签到。服务日志只输出最小化结果，不输出账号 ID、凭据、完整接口响应。签到状态独立于 supervisor 审计、Box 和 runtime receipt。
 
 ## 森空岛登录与 Box 同步（experimental）
 

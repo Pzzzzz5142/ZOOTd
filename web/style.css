@@ -191,6 +191,14 @@ main { margin-left: var(--nav-width); max-width: 1760px; padding: 32px clamp(24p
 .base-item:last-child strong { font: 500 11px/1.5 var(--mono); letter-spacing: -.25px; margin-block: 10px 8px; }
 .base-item.attention { border-color: #f1c27b44; }
 .snapshot-meta { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; color: var(--dim); font-size: 9px; margin: 12px 0 32px; }
+.attendance-panel { padding: var(--pad); margin-bottom: 32px; }
+.attendance-panel .section-heading { flex-wrap: wrap; margin-bottom: 8px; }
+.attendance-panel .section-heading h2 { margin-top: 0; }
+.attendance-panel > .muted { font-size: 12px; }
+.attendance-games { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: var(--gap); margin: 16px 0; }
+.attendance-game { padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-deep); min-width: 0; }
+.attendance-game .resource-heading { flex-wrap: wrap; margin-bottom: 12px; }
+.attendance-game p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); margin-bottom: 32px; }
 .system-card { padding: 20px; position: relative; overflow: hidden; }
 .metric-heading .icon { width: 18px; height: 18px; color: var(--dim); }
@@ -445,9 +453,3 @@ footer p { width: 100%; font-size: 9px; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
-#attendance .section-heading { margin-bottom: 8px; }
-.attendance-panel { margin-bottom: 28px; }
-.attendance-games { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 16px; margin: 16px 0; }
-.attendance-game { padding: 16px; border: 1px solid var(--line); min-width: 0; }
-.attendance-game .resource-heading { margin-bottom: 12px; }
-.attendance-game p { margin: 8px 0 0; overflow-wrap: anywhere; }
