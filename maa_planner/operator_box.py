@@ -25,6 +25,8 @@ class Operator:
     main_skill_level: int | None
     skills: dict[str, SkillProgress] | None  # Canonical skill IDs, NOT list positions.
     modules: dict[str, ModuleProgress] | None
+    favor_percent: int | None = None  # Displayed trust, 0..200; stats cap at 100%.
+    default_equip_id: str | None = None  # Selected equipment, not the first unlocked one.
 
 
 @dataclass(frozen=True)

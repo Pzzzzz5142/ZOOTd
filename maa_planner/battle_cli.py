@@ -49,8 +49,13 @@ def read_box(path):
                         'Invalid Box module progression.')
             modules = {name: ModuleProgress(progress.get('level'), progress.get('unlocked'))
                        for name, progress in modules.items()}
+        trust = row.get('favor_percent')
+        require(trust is None or type(trust) is int and 0 <= trust <= 200, 'Invalid Box trust')
+        selected_equip = row.get('default_equip_id')
+        require(selected_equip is None or isinstance(selected_equip, str) and bool(selected_equip),
+                'Invalid Box selected equipment')
         operators[key] = Operator(key, row.get('elite'), row.get('level'), row.get('potential'),
-                                  row.get('main_skill_level'), skills, modules)
+                                  row.get('main_skill_level'), skills, modules, trust, selected_equip)
     return OperatorBox(value['source'], value['fetched_at'], value['account_id'], operators), {
         'path': str(path.resolve()), 'sha256': sha256_bytes(raw), 'fetched_at': value['fetched_at']}
 
@@ -84,7 +89,7 @@ def combat_inputs(root, graph, *, offline=False):
             'Combat sources require a pinned game revision')
     directory = root / 'var/cache/battle-data' / revision / 'static'
     tables, evidence = {}, {}
-    for name in ('skill_table', 'range_table'):
+    for name in ('skill_table', 'range_table', 'battle_equip_table', 'uniequip_table'):
         filename = name + '.json'
         require(not offline or (directory / filename).is_file()
                 and (directory / (filename + '.source.json')).is_file(), 'Combat source is not cached: ' + name)
@@ -166,7 +171,8 @@ def main(argv=None) -> int:
                 else:
                     combat, combat_sources = combat_inputs(args.project_root, graph, offline=args.offline)
                     output = evaluate_plan(graph, result['copilot'], box, catalog, chars,
-                                           combat['skill_table'], combat['range_table'], horizon=args.horizon)
+                        combat['skill_table'], combat['range_table'], horizon=args.horizon,
+                        equipment=combat['battle_equip_table'], equip_metadata=combat['uniequip_table'])
                     sources.update(combat_sources)
             else:
                 expected = compile_copilot(graph, plan, box, catalog, character_table=chars)
