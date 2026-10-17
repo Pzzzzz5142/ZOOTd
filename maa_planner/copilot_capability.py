@@ -11,7 +11,7 @@ from .capability import CapabilityKey, REGULAR_FALLBACK_ACTIVITY_INSTANCE
 from .config import load_config
 from .copilot_core import callbacks_are_fresh
 from .prts import StageCatalog
-from .proxy import PROXY_RESOURCE
+from .proxy import isolated_proxy_resource
 from .util import canonical_json, sha256_bytes, utc_now
 
 
@@ -49,7 +49,7 @@ def proof_tasks(code):
 
 
 def safe_proxy_tasks(code):
-    return {**PROXY_RESOURCE, **proof_tasks(code)}
+    return {**isolated_proxy_resource(), **proof_tasks(code)}
 
 
 def _custom_observations(events, uuid):

@@ -12,7 +12,7 @@ from .copilot_navigation import navigation_tasks, zero_result_recovery_tasks, in
 from .copilot_run import command, device, device_lock, execute
 from .navigation_catalog import load_navigation
 from .prts import PrtsError
-from .proxy import PROXY_RESOURCE
+from .proxy import isolated_proxy_resource
 from .runtime_receipt import validate_runtime_receipt
 from .util import atomic_write_json
 
@@ -135,12 +135,7 @@ def navigate(root, stage, *, plan_only=False, refresh=False):
             audit['runtime'] = validate_runtime_receipt(root)
             tasks = navigation_tasks(route)
             tasks.update(zero_result_recovery_tasks())
-            tasks.update(PROXY_RESOURCE)
-            # Legacy refill alias is absent from current native tasks. Keep
-            # its fail-closed stop without inventing a nonexistent template
-            # when the navigation overlay has its own template directory.
-            tasks['ExpiringMedicineConfirm'] = {**tasks['ExpiringMedicineConfirm'],
-                                                'algorithm': 'JustReturn'}
+            tasks.update(isolated_proxy_resource())
             atomic_write_json(run / 'navigation/resource/tasks/tasks.json', tasks, mode=0o600)
             install_navigation_resources(run / 'navigation/resource')
             with device(root, run) as address:
