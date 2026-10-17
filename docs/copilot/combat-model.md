@@ -12,6 +12,10 @@
 ./bin/zootd battle-solver evaluate --graph var/battle-solver/YW-6/graph.json --plan var/battle-solver/YW-6/reviewed-r5-upstream-eyja-plan.json --offline --horizon 60 --output var/battle-solver/YW-6/combat-report.json
 ```
 
+示例读取历史固定计划作离线诊断；`evaluate` 不生成或优化战术。新的求解迭代
+遵循[开发指南](../development.md#战术求解开发约定)，改进程序后重新生成计划；
+历史文件名中的 `upstream` 不代表它是从 PRTS 获取的现成作业。
+
 计划先通过原有编译器校验。模型读取与 graph 相同 revision 的干员、技能、范围及模组战斗表，
 复用原字节缓存和哈希检查，报告绑定 graph、作业、Box 和静态来源。在线模式获取
 缺失文件；`--offline` 要求已有缓存。按精英化、等级插值属性并应用已知潜能加算。
