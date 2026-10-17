@@ -10,13 +10,36 @@ from maa_planner.copilot_core import special_panel_complete
 from maa_planner.copilot_navigation import navigation_tasks, special_panel_execution_tasks
 from maa_planner.navigation_cli import navigation_complete
 from maa_planner.navigation_layouts import (
-    DV_SPECIAL_ACCESS, NL_SPECIAL_ROOK, STANDARD, navigation_layout, stage_panel_tasks)
+    DV_SPECIAL_ACCESS, NL_SPECIAL_ROOK, STANDARD, active_sidestory_card, navigation_layout, stage_panel_tasks)
 from maa_planner.navigation_vision import MapRecognizer
 from tests.navigation_samples import SAMPLES, sample_protocol, sample_route
 from tests import test_copilot_preflight as preflight
 
 
 class NavigationLayoutTests(unittest.TestCase):
+    def test_active_card_requires_the_observed_event_zone_and_full_normal_identity(self):
+        route = {'kind': 'activity', 'activity_id': 'act52side', 'zone_id': 'act52side_zone1',
+                 'code': 'YW-6', 'stage_id': 'act52side_06', 'battle_id': 'act52side_06',
+                 'raid': False, 'activity': '昨日海', 'zone_names': ['雷亚-伊比利亚']}
+        self.assertTrue(active_sidestory_card(route))
+        tasks = navigation_tasks(route)
+        entry = tasks['ZootdActiveSideStoryCard']
+        self.assertTrue(entry['withoutDet'])
+        self.assertTrue(entry['fullMatch'])
+        self.assertEqual(entry['text'], ['SIDESTORY'])
+        self.assertEqual(entry['maxTimes'], 1)
+        self.assertNotIn('ZootdStageConfirmed', entry['next'])
+        self.assertNotIn('ZootdZone', tasks['ZootdZone']['next'])
+        self.assertEqual(tasks['ZootdZone']['maxTimes'], 1)
+        self.assertEqual(tasks['ZootdStageConfirmed']['text'], ['YW-6', 'YW6'])
+        for key, value in (('kind', 'archive'), ('activity_id', 'future-reissue'),
+                           ('zone_id', 'act52side_zone2'), ('code', 'YW-EX-6'),
+                           ('stage_id', 'act52side_07'), ('battle_id', 'act52side_06#f#'),
+                           ('raid', True), ('raid', None)):
+            changed = dict(route, **{key: value})
+            self.assertFalse(active_sidestory_card(changed))
+            self.assertNotIn('ZootdActiveSideStoryCard', navigation_tasks(changed))
+
     def test_observed_archive_editions_have_separate_adapters(self):
         for code in ('DV-S-1', 'DV-S-2'):
             route = sample_route(code)

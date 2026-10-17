@@ -4,7 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
-from .navigation_layouts import DV_SPECIAL_ACCESS, NL_SPECIAL_ROOK, navigation_layout, stage_panel_tasks
+from .navigation_layouts import (DV_SPECIAL_ACCESS, NL_SPECIAL_ROOK, active_sidestory_card,
+                                 navigation_layout, stage_panel_tasks)
 
 SPECIAL_PANEL_ROIS = {
     'marker': [45, 150, 225, 45],
@@ -149,6 +150,21 @@ def navigation_tasks(route: dict) -> dict:
         tasks['ZootdEntry'] = {'algorithm': 'JustReturn', 'sub': native, 'next': find}
     elif route['kind'] == 'activity':
         tasks['ZootdEntry'] = {**ocr(labels, ['ZootdStage', 'ZootdZone', 'ZootdActivityEnter']), **title_ocr}
+        if active_sidestory_card(route):
+            # The artistic event title can be unreadable on this terminal card.
+            # Its fixed English marker is only an entry hint; target-stage
+            # confirmation remains mandatory after entering and navigating.
+            tasks['ZootdActivityTitle'] = tasks['ZootdEntry']
+            tasks['ZootdEntry'] = {'algorithm': 'JustReturn',
+                                  'next': ['ZootdActivityTitle', 'ZootdActiveSideStoryCard']}
+            tasks['ZootdActiveSideStoryCard'] = {
+                **ocr(['SIDESTORY'], ['ZootdStage', 'ZootdZone', 'ZootdActivityEnter'],
+                      roi=[545, 155, 73, 23]),
+                'withoutDet': True, 'isAscii': True, 'maxTimes': 1, 'exceededNext': []}
+            # The zone title remains visible while its map opens. Do not
+            # reselect it and emit ExceededLimit after the one allowed click.
+            tasks['ZootdZone']['next'] = ['ZootdStage', 'ZootdMapReady']
+            tasks['ZootdZone']['postDelay'] = 2500
         tasks['ZootdActivityEnter'] = {**ocr(['进入活动', '前往活动', '进入作战'], find),
                                       'maxTimes': 2, 'exceededNext': []}
     elif route['kind'] == 'supplies':
