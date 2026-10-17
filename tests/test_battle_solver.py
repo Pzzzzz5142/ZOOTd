@@ -73,6 +73,27 @@ class BattleSolverTests(unittest.TestCase):
         self.assertEqual(report['box_validation'], 'not_checked')
         self.assertEqual(report['placement_type_validation'], 'not_checked')
 
+    def test_challenge_requires_explicit_plan_and_exact_copilot_difficulty(self):
+        sid = self.graph['stage']['stage_id'] + '#f#'
+        self.graph['stage'].update(stage_id=sid, battle_id=sid, difficulty='FOUR_STAR')
+        self.plan['stage_id'] = sid
+        with self.assertRaises(BattleSolverError):
+            self.compile()
+        self.plan['difficulty'] = 'FOUR_STAR'
+        result = self.compile()
+        self.assertEqual(result['copilot']['stage_name'], sid)
+        self.assertEqual(result['copilot']['difficulty'], 2)
+        self.assertEqual(result['analysis']['difficulty'], 'FOUR_STAR')
+        self.assertEqual(result['analysis']['proof_status'], 'unproven')
+        for difficulty in (1, 3, None, True):
+            content = deepcopy(result['copilot'])
+            content['difficulty'] = difficulty
+            with self.assertRaises(BattleSolverError):
+                self.validate(content)
+        self.graph['stage']['difficulty'] = 'NORMAL'
+        with self.assertRaises(BattleSolverError):
+            self.compile()
+
     def test_out_of_map_and_wrong_tile_class_are_rejected(self):
         for location in ([5, 1], [2, 0], [0, 1], [True, 1]):
             with self.subTest(location=location):

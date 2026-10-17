@@ -6,7 +6,7 @@ from dataclasses import replace
 from maa_planner.battle_solver import BattleSolverError
 from maa_planner.combat_model import (attack_interval, blackboard, blocking_queue, damage_packet,
                                      duel, enemy_behavior, operator_attributes, route_segments,
-                                     skill_behavior, equipment_effects)
+                                     skill_behavior, equipment_effects, evaluate_plan)
 from maa_planner.operator_box import Operator, ModuleProgress
 from maa_planner.copilot_matcher import OperatorIdentity
 
@@ -26,6 +26,10 @@ def target(hp=1000000):
 
 
 class DamageModelTests(unittest.TestCase):
+    def test_challenge_cannot_be_evaluated_with_unmodified_normal_enemy_stats(self):
+        with self.assertRaisesRegex(BattleSolverError, 'difficulty runes are not simulated'):
+            evaluate_plan({'stage': {'difficulty': 'FOUR_STAR'}}, {}, None, None, {}, {}, {})
+
     def test_mitigation_applies_per_damage_instance(self):
         self.assertEqual(damage_packet(1000, 'physical', defense=300), 700)
         self.assertEqual(5 * damage_packet(200, 'physical', defense=300), 50)

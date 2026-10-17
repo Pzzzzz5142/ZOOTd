@@ -3,7 +3,7 @@
 [文档索引](../README.md) · [Copilot 进度](README.md) · [运维手册](../operations.md#单次-copilot-通关实验phase-3)
 
 本实验把关卡出怪数据图与账号 Box 转成 MAA 可读的本地作业，并用现有
-`--copilot-file` 接口执行。它只用于用户明确要求的活动普通关，不接入 daily、
+`--copilot-file` 接口执行。它只用于用户明确要求的活动普通关与突袭，不接入 daily、
 planner、timer 或无人值守恢复。教学与特殊导航操作按用户当前授权处理；普通
 战斗仍由 Copilot 编队、执行和验收。
 
@@ -26,6 +26,8 @@ skill 用这些分析减少搜索，再用有限的真实尝试校准。未知�
 
 ```bash
 ./bin/zootd battle-solver fetch YW-1 --output var/battle-solver/YW-1/graph.json
+# 突袭必须显式选择难度，图与普通关分开保存
+./bin/zootd battle-solver fetch YW-EX-1 --raid --output var/battle-solver/YW-EX-1/graph-raid.json
 ./bin/zootd battle-solver analyze --graph var/battle-solver/YW-1/graph.json --format ascii
 ./bin/zootd battle-solver analyze --graph var/battle-solver/YW-1/graph.json --candidates --placement MELEE --limit 20
 ```
@@ -43,7 +45,7 @@ schema 1 的关键内容：
 
 | 字段 | 含义 |
 |---|---|
-| `stage` | code、stage ID、level ID、battle ID 与普通难度身份 |
+| `stage` | code、stage ID、level ID、battle ID 与明确的 NORMAL / FOUR_STAR 难度身份 |
 | `sources` | 导航 revision、关卡及敌人数据的来源与 SHA-256 |
 | `map` | 行列数，规范化 tile 坐标、部署类型、高低地、通行信息和原始字段 |
 | `routes` | 出入口、检查点、移动方式及原始字段；不是完整运动轨迹 |
@@ -76,6 +78,14 @@ MAA 动作字段以 [官方战斗流程协议](https://docs.maa.plus/zh-cn/proto
 也可提供完整的 `opers` 与 `actions`；简写计划的额外
 `actions` 追加到部署之后。当前编译器不支持替换 `groups` 或 `MoveCamera`，
 `skill_usage` 只接受 0、1、2。
+
+突袭通过游戏目录绑定配对的 `#f#` 身份。计划还必须显式声明
+`"difficulty": "FOUR_STAR"`；编译输出只接受准确对应的 `difficulty=2`，
+普通计划默认 `NORMAL` 并输出 `difficulty=1`，不接受双难度声明代替绑定。
+原始 runes 与 hiddenGroup 出怪条件完整保留，后者列为未模拟机制；出怪总数
+可能包括尚未启用的条件分支，不能作为某一模式的精确击杀总数。部署合法性
+只检查基础地图；禁部署 rune 等额外条件仍需研究与确认，不自动改写基础格子。
+当前 `evaluate` 拒绝突袭，避免把未应用突袭加成的敌人属性作为该模式的估计。
 
 `mechanics_acknowledged` 应列出本次确实研究过的 `mechanics.unknown`
 原始字符串，供编译器绑定确认。未研究的项不能为消除报错而自动填入。
@@ -149,6 +159,12 @@ AND。`elapsed_time` 单位为毫秒，前面必须有 `ResetStopwatch`。优先
 
 演习门槛固定关闭信赖补位，保证三次演习与真实作战使用同一固定阵容。
 当前门槛仅支持普通难度、自有阵容；演习始终禁药和源石。
+
+明确授权的突袭本地作业使用 `copilot-run YW-EX-1 --raid --no-add-trust
+--profile no-support --copilot-file <突袭作业>`，复用既有开战前模式检查、
+预算和突袭结果契约。突袭没有三次演习门槛，也不生成普通代理能力证明。
+EX 普通关仍须通过普通本地作业的三次演习门槛。允许用药时另加
+`--use-sanity-potion`；源石始终禁止。
 
 导航可先用 `./bin/zootd navigate YW-1 --plan` 只读规划，再按授权做零战斗
 导航。首次教学与特殊页面可以在用户授权下处理，但不得手动普通战斗绕过
