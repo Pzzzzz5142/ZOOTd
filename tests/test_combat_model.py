@@ -6,7 +6,7 @@ from dataclasses import replace
 from maa_planner.battle_solver import BattleSolverError
 from maa_planner.combat_model import (attack_interval, blackboard, blocking_queue, damage_packet,
                                      duel, enemy_behavior, operator_attributes, route_segments,
-                                     skill_behavior, equipment_effects, evaluate_plan)
+                                     skill_behavior, equipment_effects, evaluate_plan, rotation_estimate)
 from maa_planner.operator_box import Operator, ModuleProgress
 from maa_planner.copilot_matcher import OperatorIdentity
 
@@ -26,6 +26,31 @@ def target(hp=1000000):
 
 
 class DamageModelTests(unittest.TestCase):
+    def test_rotation_includes_cooldown_and_repeated_activations_without_editing_enemy(self):
+        enemy = target(150)
+        result = rotation_estimate(fighter(), behavior(), enemy, {'kind': 'ordinary'}, horizon=11)
+        self.assertEqual(result['skill_activations'], [2, 6, 10])
+        self.assertEqual(result['damage'], 1600)
+        self.assertEqual(result['damage_instances'], 11)
+        self.assertEqual(enemy['attributes']['maxHp'], 150)
+        self.assertAlmostEqual(result['average_dps'], 1600 / 11, places=3)
+
+    def test_ex_lamp_variants_preserve_inactive_health_and_unblockability(self):
+        graph = {'mechanics': {'runes': [{'key': 'env_system_new',
+                  'blackboard': [{'key': 'key', 'valueStr': 'env_044_act52side'}]}]}}
+        enemy = dict(target(100), id='enemy_10213_klbm_2_2', talent_blackboard=[
+            {'key': 'reborn_attr.max_hp', 'value': -.4},
+            {'key': 'reborn.duration', 'value': 1},
+            {'key': 'fireseedAbility.init_stack_cnt', 'value': 0}])
+        state = enemy_behavior(enemy, graph)
+        self.assertEqual(state['block_cost'], 0)
+        self.assertEqual(state['initial_hp_ratio'], .6)
+        result = duel(fighter(), behavior(), enemy, state, horizon=5)
+        self.assertEqual(result['damage'], 60)
+        self.assertEqual(result['revives'], 0)
+        enemy['id'] += '_future'
+        self.assertEqual(enemy_behavior(enemy, graph)['kind'], 'unsupported')
+
     def test_challenge_cannot_be_evaluated_with_unmodified_normal_enemy_stats(self):
         with self.assertRaisesRegex(BattleSolverError, 'difficulty runes are not simulated'):
             evaluate_plan({'stage': {'difficulty': 'FOUR_STAR'}}, {}, None, None, {}, {}, {})
