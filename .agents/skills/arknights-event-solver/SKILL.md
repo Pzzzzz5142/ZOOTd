@@ -1,15 +1,20 @@
 ---
 name: arknights-event-solver
-description: Use PRTS or unpacked Arknights stage data and the player's Box to create, validate, and iterate a private MAA Copilot JSON for explicitly requested normal or challenge event stages in ZOOTd. Covers event navigation and tutorial handling within the user's authorization; does not trigger daily or unattended recovery.
+description: Improve ZOOTd's programmatic tactical solver using stage data and the player's Box, or directly adapt existing Copilot jobs obtained from PRTS, for explicitly requested normal or challenge event stages. Validate through the existing Copilot pipeline; covers authorized navigation and tutorials without triggering daily or unattended recovery.
 ---
 
 # Arknights event solver
 
-Work from the ZOOTd project root. Read `README.md`, `docs/README.md`, and
-`docs/copilot/event-solver.md` before choosing commands. Keep player-specific
+Work from the ZOOTd project root. Read `README.md`, `docs/README.md`,
+`docs/development.md`, and `docs/copilot/event-solver.md` before choosing commands. Keep player-specific
 plans, Box excerpts, screenshots, and Copilot JSON under ignored `var/`.
 
-The deliverable is a MAA-readable local JSON and its observed result. A valid
+Follow [the tactical development contract](../../../docs/development.md#战术求解开发约定).
+For the programmatic route, the deliverable includes reusable solver changes,
+relevant regression tests, and reproducibly generated plan/Copilot artifacts.
+For an existing job obtained from PRTS, direct JSON adaptation is encouraged;
+preserve its provenance, original bytes/hash, and the reasons for each revision.
+Both routes report the local JSON and its observed result. A valid
 JSON, a favorable route score, or a successful process exit does not prove that
 the stage was cleared. Only the existing Copilot pipeline's fresh three-star
 proof supports that claim.
@@ -59,7 +64,7 @@ within the user's actual device authorization and budget; distinguish observed
 facts from estimates, especially timing, enemy state, and mechanics. Do not
 silently substitute an old event or infer unobserved waves.
 
-## Construct an account-specific candidate
+## Improve the solver or adapt a sourced PRTS job
 
 Read only the needed owned-operator progression from
 `var/state/operator-box.json`. If a refresh is needed, use `./bin/zootd box-sync`;
@@ -68,18 +73,35 @@ the Box account ID, nickname, complete raw response, or login data in reports.
 Use verified static skill-slot and module-order mappings; Box dictionary order
 does not encode MAA skill numbers. Null progression remains unknown.
 
-Select a small formation using actual enemy defenses, flight status, competing
-routes, healing needs, deploy limits, and the first enemy's arrival pressure.
-Prefer positions covering route convergence and sufficient deployment space.
-Explain required skill timing and any environment, boss, summon, displacement,
-or special-tile assumptions. The deterministic analyzer ranks geometric
-coverage; it does not model damage, blocking, survival, or an event mechanism.
+Choose the route from the actual job source. PRTS stage, enemy, or operator
+documentation is research data, not an existing Copilot job. Reading it does not
+permit hand-authoring or editing a private solver plan.
 
-Write a private plan using the current `compile` schema described in
-`docs/copilot/event-solver.md`. Use explicit operator names and skills, MAA
-coordinates and directions, and meaningful training requirements. Check the
-compiler's mechanics acknowledgements against the facts you researched; an
-acknowledgement records uncertainty, not correctness.
+For the programmatic route, diagnose missing selection, coverage, damage/hit,
+skill-cycle, DP, blocking, healing, or event-mechanism logic in the existing
+solver. Improve that reusable logic or a narrowly scoped, evidence-based
+mechanic adapter; add a regression exposing the defect. Generate a new plan
+from pinned inputs and record the code version, generation entry point and
+arguments, input hashes, and output hashes. Do not hand-edit operators, skills,
+modules, positions, directions, deployment order, actions, timing, or kill gates
+in the private plan or compiled JSON. A temporary script that patches these
+choices, or a hardcoded per-stage formation, is not a solver improvement.
+
+The current analyzer ranks geometric positions; evaluation models supported
+matchups for a fixed plan; compilation consumes an existing plan. These do not
+yet form a complete tactical generator. Implement needed generation/scheduling
+capability within the task's scope, or report the gap and stop tactical execution
+on this route. Do not substitute a hand-authored plan for missing generation.
+
+For the PRTS route, retain the fetched job ID or URL, exact original JSON bytes
+and SHA-256. Directly adapt that job for the player's Box and fresh evidence,
+saving each candidate separately with a diff rationale. Do not describe this as
+programmatic tactical generation or as proof that the solver improved.
+
+The generated-plan format is documented in `docs/copilot/event-solver.md`.
+Check mechanics acknowledgements against researched facts; an acknowledgement
+records uncertainty, not correctness. Never fabricate progression, alter graph
+facts, remove unknowns, or weaken validation to admit a candidate.
 
 MAA actions execute sequentially. `Deploy` waits for sufficient DP; every
 additional condition is ANDed with the others. `elapsed_time` is in milliseconds
@@ -88,7 +110,7 @@ usage, and observed kill thresholds over invented wave timestamps. Use
 `SkillDaemon` only after all required deployments and timed actions. Check the
 installed MAA version before choosing newer action types.
 
-Compile and validate before any device execution:
+For the program-generated plan route, compile and validate before device execution:
 
 ```bash
 ./bin/zootd battle-solver compile --graph var/battle-solver/YW-1/graph.json --plan var/battle-solver/YW-1/plan.json --output var/battle-solver/YW-1/copilot.json
@@ -101,7 +123,11 @@ character and equipment tables at the graph's revision. Compile and validate
 can use `--offline` to require those caches. Compile also saves an adjacent
 `.analysis.json` with source and Box hashes, without account text.
 
-Keep the source graph and a short private rationale with the candidate. Reject
+An adapted full PRTS job uses the existing local-source interface and its normal
+identity, Box, action, difficulty, budget, and proof checks; the commands above
+apply to candidates with a graph and plan, not arbitrary downloaded jobs.
+
+Keep source evidence and a short private rationale with the candidate. Reject
 identity, placement, action, or progression errors instead of weakening the
 validator or supplying fabricated requirements.
 
@@ -116,8 +142,9 @@ Use a clean, committed checkout and the existing local-source interface:
 Choose the support profile the user authorized. Keep each invocation to one
 local candidate and one battle; track the total attempts and sanity across
 invocations against the user's current budget. Do not use medicine flags by
-default. The source is snapshotted and hashed; write revisions as new files only
-after the previous invocation ends.
+default. The source is snapshotted and hashed; after the previous invocation
+ends, regenerate through improved solver code or save a directly adapted PRTS
+job as a new file. Keep previous candidates and evidence unchanged.
 
 When navigation or tutorials need interaction, use zero-battle navigation and
 the user's authorized special-page or tutorial handling. Confirm the requested
@@ -128,7 +155,9 @@ resources or receipts.
 
 Inspect the current run's result, callbacks, and screenshots. Separate an
 unreached stage, failed formation, mistimed action, leak, defeat, and missing
-proof. Revise only the implicated choice and revalidate. Stop on an exhausted
+proof. Fix the implicated program component and regenerate; direct tactical JSON
+revision is limited to existing jobs obtained from PRTS. Revalidate the new
+candidate. Stop on an exhausted
 budget, uncertain pending battle, contradictory result, or an unmet dependency
 that cannot be resolved within current authorization. Do not overwrite audit
 records, manufacture refund evidence, or promote an offline score to success.
