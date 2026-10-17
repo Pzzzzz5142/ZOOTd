@@ -40,6 +40,29 @@ class NavigationLayoutTests(unittest.TestCase):
             self.assertFalse(active_sidestory_card(changed))
             self.assertNotIn('ZootdActiveSideStoryCard', navigation_tasks(changed))
 
+    def test_current_ex_card_accepts_each_exact_mode_and_keeps_target_proof(self):
+        for n in range(1, 9):
+            for raid in (False, True):
+                sid = f'act52side_ex{n:02d}' + ('#f#' if raid else '')
+                route = dict(kind='activity', activity_id='act52side', zone_id='act52side_zone2',
+                             code=f'YW-EX-{n}', stage_id=sid, battle_id=sid, raid=raid,
+                             activity='昨日海', zone_names=['“我们的伊比利亚”'])
+                self.assertTrue(active_sidestory_card(route))
+                tasks = navigation_tasks(route)
+                self.assertIn('ZootdActiveSideStoryCard', tasks)
+                self.assertEqual(tasks['ZootdStageConfirmed']['text'][0], route['code'])
+                self.assertEqual(tasks['ZootdZone']['text'], ['我们的伊比利亚'])
+                self.assertEqual(tasks['ZootdZone']['roi'], [900, 410, 350, 90])
+                self.assertTrue(tasks['ZootdZone']['fullMatch'])
+                self.assertEqual(tasks['ZootdZone']['ocrReplace'], [[r'^[“”"]+|[“”"]+$', '']])
+                for field, replacement in (('activity_id', 'future-event'),
+                                           ('zone_id', 'act52side_zone1'),
+                                           ('stage_id', 'act52side_ex09'),
+                                           ('raid', not raid), ('raid', None)):
+                    changed = dict(route, **{field: replacement})
+                    self.assertFalse(active_sidestory_card(changed))
+                    self.assertNotIn('ZootdActiveSideStoryCard', navigation_tasks(changed))
+
     def test_observed_archive_editions_have_separate_adapters(self):
         for code in ('DV-S-1', 'DV-S-2'):
             route = sample_route(code)
