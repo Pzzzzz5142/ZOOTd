@@ -51,6 +51,21 @@ class DamageModelTests(unittest.TestCase):
         enemy['id'] += '_future'
         self.assertEqual(enemy_behavior(enemy, graph)['kind'], 'unsupported')
 
+    def test_second_life_changes_defences_and_wastes_ammo_during_invulnerability(self):
+        profile = behavior()
+        profile.update(mode='ammo', ammo=4, attack_up=0, attack_scale=1)
+        profile['sp'].update(initSp=1, spCost=1)
+        enemy = target(100)
+        result = duel(fighter(), profile, enemy, {'kind': 'two_phase_matrix',
+            'revive_ratio': 1.5, 'revive_delay': 1, 'revive_invulnerability': 2,
+            'revive_defense_add': 50}, horizon=5)
+        self.assertEqual(result['revives'], 1)
+        self.assertEqual(result['damage'], 200)  # 100 first life, then two 50-point hits
+        self.assertIsNone(result['kill_time'])
+        self.assertEqual(result['remaining_hp'], 50)
+        self.assertEqual(result['skill_activations'], [0, 4])
+        self.assertEqual(enemy['attributes']['def'], 0)
+
     def test_challenge_cannot_be_evaluated_with_unmodified_normal_enemy_stats(self):
         with self.assertRaisesRegex(BattleSolverError, 'difficulty runes are not simulated'):
             evaluate_plan({'stage': {'difficulty': 'FOUR_STAR'}}, {}, None, None, {}, {}, {})

@@ -14,7 +14,7 @@ import math
 from .battle_solver import BattleSolverError, _require, _map, _shortest, _rotate
 from .util import canonical_json, sha256_bytes
 
-MODEL_VERSION = 4
+MODEL_VERSION = 5
 
 
 def number(value, label, minimum=0):
@@ -249,6 +249,20 @@ def enemy_behavior(enemy, graph):
                       max_stacks=int(b['fireseedAbility.max_stack_cnt']),
                       reduction_per_stack=b['fireseedAbility.damage_resistance'])
         result['unknown'].append('armor:external_matrix_absorption_overload_splash_and_attack_speed_not_simulated')
+    elif envs and enemy['id'] in ('enemy_1594_presaint', 'enemy_1594_presaint_now'):
+        result.update(kind='two_phase_matrix',
+            initial_stacks=int(b['fireseedAbility.init_stack_cnt']),
+            reduction_per_stack=b['fireseedAbility.damage_resistance'],
+            revive_ratio=1 + b['Reborn.max_hp'] / enemy['attributes']['maxHp'],
+            revive_delay=b['Reborn.duration'],
+            revive_defense_add=b['Reborn.def'],
+            revive_resistance_add=b['Reborn.magic_resistance'],
+            revive_invulnerability=b['Reborn.invi_duration'],
+            revive_stacks=int(b['fireseedAbility.init_stack_cnt_2']))
+        _require(0 <= result['initial_stacks'] * result['reduction_per_stack'] < 1
+                 and 0 <= result['revive_stacks'] * result['reduction_per_stack'] < 1,
+                 'Unsupported boss matrix reduction')
+        result['unknown'].append('presaint:external_matrix_absorption_overload_burn_aoe_stun_and_enemy_attacks_not_simulated')
     elif envs and enemy['id'] in (
             'enemy_10213_klbm', 'enemy_10213_klbm_2', 'enemy_10213_klbm_2_2',
             'enemy_10214_klgn', 'enemy_10214_klgn_2',
@@ -287,6 +301,8 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
     ammo, attacks, hits, total, revives, overloads = 0, 0, 0, 0., 0, 0
     stacks = mechanics.get('initial_stacks', 0) if start_stacks is None else start_stacks
     stack_hits, stunned_until, debuffed_until = 0, -1., -1.
+    invulnerable_until = -1.
+    defense, base_resistance = e['def'], e['magicResistance']
     first_activation = kill_time = None
     activations = []
     while now < horizon and attacks < 100000:
@@ -326,12 +342,14 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
             if hp <= 0:
                 break
             reduction = stacks * mechanics.get('reduction_per_stack', 0) if now >= stunned_until else 0
-            resistance = e['magicResistance'] * (1 + behavior.get('resistance_debuff', 0)
+            resistance = base_resistance * (1 + behavior.get('resistance_debuff', 0)
                 if now < debuffed_until else 1)
             damage = damage_packet(attack * packet, behavior['damage_type'],
-                defense=e['def'], resistance=resistance, reduction=reduction,
+                defense=defense, resistance=resistance, reduction=reduction,
                 flat_penetration=behavior.get('flat_penetration', 0),
                 percent_penetration=behavior.get('percent_penetration', 0))
+            if now < invulnerable_until:
+                damage = 0
             # Sum damage against HP, excluding overkill, so multi-hit ordering matters.
             total += min(hp, damage)
             hp -= damage
@@ -349,6 +367,11 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
                 hp = max_hp * mechanics['revive_ratio']
                 revives += 1
                 next_ready = now + mechanics['revive_delay']
+                invulnerable_until = next_ready + mechanics.get('revive_invulnerability', 0)
+                defense = max(0, defense + mechanics.get('revive_defense_add', 0))
+                base_resistance = max(0, base_resistance + mechanics.get('revive_resistance_add', 0))
+                stacks = mechanics.get('revive_stacks', stacks)
+                debuffed_until = -1.
                 break
         if hp <= 0:
             kill_time = now
