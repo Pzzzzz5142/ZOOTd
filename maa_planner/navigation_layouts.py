@@ -6,6 +6,18 @@ STANDARD = 'standard'
 DV_SPECIAL_ACCESS = 'dv_special_access'
 NL_SPECIAL_ROOK = 'nl_special_rook'
 
+
+def active_sidestory_card(route):
+    """Observed terminal card, only for the current ordinary Yesterday Sea zone."""
+    if (not isinstance(route, dict) or route.get('kind') != 'activity'
+            or route.get('activity_id') != 'act52side'
+            or route.get('zone_id') != 'act52side_zone1'
+            or route.get('raid', False) is not False):
+        return False
+    stage = {f'YW-{n}': f'act52side_{n:02d}' for n in range(1, 9)}.get(route.get('code'))
+    return stage is not None and route.get('stage_id') == route.get('battle_id') == stage
+
+
 # Only the archived editions and sections with observed layouts are adapted.
 # Catalog routing remains data-driven for every other stage/event. A code
 # substring, free entry, translated label or caller-provided layout is no proof.
