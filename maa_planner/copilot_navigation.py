@@ -165,6 +165,12 @@ def navigation_tasks(route: dict) -> dict:
             # reselect it and emit ExceededLimit after the one allowed click.
             tasks['ZootdZone']['next'] = ['ZootdStage', 'ZootdMapReady']
             tasks['ZootdZone']['postDelay'] = 2500
+            if route.get('zone_id') == 'act52side_zone2':
+                # The observed EX label has decorative curly quotes which
+                # native OCR reads as ASCII quotes, sometimes dropping one.
+                tasks['ZootdZone']['text'] = [name.strip('“”"') for name in route['zone_names']]
+                tasks['ZootdZone']['ocrReplace'] = [[r'^[“”"]+|[“”"]+$', '']]
+                tasks['ZootdZone']['roi'] = [900, 410, 350, 90]
         tasks['ZootdActivityEnter'] = {**ocr(['进入活动', '前往活动', '进入作战'], find),
                                       'maxTimes': 2, 'exceededNext': []}
     elif route['kind'] == 'supplies':
