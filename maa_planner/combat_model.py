@@ -14,7 +14,7 @@ import math
 from .battle_solver import BattleSolverError, _require, _map, _shortest, _rotate
 from .util import canonical_json, sha256_bytes
 
-MODEL_VERSION = 3
+MODEL_VERSION = 4
 
 
 def number(value, label, minimum=0):
@@ -183,7 +183,6 @@ def skill_behavior(skill_id, level, char):
                       self_heal_ratio=b['hp_recovery_per_sec_by_max_hp_ratio'])
     elif skill_id == 'skchr_huang_2':
         result.update(mode='permanent', attack_up=b['atk'], defense_up=b['def'], targets=3)
-        result['unknown'].append('extended_range:not_applied')
     elif skill_id == 'skchr_angel_3':
         result.update(attack_scale=b['attack@atk_scale'], hits=int(b['attack@times']),
                       interval_add=b['base_attack_time'])
@@ -215,7 +214,7 @@ def skill_behavior(skill_id, level, char):
         result.update(mode='conditional_heal', damage_type='healing', attack_scale=b['heal_scale'])
         result['unknown'].append('shu:heal_threshold_sowing_and_team_buffs_not_simulated')
     elif skill_id == 'skcom_assist_cost[2]':
-        result.update(mode='cost', block_add=-1, targets=0)
+        result.update(mode='cost', block_add=-1, targets=0, cost_gain=b['value'])
     else:
         return None
     _require(result['hits'] >= 1 and result['targets'] >= 0, 'Invalid supported attack multiplicity')
@@ -229,7 +228,7 @@ def enemy_behavior(enemy, graph):
     envs = [r for r in graph.get('mechanics', {}).get('runes') or []
             if r.get('key') == 'env_system_new' and any(
                 x.get('valueStr') == 'env_044_act52side' for x in r.get('blackboard', []))]
-    if envs and enemy['id'] == 'enemy_10220_kljbp':
+    if envs and enemy['id'] in ('enemy_10220_kljbp', 'enemy_10220_kljbp_2'):
         result.update(kind='basin', initial_stacks=int(b['fireseedAbility.init_stack_cnt']),
             max_stacks=int(b['fireseedAbility.max_stack_cnt']),
             hits_per_stack=int(b['kljbp_t.atk_cnt']), reduction_per_stack=b['fireseedAbility.damage_resistance'],
@@ -241,9 +240,29 @@ def enemy_behavior(enemy, graph):
     elif envs and enemy['id'] == 'enemy_10212_klhz':
         result.update(kind='matrix')
         result['unknown'].append('absorption_into_friendly_units_and_SP_gain_not_simulated')
-    elif envs and enemy['id'] in ('enemy_10213_klbm', 'enemy_10214_klgn'):
+    elif envs and enemy['id'] == 'enemy_10218_klxl_2':
+        result['unknown'].append('censer:matrix_consumption_channel_damage_and_field_sharing_not_simulated')
+    elif envs and enemy['id'] == 'enemy_10217_klljs_2':
+        result['unknown'].append('apprentice:periodic_matrix_summons_not_simulated')
+    elif envs and enemy['id'] == 'enemy_10219_klhjdd_2':
+        result.update(kind='stored_matrix', initial_stacks=int(b['fireseedAbility.init_stack_cnt']),
+                      max_stacks=int(b['fireseedAbility.max_stack_cnt']),
+                      reduction_per_stack=b['fireseedAbility.damage_resistance'])
+        result['unknown'].append('armor:external_matrix_absorption_overload_splash_and_attack_speed_not_simulated')
+    elif envs and enemy['id'] in (
+            'enemy_10213_klbm', 'enemy_10213_klbm_2', 'enemy_10213_klbm_2_2',
+            'enemy_10214_klgn', 'enemy_10214_klgn_2',
+            'enemy_10215_klhjd_2', 'enemy_10215_klhjd_2_a',
+            'enemy_10216_kltwhp_2', 'enemy_10216_kltwhp_2_2'):
         result.update(kind='reviving', revive_ratio=1 + b['reborn_attr.max_hp'],
                       revive_delay=b['reborn.duration'])
+        inactive = b.get('fireseedAbility.init_stack_cnt') == 0
+        if inactive:
+            result.update(initial_hp_ratio=1 + b['reborn_attr.max_hp'], revive_ratio=0)
+        if enemy['id'] in ('enemy_10213_klbm', 'enemy_10213_klbm_2', 'enemy_10213_klbm_2_2'):
+            result['block_cost'] = 0
+        if enemy['id'] in ('enemy_10216_kltwhp_2', 'enemy_10216_kltwhp_2_2'):
+            result['unknown'].append('vase:channel_stun_and_beam_suppression_not_simulated')
         result['unknown'].append('matrix_release_and_energy_field_interaction_not_simulated')
     elif enemy.get('skills') or enemy.get('talent_blackboard'):
         result.update(kind='unsupported')
@@ -256,7 +275,8 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
     horizon = number(horizon, 'horizon', .001)
     _require(horizon <= 600, 'Combat horizon exceeds 600 seconds')
     e = enemy['attributes']
-    hp = max_hp = number(e['maxHp'], 'enemy HP', .001)
+    max_hp = number(e['maxHp'], 'enemy HP', .001)
+    hp = max_hp * mechanics.get('initial_hp_ratio', 1)
     sp_data = behavior['sp']
     sp, need = number(sp_data['initSp'], 'initial SP'), number(sp_data['spCost'], 'SP cost')
     sp_kind = sp_data['spType']
@@ -268,6 +288,7 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
     stacks = mechanics.get('initial_stacks', 0) if start_stacks is None else start_stacks
     stack_hits, stunned_until, debuffed_until = 0, -1., -1.
     first_activation = kill_time = None
+    activations = []
     while now < horizon and attacks < 100000:
         active = active_until > now
         if sp_kind == 'INCREASE_WITH_TIME':
@@ -277,6 +298,7 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
         if skill_enabled and not active and sp >= need and need > 0:
             sp -= need
             first_activation = now if first_activation is None else first_activation
+            activations.append(now)
             mode = behavior['mode']
             if mode in ('permanent', 'ammo'):
                 active_until = math.inf
@@ -343,6 +365,8 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
                                    attrs['attackSpeed'] + (behavior['speed_add'] if active else 0))
         now = max(now + interval, next_ready)
     return {'damage': round(total, 3), 'kill_time': kill_time, 'damage_instances': hits,
+            'attack_events': attacks, 'skill_activations': activations,
+            'average_dps_over_horizon': round(total / horizon, 3),
             'first_skill_activation': first_activation, 'revives': revives, 'overloads': overloads,
             'remaining_hp': round(max(0, hp), 3), 'final_stacks': stacks,
             'scenario': 'continuous_single_target_contact_from_deployment',
@@ -370,6 +394,24 @@ def route_segments(route):
         points.append(route['end'])
         segments.append(points)
     return {'segments': segments, 'wait_seconds': wait, 'unsupported': unknown}
+
+
+def rotation_estimate(attrs, behavior, enemy, mechanics, *, horizon=120, skill_enabled=True):
+    """Sustained single-target scenario with the enemy's defenses and state rules.
+
+    Artificial durability avoids stopping at the first kill. This does not alter
+    the source enemy or claim that a moving enemy stays in range for the horizon.
+    Revival/inactive HP transitions are intentionally reserved for the real-HP
+    duel; the rotation scenario measures attack/SP cadence against one life.
+    """
+    target = {'attributes': dict(enemy['attributes'], maxHp=1e15)}
+    state = dict(mechanics, revive_ratio=0, initial_hp_ratio=1)
+    result = duel(attrs, behavior, target, state, horizon=horizon, skill_enabled=skill_enabled)
+    return {'scenario': 'sustained_contact_with_enemy_defences_and_artificial_durability',
+            'horizon_seconds': horizon, 'damage': result['damage'],
+            'average_dps': result['average_dps_over_horizon'],
+            'attack_events': result['attack_events'], 'damage_instances': result['damage_instances'],
+            'skill_activations': result['skill_activations'], 'overloads': result['overloads']}
 
 
 def blocking_queue(capacity, arrivals):
@@ -521,9 +563,12 @@ def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizo
                     matchup['status'] = 'unsupported_enemy_mechanics'
                 else:
                     matchup['status'] = 'conditional_estimate'
+                    skill_enabled = behavior['automatic'] or spec.get('skill_usage', 0) != 0 or any(
+                        a.get('type') == 'Skill' and a.get('name') == spec['name'] for a in content['actions'])
                     matchup['duel'] = duel(base, behavior, enemy, mechanics, horizon=horizon,
-                        skill_enabled=behavior['automatic'] or spec.get('skill_usage', 0) != 0 or any(
-                            a.get('type') == 'Skill' and a.get('name') == spec['name'] for a in content['actions']))
+                        skill_enabled=skill_enabled)
+                    matchup['rotation'] = rotation_estimate(base, behavior, enemy, mechanics,
+                        horizon=horizon, skill_enabled=skill_enabled)
                     if mechanics['kind'] == 'basin':
                         # A second explicit scenario exposes sensitivity to external matrix feeding.
                         matchup['max_stacks_duel'] = duel(base, behavior, enemy, mechanics, horizon=horizon,
@@ -547,7 +592,8 @@ def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizo
                     continue
                 _require(spawn['count'] <= 5000, 'Blocking scenario spawn count too large')
                 item['arrivals'].extend({'time': spawn['pre_delay'] + i * spawn['interval'],
-                    'block_cost': 1, 'service_seconds': service} for i in range(spawn['count']))
+                    'block_cost': by_enemy[spawn['enemy_id']]['mechanics'].get('block_cost', 1),
+                    'service_seconds': service} for i in range(spawn['count']))
             entry['blocking_scenarios'] = {key: {
                 'normal_capacity': blocking_queue(int(entry['block_count_normal']), item['arrivals']),
                 'skill_capacity': blocking_queue(int(entry['block_count_skill']), item['arrivals']),

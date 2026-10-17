@@ -87,11 +87,15 @@ modules, positions, directions, deployment order, actions, timing, or kill gates
 in the private plan or compiled JSON. A temporary script that patches these
 choices, or a hardcoded per-stage formation, is not a solver improvement.
 
-The current analyzer ranks geometric positions; evaluation models supported
-matchups for a fixed plan; compilation consumes an existing plan. These do not
-yet form a complete tactical generator. Implement needed generation/scheduling
-capability within the task's scope, or report the gap and stop tactical execution
-on this route. Do not substitute a hand-authored plan for missing generation.
+`battle-solver generate` performs bounded terminal-defence candidate search for
+normal stages, using modeled skills, actual Box progression, both ranges and
+finite-target/rotation estimates. Supply graph-bound, non-tactical research notes;
+see `docs/copilot/event-solver.md`. It chooses all tactical fields and saves the
+plan, Copilot, combat report and generation evidence. Unsupported enemies,
+routes, active runes or unsatisfied coverage stop generation. Fields, conditional
+control, survival and complete wave/DP scheduling remain incomplete. Implement
+needed capability within scope, or report the gap and stop tactical execution.
+Do not substitute a hand-authored plan for missing generation.
 
 For the PRTS route, retain the fetched job ID or URL, exact original JSON bytes
 and SHA-256. Directly adapt that job for the player's Box and fresh evidence,

@@ -75,6 +75,22 @@ MAA 动作字段以 [官方战斗流程协议](https://docs.maa.plus/zh-cn/proto
 响应或账号作业写入 tracked 文件。技能编号使用静态数据的技能槽，模组编号
 使用显式显示顺序；不能从 Box 字典排序推断。
 
+### 有界的普通关候选生成
+
+`generate` 从 Box 中选择已有战斗模型的技能，以末段路线覆盖搜索阻挡、输出、治疗、回费、位置、朝向及部署顺序；不接受手填战术选择。评分同时参考实际敌人的有限生命击杀情景及保持相同防御/机制、使用人工高生命目标的持续接触情景。后者提供打数、伤害实例数、总伤、平均 DPS 和技能多次回转，不能解释为移动敌人的实际承伤。
+
+先保存固定 graph 与 Box。研究文件 `schema=1`，`graph_sha256` 使用 `canonical_json(graph)` 的 SHA-256，`mechanics` 是每个原始 unknown 字符串到事实与限制说明的映射，`sources` 为非空来源列表。研究确认不改变图事实，也不授予未知机制正面收益。它不包含阵容、坐标、朝向、动作或时间选择。
+
+```bash
+./bin/zootd battle-solver generate --graph var/battle-solver/YW-EX-2/graph.json --box var/battle-solver/box-snapshot.json --research var/battle-solver/YW-EX-2/research.json --offline --output var/battle-solver/YW-EX-2/generated-r1
+```
+
+输出目录必须尚不存在，内含 `plan.json`、`copilot.json`、`combat.json` 与 `generation.json`，记录代码 HEAD/dirty、入口参数、来源和输入/输出哈希。开发时的 dirty 输出仅供诊断；完成提交、PR、合并后重新生成供实机执行的候选。仍需单独 `validate` 并走三次演习门槛。
+
+当前生成器只支持普通关及已建模敌人。按准确难度启用 hidden-group，并拆开传送可见路段；未知随机分组、条件分支、普通难度生效的未知 rune、额外禁部署约束或无法满足的覆盖会停止。阻挡不能代替灯的蓝门前常态火力，技能扩范围不能代替常态治疗。永久技能只开一次，其他支持技能交由原有使用方式管理。
+
+此算法是有限的贪心候选搜索，尚未求解力场闭合、道具改路、控制链、队伍共享输出与完整存活。费用影响选取和顺序，实际 Deploy 等待 MAA 的费用检查；尚未提供首波到场/费用的可行性证明。香炉持续伤害、花瓶眩晕和基质回技等 unknown 仍可导致候选失败；缺少必要能力时继续改进程序，不能手改输出弥补。
+
 以下是程序输出计划的格式说明，不是手写或直接修订求解器战术的操作流程。
 已有私有计划仍可用于离线诊断，但历史人工计划不因此成为程序生成结果。
 从 PRTS 获取的现成作业可按开发指南直接适配，经本地来源接口执行；下述
