@@ -104,6 +104,7 @@ def main(argv=None) -> int:
     commands = parser.add_subparsers(dest='command', required=True)
     fetch = commands.add_parser('fetch', help='Fetch public sources pinned to navigation revision')
     fetch.add_argument('stage')
+    fetch.add_argument('--raid', action='store_true', help='Read explicit challenge (FOUR_STAR) identity and mechanics')
     fetch.add_argument('--refresh', action='store_true', help='Redownload pinned immutable sources')
     fetch.add_argument('--output', type=Path)
     analyze = commands.add_parser('analyze', help='Analyze local graph or raw local level/enemy sources')
@@ -136,7 +137,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == 'fetch':
-            graph = fetch_battle(args.project_root, args.stage, refresh=args.refresh)
+            graph = fetch_battle(args.project_root, args.stage, refresh=args.refresh, raid=args.raid)
             static_inputs(args.project_root, graph)
             if args.output:
                 atomic_write_json(args.output, graph, mode=0o600)

@@ -141,7 +141,7 @@ class BattleDataTests(unittest.TestCase):
             with self.subTest(kind=kind):
                 level, database, identity, sources = fixture()
                 if kind == 'identity': identity.pop('level_id')
-                if kind == 'difficulty': identity['difficulty'] = 'FOUR_STAR'
+                if kind == 'difficulty': identity['difficulty'] = 'UNKNOWN_FUTURE_MODE'
                 if kind == 'evidence': sources['level']['sha256'] = 'not-a-hash'
                 if kind == 'level-disagreement': level['levelId'] = 'other-level'
                 with self.assertRaises(PrtsError):
@@ -155,6 +155,43 @@ class BattleDataTests(unittest.TestCase):
         level['routes'][0].pop('checkpoints')
         with self.assertRaises(PrtsError):
             parse_battle(level, database, identity=identity, sources=sources)
+
+    def test_challenge_preserves_runes_and_conditional_spawn_uncertainty(self):
+        level, database, identity, sources = fixture()
+        identity.update(stage_id='synthetic_01#f#', battle_id='synthetic_01#f#', difficulty='FOUR_STAR')
+        level['runes'] = [{'key': 'enemy_attribute_mul', 'difficultyMask': 'FOUR_STAR',
+                           'blackboard': [{'key': 'max_hp', 'value': 2.0}]}]
+        level['waves'][0]['fragments'][0]['actions'][0]['hiddenGroup'] = 'raid'
+        graph = parse_battle(level, database, identity=identity, sources=sources)
+        self.assertEqual(graph['stage'], identity)
+        self.assertEqual(graph['mechanics']['runes'], level['runes'])
+        self.assertIn('conditional-hidden-group', graph['mechanics']['unknown'])
+        self.assertEqual(graph['spawns'][0]['raw']['hiddenGroup'], 'raid')
+        self.assertEqual(graph['enemies']['enemy_a']['attributes']['maxHp'], 2000)
+        self.assertFalse(graph['victory_proven'])
+
+    def test_fetch_challenge_binds_exact_catalog_identity_and_separate_cache(self):
+        level, database, identity, sources = fixture()
+        sid = identity['stage_id'] + '#f#'
+        tables = {'stage_table': {'stages': {sid: {
+            'levelId': identity['level_id'], 'zoneId': 'synthetic-zone'}}},
+            'retro_table': {'stageList': {}}}
+        navigation = {'revision': 'a' * 40, 'sha256': 'b' * 64}
+        route = {'stage_id': sid, 'battle_id': sid, 'code': 'XX-1', 'zone_id': 'synthetic-zone'}
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch('maa_planner.battle_data.load_tables', return_value=(tables, navigation)), \
+                patch('maa_planner.battle_data.load_navigation') as catalog, \
+                patch('maa_planner.battle_data._source') as source:
+            root = Path(temporary)
+            catalog.return_value.route.return_value = route
+            catalog.return_value.evidence = navigation
+            source.side_effect = [(level, sources['level']), (database, sources['enemy_database'])]
+            graph = fetch_battle(root, 'XX-1', raid=True)
+            catalog.assert_called_once_with(root, raid=True)
+            self.assertEqual(graph['stage']['stage_id'], sid)
+            self.assertEqual(graph['stage']['difficulty'], 'FOUR_STAR')
+            self.assertTrue((root / 'var/cache/battle-data' / ('a' * 40) / sid / 'graph.json').is_file())
+            self.assertFalse((root / 'var/cache/battle-data' / ('a' * 40) / identity['stage_id'] / 'graph.json').exists())
 
     def test_source_cache_hashes_exact_bytes_and_refuses_tampering(self):
         raw = b'{ "enemies" : [] }\n'

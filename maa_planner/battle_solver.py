@@ -231,13 +231,14 @@ def validate_copilot(graph, content, box=None, catalog=None, *, character_table=
     """
     _, _, tiles = _map(graph)
     stage = graph.get('stage', {})
-    _require(stage.get('difficulty') == 'NORMAL', 'Only normal stages are supported.')
+    _require(stage.get('difficulty') in ('NORMAL', 'FOUR_STAR'), 'Unknown battle difficulty.')
+    difficulty = 2 if stage['difficulty'] == 'FOUR_STAR' else 1
     _require(isinstance(content, dict), 'Copilot must be an object.')
     _require(content.get('stage_name') in (stage.get('stage_id'), stage.get('battle_id'),
                                          stage.get('level_id'), stage.get('code'))
              and bool(content.get('stage_name')), 'Copilot stage differs from graph.')
-    _require(type(content.get('difficulty')) is int and content['difficulty'] == 1,
-             'Copilot must explicitly specify normal difficulty=1.')
+    _require(type(content.get('difficulty')) is int and content['difficulty'] == difficulty,
+             'Copilot difficulty must exactly match the graph (normal=1, challenge=2).')
     _require(isinstance(content.get('minimum_required'), str)
              and bool(content['minimum_required']), 'Missing MAA minimum version.')
     _require(isinstance(content.get('doc'), dict)
@@ -403,6 +404,7 @@ def validate_copilot(graph, content, box=None, catalog=None, *, character_table=
     return {'schema_version': 1, 'method': 'checked-copilot-compiler',
             'proof_status': 'unproven', 'combat_simulated': False,
             'stage_id': stage['stage_id'],
+            'difficulty': stage['difficulty'],
             'graph_sha256': sha256_bytes(canonical_json(graph)),
             'copilot_sha256': sha256_bytes(canonical_json(content)),
             'box_validation': 'verified' if box is not None else 'not_checked',
@@ -421,6 +423,9 @@ def compile_copilot(graph, plan, box, catalog, *, character_table):
     """Compile a manually or skill-authored plan into a fixed MAA script."""
     _require(isinstance(plan, dict) and plan.get('schema_version') == 1, 'Unknown plan schema.')
     _require(plan.get('stage_id') == graph.get('stage', {}).get('stage_id'), 'Plan stage differs from graph.')
+    difficulty = graph.get('stage', {}).get('difficulty')
+    _require(plan.get('difficulty', 'NORMAL') == difficulty,
+             'Plan must explicitly bind challenge difficulty; normal plans default to NORMAL.')
     _require(box is not None and catalog is not None and character_table is not None,
              'Compilation requires a local Box and authoritative character identities/placement types.')
     placements = plan.get('placements')
@@ -452,7 +457,7 @@ def compile_copilot(graph, plan, box, catalog, *, character_table):
         if not actions or ACTION_ALIASES.get(actions[0].get('type'), actions[0].get('type')) != 'ResetStopwatch':
             actions.insert(0, {'type': 'ResetStopwatch'})
     content = {'stage_name': plan['stage_id'], 'minimum_required': 'v6.18.0',
-               'difficulty': 1, 'opers': opers, 'actions': actions,
+               'difficulty': 2 if difficulty == 'FOUR_STAR' else 1, 'opers': opers, 'actions': actions,
                'doc': {'title': plan.get('title', graph['stage'].get('code', plan['stage_id'])
                                         + ' experimental heuristic plan'),
                        'details': 'ZOOTd offline compiler. Heuristic plan; no combat simulation or clear proof. '

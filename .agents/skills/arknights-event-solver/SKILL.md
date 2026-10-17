@@ -1,6 +1,6 @@
 ---
 name: arknights-event-solver
-description: Use PRTS or unpacked Arknights stage data and the player's Box to create, validate, and iterate a private MAA Copilot JSON for explicitly requested normal event stages in ZOOTd. Covers event navigation and tutorial handling within the user's authorization; does not trigger daily or unattended recovery.
+description: Use PRTS or unpacked Arknights stage data and the player's Box to create, validate, and iterate a private MAA Copilot JSON for explicitly requested normal or challenge event stages in ZOOTd. Covers event navigation and tutorial handling within the user's authorization; does not trigger daily or unattended recovery.
 ---
 
 # Arknights event solver
@@ -29,6 +29,18 @@ Fetch the selected normal stage:
 ./bin/zootd battle-solver analyze --graph var/battle-solver/YW-1/graph.json --format ascii
 ./bin/zootd battle-solver analyze --graph var/battle-solver/YW-1/graph.json --candidates --placement MELEE --limit 20
 ```
+
+For explicitly authorized challenge mode, fetch with `--raid`, save a separate
+graph, and bind the plan to its exact stage ID plus `difficulty: "FOUR_STAR"`.
+Compile emits difficulty 2; normal plans retain difficulty 1. Raw runes and
+hidden-group branches remain unmodeled: research stat multipliers, forbidden
+tiles and conditional spawns rather than treating base-map legality or summed
+spawns as mode-specific facts. Combat evaluation currently rejects challenge
+graphs. Run the resulting local file with `copilot-run --raid --no-add-trust`;
+this uses the existing challenge preflight and result contract, without the
+normal-only practice gate or saved-proxy proof. Normal EX stages retain their
+three-practice gate. Do not infer additional difficulty or medicine permission
+from the availability of these commands.
 
 Read the graph's stage identity, source revision and hashes, tiles, routes,
 enemy attributes, spawn fragments, and mechanics. Public PRTS pages can explain

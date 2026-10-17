@@ -129,7 +129,8 @@ def parse_battle(level: dict, enemy_database: dict, *, identity: dict, sources: 
     require(isinstance(level, dict) and isinstance(identity, dict), 'Invalid battle input.')
     require(all(text(identity.get(k)) for k in ('stage_id', 'battle_id', 'code', 'level_id')),
             'Incomplete stage identity.')
-    require(identity.get('difficulty') == 'NORMAL', 'Only explicit NORMAL battle data is supported.')
+    require(identity.get('difficulty') in ('NORMAL', 'FOUR_STAR'),
+            'Only explicit NORMAL or FOUR_STAR battle data is supported.')
     source_level_id = level.get('levelId')
     require(source_level_id is None or (text(source_level_id)
             and source_level_id.casefold() == identity['level_id'].casefold()),
@@ -218,6 +219,8 @@ def parse_battle(level: dict, enemy_database: dict, *, identity: dict, sources: 
                 spawns.append({**location, 'enemy_id': key, 'route_index': route_index,
                                'count': count, 'pre_delay': pre_delay, 'interval': interval,
                                'timing': 'event-relative', 'raw': copy.deepcopy(action)})
+                if action.get('hiddenGroup'):
+                    unknown.add('conditional-hidden-group')
                 if action.get('randomType') != 'ALWAYS' or action.get('refreshType') != 'ALWAYS':
                     unknown.add('random-or-conditional-spawn')
                 if not action['managedByScheduler']:
@@ -278,7 +281,7 @@ def _source(directory: Path, name: str, url: str, *, refresh=False, opener=None)
     return data, evidence
 
 
-def fetch_battle(root: Path, stage: str, *, refresh=False, opener=None) -> dict:
+def fetch_battle(root: Path, stage: str, *, refresh=False, raid=False, opener=None) -> dict:
     """Fetch immutable level/enemy sources from the navigation snapshot's revision."""
     tables, navigation = load_tables(root)
     revision = navigation.get('revision')
@@ -286,7 +289,8 @@ def fetch_battle(root: Path, stage: str, *, refresh=False, opener=None) -> dict:
             'Invalid battle source revision.')
     # The navigation loader follows Core's promoted resource/overlay precedence.
     # Refuse a concurrent table refresh rather than mixing two revisions.
-    catalog = load_navigation(root)
+    require(type(raid) is bool, 'Battle difficulty must be an explicit boolean.')
+    catalog = load_navigation(root, raid=raid)
     require(all(catalog.evidence.get(key) == navigation.get(key) for key in ('revision', 'sha256')),
             'Navigation snapshot changed during battle data fetch; retry explicitly.')
     navigation = catalog.evidence
@@ -297,7 +301,7 @@ def fetch_battle(root: Path, stage: str, *, refresh=False, opener=None) -> dict:
     require(isinstance(row, dict) and text(row.get('levelId')), 'Stage level identity missing.')
     level_id = row['levelId']
     require(re.fullmatch(r'[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)+', level_id), 'Unsafe level source path.')
-    require(re.fullmatch(r'[A-Za-z0-9_-]+', route['battle_id']), 'Unsafe battle cache identity.')
+    require(re.fullmatch(r'[A-Za-z0-9_-]+(?:#f#)?', route['battle_id']), 'Unsafe battle cache identity.')
     base = f'https://raw.githubusercontent.com/{REPOSITORY}/{revision}/zh_CN/gamedata/levels/'
     directory = root / 'var/cache/battle-data' / revision
     level, level_source = _source(directory / route['battle_id'], 'level.json',
@@ -305,7 +309,7 @@ def fetch_battle(root: Path, stage: str, *, refresh=False, opener=None) -> dict:
     enemies, enemy_source = _source(directory, 'enemy_database.json',
                                    base + 'enemydata/enemy_database.json', refresh=refresh, opener=opener)
     identity = {k: route[k] for k in ('stage_id', 'battle_id', 'code')}
-    identity.update(level_id=level_id, difficulty='NORMAL')
+    identity.update(level_id=level_id, difficulty='FOUR_STAR' if raid else 'NORMAL')
     graph = parse_battle(level, enemies, identity=identity,
                          sources={'navigation': navigation, 'level': level_source,
                                   'enemy_database': enemy_source})

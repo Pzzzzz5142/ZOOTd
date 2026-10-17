@@ -396,6 +396,8 @@ def blocking_queue(capacity, arrivals):
 
 def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizon=60,
                   equipment=None, equip_metadata=None):
+    _require(graph.get('stage', {}).get('difficulty') == 'NORMAL',
+             'Challenge combat evaluation is unsupported: difficulty runes are not simulated.')
     _, _, tiles = _map(graph)
     rows = []
     paths = {}
