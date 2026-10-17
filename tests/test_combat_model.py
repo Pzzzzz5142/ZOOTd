@@ -149,6 +149,29 @@ class DamageModelTests(unittest.TestCase):
         self.assertTrue(profile['automatic'])
         self.assertEqual(profile['attack_scale'], 3.7)
 
+    def test_ignition_reduces_resistance_before_two_primary_target_packets(self):
+        profile = skill_behavior('skchr_amgoat_2', {'skillType': 'AUTO', 'duration': -1,
+            'spData': {'spType': 'INCREASE_WITH_TIME', 'initSp': 5, 'spCost': 5}, 'blackboard': [
+                {'key': k, 'value': v} for k, v in {'atk_scale': 1.85, 'atk_scale_2': 1.85,
+                    'magic_resistance': -.25, 'duration': 6}.items()]}, {'profession': 'CASTER'})
+        enemy = target()
+        enemy['attributes']['magicResistance'] = 50
+        result = duel(dict(fighter(), atk=1000), profile, enemy, {'kind': 'ordinary'}, horizon=.1)
+        # 2 * 1850 * (1 - 50 * .75 / 100), including the first activation.
+        self.assertEqual(result['damage'], 2312.5)
+        self.assertEqual(result['damage_instances'], 2)
+        result = duel(dict(fighter(), atk=1000), profile, enemy, {'kind': 'basin',
+            'initial_stacks': 1, 'max_stacks': 8, 'hits_per_stack': 1,
+            'reduction_per_stack': .1, 'stun_duration': 15}, horizon=.1)
+        self.assertEqual(result['damage'], 1965.625)
+        self.assertEqual(result['final_stacks'], 3)
+        enemy['attributes']['maxHp'] = 500
+        result = duel(dict(fighter(), atk=1000), profile, enemy, {'kind': 'reviving',
+            'revive_ratio': .6, 'revive_delay': 1}, horizon=.1)
+        self.assertEqual(result['damage'], 500)
+        self.assertEqual(result['remaining_hp'], 300)
+        self.assertEqual(result['damage_instances'], 1)
+
     def test_enemy_mechanics_cannot_be_enabled_by_an_acknowledgement_or_code_prefix(self):
         enemy = {'id': 'enemy_10220_kljbp', 'skills': None, 'talent_blackboard': [
             {'key': k, 'value': v} for k, v in {'fireseedAbility.init_stack_cnt': 1,

@@ -14,7 +14,7 @@ import math
 from .battle_solver import BattleSolverError, _require, _map, _shortest, _rotate
 from .util import canonical_json, sha256_bytes
 
-MODEL_VERSION = 2
+MODEL_VERSION = 3
 
 
 def number(value, label, minimum=0):
@@ -189,6 +189,7 @@ def skill_behavior(skill_id, level, char):
                       interval_add=b['base_attack_time'])
     elif skill_id == 'skchr_amgoat_2':
         result.update(mode='next_attack', attack_scale=b['atk_scale'] + b['atk_scale_2'],
+                      packets_skill=[b['atk_scale'], b['atk_scale_2']],
                       resistance_debuff=b['magic_resistance'], debuff_duration=b['duration'])
         result['unknown'].append('splash:secondary_targets_not_simulated')
     elif skill_id == 'skchr_amgoat_3':
@@ -295,6 +296,10 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
         multiplier = behavior['attack_scale'] if active else 1
         packets = behavior.get('packets_skill' if active else 'packets_normal')
         packets = packets if packets is not None else [multiplier] * (behavior['hits'] if active else 1)
+        # Ignition reduces the primary target's RES before its splash and
+        # additional primary-target packet. Each packet advances enemy state.
+        if active and behavior.get('resistance_debuff'):
+            debuffed_until = now + behavior['debuff_duration']
         for packet in packets:
             if hp <= 0:
                 break
@@ -323,8 +328,6 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
                 revives += 1
                 next_ready = now + mechanics['revive_delay']
                 break
-        if active and behavior.get('resistance_debuff'):
-            debuffed_until = now + behavior['debuff_duration']
         if hp <= 0:
             kill_time = now
             break
