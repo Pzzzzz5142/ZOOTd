@@ -14,7 +14,9 @@ def practice_observations():
     records.insert(2, process('BattleStartPre', 'OcrDetect', 'ClickSelf', {'text': '演习'}))
     records.insert(4, process('BattleStartExercise', 'MatchTemplate', 'ClickSelf',
                               {'template': 'BattleStartExercise.png', 'score': .99}))
-    records.insert(6, process('EndOfAction', 'OcrDetect', 'DoNothing', {'text': '演习成功'}))
+    end = process('EndOfAction', 'MatchTemplate', 'DoNothing', {'template': 'EndOfAction.png', 'score': .99})
+    end['details']['first'] = ['Copilot@WaitUntilEndOfAction']
+    records.insert(6, end)
     return stamp(records)
 
 
@@ -41,6 +43,18 @@ class PracticeEvidenceTests(unittest.TestCase):
                                    (6, 'result', {'text': '行动结束'})):
             changed = copy.deepcopy(records)
             changed[index]['details']['details'][key] = value
+            self.assertEqual(practice_proof(changed, prove(changed))['status'], 'unproven')
+        for score in (.79, 1.01, float('nan'), float('inf'), True, None):
+            changed = copy.deepcopy(records)
+            changed[6]['details']['details']['result']['score'] = score
+            self.assertEqual(practice_proof(changed, prove(changed))['status'], 'unproven')
+        for target, key, value in (('details', 'first', ['Other']),
+                                    ('result', 'template', 'Other.png')):
+            changed = copy.deepcopy(records)
+            node = changed[6]['details']
+            if target == 'result':
+                node = node['details']['result']
+            node[key] = value
             self.assertEqual(practice_proof(changed, prove(changed))['status'], 'unproven')
         for index in (2, 4, 6):
             for key, value in (('uuid', 'other'), ('taskid', 9)):
@@ -96,6 +110,8 @@ class PracticeEvidenceTests(unittest.TestCase):
             self.assertEqual(tasks[name]['next'], [])
         self.assertEqual(tasks['BattleStartPre']['text'], ['演习'])
         self.assertEqual(tasks['BattleStartExercise']['template'], 'BattleStartExercise.png')
+        self.assertEqual(tasks['Copilot@EndOfAction']['template'], 'EndOfAction.png')
+        self.assertEqual(tasks['Copilot@EndOfAction']['algorithm'], 'MatchTemplate')
 
 
 if __name__ == '__main__':

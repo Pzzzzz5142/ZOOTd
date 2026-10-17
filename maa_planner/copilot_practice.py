@@ -36,9 +36,12 @@ def practice_tasks():
             'action': 'ClickSelf', 'maxTimes': 1,
             'next': ['BattleOfficiallyBegin', 'SkipThePreBattlePlot', 'Stop'],
             'sub': [], 'onErrorNext': [], 'exceededNext': []},
-        'Copilot@EndOfAction': {'algorithm': 'OcrDetect',
-            'text': ['演习成功', '演习结束'], 'fullMatch': True,
-            'roi': [0, 0, 1280, 720], 'action': 'DoNothing', 'postDelay': 2500,
+        # CN exercises use the same 行动结束 / stars screen as live battles.
+        # Exercise identity is established at entry/start, not inferred from
+        # an invented result label. Preserve the native end-marker template.
+        'Copilot@EndOfAction': {'baseTask': 'EndOfAction', 'algorithm': 'MatchTemplate',
+            'template': 'EndOfAction.png', 'templThreshold': .8,
+            'action': 'DoNothing', 'postDelay': 2500,
             'next': ['Copilot@StageDrops-Stars-3', 'Copilot@StageDrops-Stars-2',
                      'Copilot@StageDrops-Stars-0'],
             'sub': [], 'onErrorNext': [], 'exceededNext': []},
@@ -120,8 +123,12 @@ def practice_proof(events, battle):
                 return dict(result, reason='invalid_practice_start')
             phase = 2
         elif task == 'EndOfAction':
-            if (phase != 2 or d.get('algorithm') != 'OcrDetect' or d.get('action') != 'DoNothing'
-                    or d.get('result', {}).get('text') not in ('演习成功', '演习结束')):
+            r = d.get('result', {})
+            if (phase != 2 or d.get('algorithm') != 'MatchTemplate' or d.get('action') != 'DoNothing'
+                    or v.get('first') != ['Copilot@WaitUntilEndOfAction']
+                    or r.get('template') != 'EndOfAction.png'
+                    or type(r.get('score')) not in (int, float) or not math.isfinite(r['score'])
+                    or not .8 <= r['score'] <= 1):
                 return dict(result, reason='invalid_practice_result')
             phase = 3
         elif task == 'StageDrops-Stars-3':
