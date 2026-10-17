@@ -171,6 +171,10 @@ def navigation_tasks(route: dict) -> dict:
                 tasks['ZootdZone']['text'] = [name.strip('“”"') for name in route['zone_names']]
                 tasks['ZootdZone']['ocrReplace'] = [[r'^[“”"]+|[“”"]+$', '']]
                 tasks['ZootdZone']['roi'] = [900, 410, 350, 90]
+                # The title extends outside the circular button's hit area.
+                # Click only its observed center after exact title recognition.
+                tasks['ZootdZone']['action'] = 'ClickRect'
+                tasks['ZootdZone']['specificRect'] = [1145, 410, 50, 60]
         tasks['ZootdActivityEnter'] = {**ocr(['进入活动', '前往活动', '进入作战'], find),
                                       'maxTimes': 2, 'exceededNext': []}
     elif route['kind'] == 'supplies':

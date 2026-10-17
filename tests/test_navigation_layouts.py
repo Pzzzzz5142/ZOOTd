@@ -53,6 +53,8 @@ class NavigationLayoutTests(unittest.TestCase):
                 self.assertEqual(tasks['ZootdStageConfirmed']['text'][0], route['code'])
                 self.assertEqual(tasks['ZootdZone']['text'], ['我们的伊比利亚'])
                 self.assertEqual(tasks['ZootdZone']['roi'], [900, 410, 350, 90])
+                self.assertEqual(tasks['ZootdZone']['action'], 'ClickRect')
+                self.assertEqual(tasks['ZootdZone']['specificRect'], [1145, 410, 50, 60])
                 self.assertTrue(tasks['ZootdZone']['fullMatch'])
                 self.assertEqual(tasks['ZootdZone']['ocrReplace'], [[r'^[“”"]+|[“”"]+$', '']])
                 for field, replacement in (('activity_id', 'future-event'),
