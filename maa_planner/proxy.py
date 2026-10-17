@@ -6,6 +6,7 @@ same startup stops as FightTask. The normal farming process has no overlay.
 """
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from .capability import _iter_log_records
@@ -18,6 +19,16 @@ PROXY_RESOURCE = {
        for name in ("GoLastBattle", "StartButton1", "StartButton2",
                     "MedicineConfirm", "ExpiringMedicineConfirm", "StoneConfirm")},
 }
+
+
+def isolated_proxy_resource():
+    """Preserve stop semantics without inventing a legacy alias's template."""
+    tasks = copy.deepcopy(PROXY_RESOURCE)
+    # Current native resources have no ExpiringMedicineConfirm task/template.
+    # A later isolated resource reload otherwise resolves that implicit name
+    # in the new template directory and fails before checking the proxy.
+    tasks['ExpiringMedicineConfirm']['algorithm'] = 'JustReturn'
+    return tasks
 
 
 def extract_saved_proxy(log_text: str, stage: str) -> dict[str, Any] | None:

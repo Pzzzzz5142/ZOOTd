@@ -155,6 +155,7 @@ class CapabilityProofTests(unittest.TestCase):
 
     def test_proxy_overlay_disables_every_spending_entry(self):
         overlay = safe_proxy_tasks('NL-8')
+        self.assertEqual(overlay['ExpiringMedicineConfirm']['algorithm'], 'JustReturn')
         self.assertNotIn('ZootdCopilotUID', overlay)
         for name in ('GoLastBattle', 'StartButton1', 'StartButton2', 'MedicineConfirm',
                      'ExpiringMedicineConfirm', 'StoneConfirm'):

@@ -13,7 +13,7 @@ from maa_planner.capability import (
     CapabilityKey, CapabilityLedger, CapabilityLedgerError,
     extract_fight_observations,
 )
-from maa_planner.proxy import PROXY_RESOURCE, extract_saved_proxy
+from maa_planner.proxy import PROXY_RESOURCE, extract_saved_proxy, isolated_proxy_resource
 from maa_planner.runtime_contracts import validate_runtime_contracts
 
 
@@ -284,6 +284,14 @@ class ProxyScreenTests(unittest.TestCase):
     def test_guard_overlay_and_static_contracts(self):
         self.assertEqual(json.loads((ROOT / "config/resource/tasks/tasks.json").read_text()), PROXY_RESOURCE)
         validate_runtime_contracts(ROOT)
+
+    def test_isolated_overlay_stops_legacy_alias_without_mutating_managed_resource(self):
+        overlay = isolated_proxy_resource()
+        self.assertEqual(overlay['ExpiringMedicineConfirm']['algorithm'], 'JustReturn')
+        self.assertNotIn('algorithm', PROXY_RESOURCE['ExpiringMedicineConfirm'])
+        overlay['StartButton1']['next'].append('unsafe')
+        self.assertEqual(PROXY_RESOURCE['StartButton1']['next'], [])
+        self.assertEqual(isolated_proxy_resource()['StartButton1']['next'], [])
 
 
 def shell_function(name):
