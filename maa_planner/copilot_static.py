@@ -8,6 +8,9 @@ from .prts import decode, require, _NoRedirect
 from .util import sha256_bytes
 
 BASE = 'https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/master/zh_CN/gamedata/excel/'
+# Native Copilot ABI / BattleQuickFormationModule templates. Game display order
+# is a different namespace: e.g. Logos D has charEquipOrder=3, native module=4.
+MAA_MODULE_TYPES = {'X': 1, 'Y': 2, 'A': 3, 'D': 4, 'B': 5}
 
 
 def build_catalog(chars: dict, equips: dict, battle: dict) -> OperatorCatalog:
@@ -19,11 +22,11 @@ def build_catalog(chars: dict, equips: dict, battle: dict) -> OperatorCatalog:
         modules = {}
         for module in equips['charEquip'].get(key, []):
             entry = equips['equipDict'][module]
-            index = entry['charEquipOrder']
-            # MAA's module numbers are the explicit game display order, not
-            # the position of the module in charEquip or the Box dictionary.
-            if type(index) is int and index > 0:
-                require(index not in modules, 'Ambiguous module display order.')
+            index = MAA_MODULE_TYPES.get(entry.get('typeName2'))
+            # Unknown future types remain unmapped; only that requirement loses
+            # support, rather than rejecting unrelated operators in the table.
+            if index is not None:
+                require(index not in modules, 'Ambiguous native module type.')
                 modules[index] = module
         identities.append(OperatorIdentity(key, row['name'], skills, modules, has_no_skills=not row['skills']))
     return OperatorCatalog(identities)

@@ -21,7 +21,7 @@
 
 阶段到此暂停；本次结果不作为 Phase 5 三星/代理能力证明，助战分支已通过离线策略与分配测试，本次实机未实际借用干员。
 
-最初实现限定首个查询页最多 50 项、普通难度、一次战斗、20 分钟执行超时；下载后重新匹配，作业变更则拒绝。组内成员固定为全局匹配结果。地图旧 ID 必须由本机关卡表与 Tile overview 同时确认。当时自动导航仅覆盖 NL-8；这项 MVP 限制已由游戏数据驱动的目录和入口导航取代，当前使用方式与验证边界见[运维手册](../operations.md#单次-copilot-通关实验phase-3)。静态技能使用游戏 character_table 的技能槽，模组使用 uniequip_table 的 charEquipOrder，不从 Box 排序推断；静态表地址与内容哈希随实验记录。
+最初实现限定首个查询页最多 50 项、普通难度、一次战斗、20 分钟执行超时；下载后重新匹配，作业变更则拒绝。组内成员固定为全局匹配结果。地图旧 ID 必须由本机关卡表与 Tile overview 同时确认。当时自动导航仅覆盖 NL-8；这项 MVP 限制已由游戏数据驱动的目录和入口导航取代，当前使用方式与验证边界见[运维手册](../operations.md#单次-copilot-通关实验phase-3)。静态技能使用游戏 character_table 的技能槽；最初实现曾把 uniequip_table 的 charEquipOrder 用作模组编号。后续 EX 编队实机暴露两种编号空间不同（D 模组展示顺序 3，对应 MAA 编号 4），当前已改为[原生模组类型映射](event-solver.md)，不从 Box 排序推断；静态表地址与内容哈希随实验记录。
 
 2026-09-30 突袭扩展：`copilot-run --raid` 已接入模式隔离的游戏身份、PRTS 搜索映射、难度筛选/下载复核、精确突袭 Tile 执行副本及原生 `is_raid`，成功要求编队前收到同链 `RaidConfirm` 识别。普通模式会确认/恢复普通详情页；突袭不能写入普通代理账本。离线测试覆盖身份/窗口/地图缺失、未声明及普通作业拒绝、下载难度变更、确认缺失/异链/乱序、预算保留和证明模式拒绝；实现验证时未启动游戏。上游依据：[v6.18.0 MultiCopilotTaskPlugin](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/v6.18.0/src/MaaCore/Task/Miscellaneous/MultiCopilotTaskPlugin.cpp)。同日用户授权自行选关后，1-12 突袭以自有娜仁图亚、作业 93962 完成单场实机验收，授权上限 9 理智，完整终态及突袭通关图标均确认；详情见[历史验收记录](../history.md#2026-09-30copilot-突袭实机验收)。不追认普通 NL-8 验收为突袭证明，也不把此次执行成功登记为普通代理能力。
 

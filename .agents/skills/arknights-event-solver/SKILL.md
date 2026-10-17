@@ -70,8 +70,9 @@ Read only the needed owned-operator progression from
 `var/state/operator-box.json`. If a refresh is needed, use `./bin/zootd box-sync`;
 the wrapper handles its credentials. Do not inspect credential files or include
 the Box account ID, nickname, complete raw response, or login data in reports.
-Use verified static skill-slot and module-order mappings; Box dictionary order
-does not encode MAA skill numbers. Null progression remains unknown.
+Use verified static skill slots and native MAA module-type mappings. Neither Box
+dictionary order nor game `charEquipOrder` encodes native module numbers: use
+`copilot_static`'s reviewed X/Y/A/D/B mapping. Null progression remains unknown.
 
 Choose the route from the actual job source. PRTS stage, enemy, or operator
 documentation is research data, not an existing Copilot job. Reading it does not
