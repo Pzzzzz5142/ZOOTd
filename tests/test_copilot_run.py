@@ -367,7 +367,8 @@ class CopilotRunTests(unittest.TestCase):
         catalog = build_catalog({'char_a': {'name': 'A', 'skills': [{'skillId': 's2'}, {'skillId': 's1'}]},
                                  'token_a': {'name': 'T', 'skills': [{'skillId': None}]}},
                                 {'charEquip': {'char_a': ['mod2', 'mod1']}, 'equipDict': {
-                                    'mod1': {'charEquipOrder': 1}, 'mod2': {'charEquipOrder': 2}}},
+                                    'mod1': {'charEquipOrder': 2, 'typeName2': 'X'},
+                                    'mod2': {'charEquipOrder': 1, 'typeName2': 'Y'}}},
                                 {'chars': {'char_a': {'name': 'A'}, 'token_a': {'name': 'T'}}})
         self.assertEqual(catalog.resolve('A').skills, {1: 's2', 2: 's1'})
         self.assertEqual(catalog.resolve('A').modules, {1: 'mod1', 2: 'mod2'})

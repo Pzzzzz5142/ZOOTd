@@ -109,6 +109,10 @@ def _profiles(graph, box, catalog, chars, skills, ranges, equipment, metadata, h
             identity = catalog.resolve(char['name'])
             module_slot = next((n for n, mid in identity.modules.items()
                                 if mid == progress.default_equip_id), None)
+            selected_metadata = (metadata or {}).get('equipDict', {}).get(progress.default_equip_id, {})
+            if progress.default_equip_id and selected_metadata.get('charEquipOrder') != 0 and module_slot is None:
+                excluded.append({'name': char['name'], 'skill': slot, 'reason': 'Selected module has no verified native mapping'})
+                continue
             if module_slot:
                 module = (progress.modules or {}).get(progress.default_equip_id)
                 if module is None or module.level is None or module.unlocked is not True:

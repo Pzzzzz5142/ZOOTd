@@ -73,7 +73,7 @@ MAA 动作字段以 [官方战斗流程协议](https://docs.maa.plus/zh-cn/proto
 账号 Box 位于忽略的 `var/state/operator-box.json`；需要刷新时使用
 `./bin/zootd box-sync`。只提取候选干员的练度，不把 UID、昵称、凭据、完整
 响应或账号作业写入 tracked 文件。技能编号使用静态数据的技能槽，模组编号
-使用显式显示顺序；不能从 Box 字典排序推断。
+按 `copilot_static` 中已核对的类型映射 X/Y/A/D/B → 1/2/3/4/5；不能从 Box 字典、模组数组或游戏展示顺序 `charEquipOrder` 推断。未知类型不映射，生成器不能要求它或默默沿用默认模组。
 
 ### 有界的普通关候选生成
 
