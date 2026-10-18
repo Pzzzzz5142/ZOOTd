@@ -108,6 +108,16 @@ exec 9>"$project_root/lock9"
         self.assertIn("supervisor-recover-run", calls)
         self.assertIn("operational recovery ended with status 1", log)
 
+    def test_rejected_start_retains_run_id_and_dispatches_recovery(self):
+        # Production startup returns an audit ID on stdout and a nonzero status.
+        # Bash must retain that ID for EXIT cleanup despite the failed assignment.
+        result, calls, _ = self.run_cleanup(
+            'supervisor_active_phase=""; supervisor_run_id=""; '
+            'supervisor_run_id="$(printf test-run; exit 1)" || exit 1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("supervisor-finish --run-id test-run --process-status 1", calls)
+        self.assertEqual(calls.count("supervisor-recover-run --run-id test-run"), 1)
+
     def test_success_nonfull_and_nested_runs_do_not_start_recovery(self):
         for options in ({"finish": 0}, {"mode": "check-device"}, {"nested": True}):
             with self.subTest(options=options):

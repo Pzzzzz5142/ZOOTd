@@ -1,6 +1,6 @@
 # ZOOTd unattended recovery scope
 
-Version: 13
+Version: 14
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -164,11 +164,42 @@ evidence.
 
 ## Operational repair and Git/PR protocol
 
-The incident provides the clean base branch/HEAD, configured remote, suggested
+The incident provides the base branch/HEAD, configured remote, suggested
 ignored worktree location, current and retained runtime identity, the most
 recent successful full run, and phase/runtime comparisons. Validate these
 against fresh local evidence rather than assuming that the newest upgrade is
 good merely because its dry-run receipt is valid.
+
+### Startup failures and pre-existing worktree changes
+
+A dirty working tree must refuse gameplay but must still create a failed full
+audit and dispatch this recovery agent. A dirty startup is not permission to run
+uncommitted code. The incident marks the actual dirty base and supplies
+controller-created `worktree_backup` descriptors: original status, binary tracked
+and index patches, and a tar archive of untracked files and symlinks. They live
+below `var/state/preserved-worktrees/<run-id>/<attempt-id>/` with a manifest and
+base HEAD; log retention must not remove this user data. These files are private
+preservation data; do not execute them, expose their contents, or modify/delete
+the backup.
+
+Inspect the changes and concurrent developer activity first. When safe, park
+pre-existing edits with a named Git stash including untracked files, or move
+unrelated untracked files into a new ignored preservation directory outside
+log-retention areas after checking their hashes. Preserve the stash/ref and report its identity/location
+in `actions_taken`. Never delete, auto-commit, execute, or mix these unrelated
+edits into a repair. Do not automatically restore them into the primary checkout
+after a successful retry: that would block the next scheduled run again.
+Leave the original HEAD/branch clean, with the preserved edits recoverable.
+
+If development is active or the edits cannot safely be parked, leave the
+original dirty state unchanged and report `scope-blocked` with `hard-policy` and
+the concrete conflict. The controller accepts this unchanged blocked state,
+never as recovered. It verifies the original backup on every terminal report;
+`recovered` additionally requires a clean checkout and a new complete successful
+run with the original recovery identity. If the checkout is already clean when
+recovery begins, the normal clean-base rules apply.
+
+### Durable repairs
 
 1. First try the smallest evidence-backed runtime action that can restore the
    full workflow. For an upgrade regression, the supported atomic runtime

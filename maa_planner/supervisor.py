@@ -318,13 +318,18 @@ def runtime_snapshot(root: Path) -> dict[str, Any]:
     }
 
 
-def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
+def start_run(
+    root: Path, mode: str, *, now: datetime | None = None,
+    audit_dirty: bool = False,
+) -> str:
     root = root.resolve()
     expected = RUN_MODES.get(mode)
     if expected is None:
         raise SupervisorError(f"unsupported supervisor mode: {mode}")
     repository = _git_snapshot(root)
-    if repository["dirty"]:
+    if audit_dirty and mode != "full":
+        raise SupervisorError("only full runs may audit a dirty startup failure")
+    if repository["dirty"] and not audit_dirty:
         raise SupervisorError(
             "working tree is dirty; commit the code change before a managed run"
         )
@@ -623,7 +628,10 @@ def finish_run(
         for phase in expected
         if phase in phases and phases[phase].get("result") not in ACCEPTED_RESULTS
     ]
-    deterministic_success = process_status == 0 and not missing and not unacceptable
+    repository_clean = start.get("repository", {}).get("dirty") is False
+    deterministic_success = (
+        process_status == 0 and not missing and not unacceptable and repository_clean
+    )
 
     llm_invoked = False
     diagnosis: SupervisorDiagnosis | None = None

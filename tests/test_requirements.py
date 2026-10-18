@@ -441,7 +441,7 @@ class HighLevelRequirementTests(unittest.TestCase):
         self.assertNotIn("printf '%s\\n' \"${stage_code}\" |", launcher)
 
         reuse_start = launcher.index("ensure_farming_inventory_snapshot() {")
-        reuse_end = launcher.index("\nrequire_command adb", reuse_start)
+        reuse_end = launcher.index("\nrequire_command flock", reuse_start)
         reuse_function = launcher[reuse_start:reuse_end]
         self.assertIn('if [[ "${inventory_snapshot_ready}" == true ]]', reuse_function)
         self.assertIn('if [[ "${depot_scan_attempted}" == true ]]', reuse_function)
@@ -691,7 +691,7 @@ printf '%s:%s:%s:%s' "$drone_mode" "$inventory_snapshot_ready" "$depot_scan_outc
         launcher = (ROOT / "scripts/run-daily.sh").read_text()
         functions = launcher[
             launcher.index("prepare_daily_drone_policy() {"):
-            launcher.index("\nrequire_command adb")
+            launcher.index("\nrequire_command flock")
         ]
         scan = launcher[
             launcher.index("scan_depot_inventory_once() {"):

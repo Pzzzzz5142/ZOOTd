@@ -131,6 +131,15 @@ class LogRetentionTests(unittest.TestCase):
         retain(self.root, now=self.now)
         self.assertTrue(gitfile.exists())
 
+    def test_user_worktree_backups_outlive_their_incident_logs(self):
+        rid = self.run_audit(1)
+        backup = self.file(f'preserved-worktrees/{rid}/attempt/untracked.tar', 'user bytes')
+        manifest = self.file(f'preserved-worktrees/{rid}/attempt/manifest.json', '{}')
+        retain(self.root, now=self.now)
+        self.assertFalse((self.root / f'var/state/supervisor/runs/{rid}').exists())
+        self.assertEqual(backup.read_text(), 'user bytes')
+        self.assertTrue(manifest.exists())
+
 
 if __name__ == '__main__':
     unittest.main()

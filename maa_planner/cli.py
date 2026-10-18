@@ -77,6 +77,7 @@ from .supervisor import (
     SupervisorError,
     describe_evidence_files,
     finish_run,
+    load_run_events,
     record_phase,
     run_diagnostic,
     start_run,
@@ -518,11 +519,21 @@ def command_supervisor_start(args: argparse.Namespace) -> int:
         config = _config(root, args.config)
         if config.supervisor.required_on_exception and not config.supervisor.enabled:
             raise SupervisorError("required exception supervisor is disabled")
-        run_id = start_run(root, args.mode)
+        run_id = start_run(root, args.mode, audit_dirty=args.mode == "full")
+        # Publish the ID before rejecting startup so EXIT cleanup can finalize
+        # this failed audit and dispatch the existing recovery controller.
+        print(run_id, flush=True)
+        if load_run_events(root, run_id)[0]["payload"]["repository"]["dirty"]:
+            record_phase(
+                root, run_id, phase="runtime-readiness", result="failed",
+                outcome="working-tree-dirty",
+            )
+            raise SupervisorError(
+                "working tree is dirty; gameplay refused; entering operational recovery"
+            )
     except (ConfigError, OSError, SupervisorError) as exc:
         print(f"cannot start phase supervisor: {exc}", file=sys.stderr)
         return 1
-    print(run_id)
     return 0
 
 

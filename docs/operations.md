@@ -49,6 +49,8 @@ Android 弹出调试授权时勾选“始终允许”。`probe` 应确认 ADB �
 
 受管运行要求 Git 工作树干净；手动完整运行成功后再启用定时器。配置修改涉及受管任务时，需要重新运行 runtime 更新事务并验证 receipt，详见[开发指南](development.md)和[运行时契约](architecture.md#maa-core-与资源一致性)。
 
+完整运行遇到未提交或未跟踪文件时，会记录启动失败并调用恢复 agent。它先保留原始改动，再在没有开发冲突时整理工作区、重跑整轮；无法安全处理时记录具体阻塞原因。被保留的用户文件和 stash 不会自动恢复到主工作区，位置见该事故的恢复审计，详见[恢复说明](recovery.md)。审计或 planner 本身不可用时查看 service journal。
+
 ```bash
 ./bin/zootd run
 ```
