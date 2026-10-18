@@ -14,7 +14,7 @@ from pathlib import Path
 from .combat_model import MODEL_VERSION, SKILL_MODEL_NOTES, skill_behavior
 
 PROFESSIONS = {'WARRIOR': '近卫', 'SNIPER': '狙击', 'CASTER': '术师', 'MEDIC': '医疗',
-               'SUPPORT': '辅助', 'TANK': '重装', 'PIONEER': '先锋', 'SPECIALIST': '特种'}
+               'SUPPORT': '辅助', 'TANK': '重装', 'PIONEER': '先锋', 'SPECIAL': '特种'}
 RARITIES = {'TIER_6': ('六星', 6), 'TIER_5': ('五星', 5), 'TIER_4': ('四星', 4),
             'TIER_3': ('三星', 3), 'TIER_2': ('二星', 2), 'TIER_1': ('一星', 1)}
 MODE_LABELS = {'permanent': '永久', 'ammo': '弹药', 'next_attack': '下次攻击',

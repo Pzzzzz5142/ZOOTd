@@ -274,15 +274,25 @@ class DamageModelTests(unittest.TestCase):
             **{'atk': 1., 'attack@max_target': 2.}), {'profession': 'SPECIAL'})
         self.assertTrue(aglna['passive'] and aglna['automatic'])
         self.assertFalse(aglna['ground_block'])
+        self.assertEqual((aglna['mode'], aglna['duration']), ('duration', 56.))
 
-    def test_passive_skill_is_always_active_without_sp(self):
+    def test_passive_skill_without_a_limit_stays_active(self):
         profile = behavior()
-        profile.update(mode='permanent', passive=True, attack_up=1., attack_scale=1.)
+        profile.update(mode='permanent', passive=True, duration=-1., attack_up=1., attack_scale=1.)
         profile['sp'].update(spType=8)
         result = duel(fighter(), profile, target(), {'kind': 'ordinary'}, horizon=2)
         self.assertEqual(result['damage'], 400)
         self.assertEqual(result['damage_instances'], 2)
         self.assertEqual(result['skill_activations'], [])
+
+    def test_timed_passive_skill_expires_and_falls_back_to_normal_attacks(self):
+        profile = behavior()
+        profile.update(mode='duration', passive=True, duration=1.5, attack_up=1., attack_scale=1.)
+        profile['sp'].update(spType=8)
+        result = duel(fighter(), profile, target(), {'kind': 'ordinary'}, horizon=3)
+        # Active at t=0 and t=1 for 200 each, then a normal 100 hit at t=2.
+        self.assertEqual(result['damage'], 500)
+        self.assertEqual(result['damage_instances'], 3)
 
     def test_no_normal_attack_trait_does_not_invent_basic_hits(self):
         profile = behavior()
