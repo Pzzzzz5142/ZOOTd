@@ -36,6 +36,24 @@ class Formation:
     placements: tuple[Placement, ...]
 
 
+def required_normal_fire_routes(problem, blockers):
+    """A crossing heavy enemy can consume a defender's entire block capacity.
+
+    Without a shared blocking/kill-time simulation, do not credit that defender
+    with also stopping the other stream. Require independent normal fire near
+    its goal, as already required for unblockable enemies. This is a coverage
+    constraint, not a claim that the fire kills enemies before they arrive.
+    """
+    saturated = {point for profile, point in blockers if any(
+        problem.mechanics[s['enemy_id']].get('block_cost', 1)
+        >= profile['row']['block_count_skill']
+        and point in problem.paths[s['route_index']]['cells']
+        for s in problem.spawns)}
+    return {s['route_index'] for s in problem.spawns
+            if problem.mechanics[s['enemy_id']].get('block_cost', 1) == 0
+            or saturated & set(problem.paths[s['route_index']]['terminal'][-3:])}
+
+
 def assess_formation(problem, formation):
     """Common admission and heuristic metrics, independent of strategy scores."""
     _require(0 < len(formation.placements) <= problem.capacity, 'Invalid formation size')
@@ -75,15 +93,17 @@ def assess_formation(problem, formation):
             _require(not need['required'] or item.point in heal, 'Blocker lacks normal healing coverage')
         elif item.role == 'damage':
             _require(item.point in heal, 'Damage placement lacks normal healing coverage')
+    fire_routes = required_normal_fire_routes(problem, [
+        (p, item.point) for p, item in selected if item.role == 'blocker'])
     for spawn in problem.spawns:
         route = problem.paths[spawn['route_index']]
         if problem.mechanics[spawn['enemy_id']].get('block_cost', 1) > 0:
             _require(any(item.role == 'blocker' and item.point in route['terminal'][-3:]
                          for _, item in selected), 'Blockable final approach lacks a blocker')
-        else:
+        if spawn['route_index'] in fire_routes:
             _require(any(item.role == 'damage' and p['row']['behavior'].get('normal_attack', True)
                          and _footprint(p, item.point, item.facing) & set(route['terminal'][-2:])
-                         for p, item in selected), 'Unblockable final approach lacks normal DPS')
+                         for p, item in selected), 'Exposed final approach lacks independent normal DPS')
     rates, controls = {}, {}
     for r, path in sorted(problem.paths.items()):
         terminal = set(path['terminal'][-4:])
@@ -105,6 +125,7 @@ def assess_formation(problem, formation):
         rates[str(r)] = round(value, 6)
         controls[str(r)] = round(control, 6)
     return {'objective_version': 2, 'kind': 'terminal_contact_heuristic',
+            'required_normal_fire_routes': sorted(fire_routes),
             'route_damage_scores': rates, 'minimum_route_damage_score': min(rates.values(), default=0),
             'total_route_damage_score': round(sum(rates.values()), 6),
             'route_control_contact_scores': controls,
@@ -173,10 +194,11 @@ def terminal_formation(problem, decisions):
                 for facing in ('Right', 'Down', 'Left', 'Up'):
                     yield profile, point, facing
 
-    def best(pool, score):
+    def best(pool, score, priority=lambda p, cell, direction: 0):
         ranked = [(score(p, cell, direction), p, cell, direction)
                   for p, cell, direction in candidates(pool)]
-        ranked = sorted((r for r in ranked if r[0] > 0), key=lambda r: (r[0],
+        ranked = sorted((r for r in ranked if r[0] > 0), key=lambda r: (
+            priority(r[1], r[2], r[3]), r[0],
             -r[1]['cost'], r[1]['oper']['name'], -r[2][1], -r[2][0], r[3]), reverse=True)
         # Equivalent facings should not spend the entire alternative budget.
         unique, seen = [], set()
@@ -235,6 +257,8 @@ def terminal_formation(problem, decisions):
                     and p['row']['behavior']['damage_type'] not in ('healing',)
                     and p['row']['behavior']['mode'] != 'cost']
     damage_pool = ranged + melee_damage
+    fire_routes = required_normal_fire_routes(problem, [
+        (x['profile'], x['point']) for x in selected if x['role'] == 'blocker'])
     dp_pool = [p for p in profiles if p['row']['behavior']['mode'] == 'cost']
     remaining = capacity - len(selected) - bool(dp_pool)
     healing_slots = 2 if remaining >= 4 else 1
@@ -296,26 +320,37 @@ def terminal_formation(problem, decisions):
 
     # Extra damage uses marginal contact on the least-covered final approaches.
     for _ in range(damage_slots):
+        missing_fire = {r for r in fire_routes if not any(
+            x['role'] == 'damage' and x['profile']['row']['behavior'].get('normal_attack', True)
+            and _footprint(x['profile'], x['point'], x['facing']) & set(paths[r]['terminal'][-2:])
+            for x in selected)}
         profile, cell, direction = best(damage_pool, lambda p, cell, direction:
-                                        fire_score(p, cell, direction) if cell in healing else 0)
+            fire_score(p, cell, direction) if cell in healing else 0,
+            priority=lambda p, cell, direction: sum(weights[r] for r in missing_fire
+                if p['row']['behavior'].get('normal_attack', True)
+                and _footprint(p, cell, direction) & set(paths[r]['terminal'][-2:])))
         choose(profile, cell, direction, 'damage')
     if dp_pool and len(selected) < capacity:
+        # A DP unit has no facing-sensitive tactical score. Prefer an inward
+        # gesture over the old alphabetical Up tie-break at the map's edge.
+        xmax, ymax = max(x for x, y in tiles), max(y for x, y in tiles)
+        def inward_margin(cell, direction):
+            return {'Right': xmax-cell[0], 'Left': cell[0],
+                    'Down': ymax-cell[1], 'Up': cell[1]}[direction]
         profile, cell, direction = best(dp_pool, lambda p, cell, direction:
-            1000 - sum(weights[r] for r in paths if cell in paths[r]['terminal']) - p['cost'])
+            1000 - sum(weights[r] for r in paths if cell in paths[r]['terminal']) - p['cost']
+            + .001 * inward_margin(cell, direction))
         choose(profile, cell, direction, 'dp')
 
-    # Require normal damage coverage at every final approach of unblockable
-    # enemies. A blocker or an expanded skill range cannot satisfy this.
+    # A blocker or an expanded skill range cannot satisfy independent fire.
     missing = []
-    for s in spawns:
-        if mechanics[s['enemy_id']].get('block_cost', 1) != 0:
-            continue
-        route = paths[s['route_index']]
+    for r in sorted(fire_routes):
+        route = paths[r]
         if not any(_footprint(x['profile'], x['point'], x['facing']) & set(route['terminal'][-2:])
                    for x in selected if x['role'] == 'damage'
                    and x['profile']['row']['behavior'].get('normal_attack', True)):
-            missing.append(s['route_index'])
-    _require(not missing, 'Unblockable final approaches lack normal DPS: ' + str(sorted(set(missing))))
+            missing.append(r)
+    _require(not missing, 'Exposed final approaches lack independent normal DPS: ' + str(missing))
 
     indices = {id(p): i for i, p in enumerate(profiles)}
     return Formation(tuple(Placement(indices[id(x['profile'])], x['point'], x['facing'], x['role'])

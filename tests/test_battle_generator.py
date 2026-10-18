@@ -144,6 +144,16 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(choices.get('Special'), 'damage')
         self.assertNotEqual(choices.get('Special'), 'blocker')
 
+    def test_dp_facing_prefers_inward_room_when_tactical_scores_tie(self):
+        self.graph['options']['characterLimit'] = 4
+        dp = profile('Special', 'blocker', [[0, 0], [1, 0]])
+        dp['row']['behavior']['mode'] = 'cost'
+        self.profiles.append(dp)
+        result = self.generate()
+        choice = next(c for c in result['generation']['choices'] if c['role'] == 'dp')
+        self.assertEqual(choice['location'], [5, 1])
+        self.assertEqual(choice['direction'], 'Left')
+
 
 if __name__ == '__main__':
     unittest.main()

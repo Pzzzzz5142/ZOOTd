@@ -66,6 +66,24 @@ class DamageModelTests(unittest.TestCase):
         self.assertEqual(result['skill_activations'], [0, 4])
         self.assertEqual(enemy['attributes']['def'], 0)
 
+    def test_reviewed_ex_shields_consume_two_block_slots(self):
+        graph = {'mechanics': {'runes': [{'key': 'env_system_new',
+                  'blackboard': [{'key': 'key', 'valueStr': 'env_044_act52side'}]}]}}
+        for eid in ('enemy_10215_klhjd_2', 'enemy_10215_klhjd_2_a'):
+            enemy = dict(target(), id=eid, talent_blackboard=[
+                {'key': 'reborn_attr.max_hp', 'value': -.4},
+                {'key': 'reborn.duration', 'value': 1}])
+            state = enemy_behavior(enemy, graph)
+            self.assertEqual(state['block_cost'], 2)
+            queue = blocking_queue(2, [
+                {'time': 0, 'block_cost': state['block_cost'], 'service_seconds': 20},
+                {'time': 1, 'block_cost': 1, 'service_seconds': 1}])
+            self.assertEqual(len(queue['overflow']), 1)
+            enemy['id'] += '_future'
+            self.assertEqual(enemy_behavior(enemy, graph)['kind'], 'unsupported')
+            enemy['id'] = eid
+            self.assertEqual(enemy_behavior(enemy, {})['kind'], 'unsupported')
+
     def test_challenge_cannot_be_evaluated_with_unmodified_normal_enemy_stats(self):
         with self.assertRaisesRegex(BattleSolverError, 'difficulty runes are not simulated'):
             evaluate_plan({'stage': {'difficulty': 'FOUR_STAR'}}, {}, None, None, {}, {}, {})
