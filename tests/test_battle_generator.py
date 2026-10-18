@@ -1,9 +1,11 @@
 """Synthetic tactical search tests; no Box, network, device or private plans."""
 import copy
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from maa_planner.battle_generator import active_spawns, blocker_healing_need, generate_plan, terminal_paths
+from maa_planner.battle_generator import (active_spawns, blocker_healing_need, deployment_order,
+                                         generate_plan, terminal_paths)
 from maa_planner.battle_solver import BattleSolverError
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity
 from maa_planner.operator_box import Operator, OperatorBox, SkillProgress
@@ -170,6 +172,23 @@ class GeneratorTests(unittest.TestCase):
             peak = max(peak, len(active))
         self.assertEqual(peak, 3)
         self.assertEqual(active, {'Guard', 'Caster', 'Medic'})
+
+    def test_early_unblockable_pressure_precedes_later_expensive_frontline(self):
+        self.profiles[1]['cost'] = 20
+        selected = [{'profile': self.profiles[0], 'point': (3, 1), 'facing': 'Right', 'role': 'blocker'},
+                    {'profile': self.profiles[1], 'point': (3, 0), 'facing': 'Down', 'role': 'damage'},
+                    {'profile': self.profiles[2], 'point': (2, 0), 'facing': 'Down', 'role': 'healer'}]
+        p = SimpleNamespace(paths=terminal_paths(self.graph, self.graph['spawns']),
+            mechanics={'inactive': {'initial_hp_ratio': .6, 'revive_ratio': 0},
+                       'fast': {'block_cost': 0}, 'enemy': {'block_cost': 1}},
+            spawns=[{'enemy_id': eid, 'route_index': 0, 'wave': 0, 'fragment': f, 'pre_delay': delay}
+                    for eid, f, delay in [('inactive', 0, 0), ('fast', 1, 100), ('enemy', 2, 0)]])
+        order = deployment_order(p, selected)
+        self.assertEqual([x['role'] for x in order], ['damage', 'healer', 'blocker'])
+        # Fragment-local delays are never summed into absolute times. Earlier
+        # blockable pressure reverses the choice even though DPS still covers it.
+        p.spawns[-1].update(fragment=0, pre_delay=5)
+        self.assertEqual(deployment_order(p, selected)[0]['role'], 'blocker')
 
 
 if __name__ == '__main__':
