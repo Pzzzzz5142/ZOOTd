@@ -155,12 +155,14 @@ def navigation_tasks(route: dict) -> dict:
             # Its fixed English marker is only an entry hint; target-stage
             # confirmation remains mandatory after entering and navigating.
             tasks['ZootdActivityTitle'] = tasks['ZootdEntry']
+            tasks['ZootdActivityTitle']['postDelay'] = 2500
             tasks['ZootdEntry'] = {'algorithm': 'JustReturn',
                                   'next': ['ZootdActivityTitle', 'ZootdActiveSideStoryCard']}
             tasks['ZootdActiveSideStoryCard'] = {
                 **ocr(['SIDESTORY'], ['ZootdStage', 'ZootdZone', 'ZootdActivityEnter'],
                       roi=[545, 155, 73, 23]),
-                'withoutDet': True, 'isAscii': True, 'maxTimes': 1, 'exceededNext': []}
+                'withoutDet': True, 'isAscii': True, 'maxTimes': 1, 'exceededNext': [],
+                'postDelay': 2500}
             # The zone title remains visible while its map opens. Do not
             # reselect it and emit ExceededLimit after the one allowed click.
             tasks['ZootdZone']['next'] = ['ZootdStage', 'ZootdMapReady']
@@ -174,7 +176,7 @@ def navigation_tasks(route: dict) -> dict:
                 # The title extends outside the circular button's hit area.
                 # Click only its observed center after exact title recognition.
                 tasks['ZootdZone']['action'] = 'ClickRect'
-                tasks['ZootdZone']['specificRect'] = [1145, 410, 50, 60]
+                tasks['ZootdZone']['specificRect'] = [1168, 432, 5, 5]
         tasks['ZootdActivityEnter'] = {**ocr(['进入活动', '前往活动', '进入作战'], find),
                                       'maxTimes': 2, 'exceededNext': []}
     elif route['kind'] == 'supplies':
