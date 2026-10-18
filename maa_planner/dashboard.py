@@ -19,6 +19,7 @@ from .supervisor import ACCEPTED_RESULTS, RUN_MODES, SupervisorError, load_run_e
 from .skland_monitor import SklandMonitor
 from .skland_attendance import read_attendance
 from .dashboard_insights import run_insights
+from .solver_models import build_catalog
 
 RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}[.][0-9]{6}Z-[0-9a-f]{8}")
 
@@ -187,6 +188,8 @@ class Handler(BaseHTTPRequestHandler):
                 data = self.server.skland_monitor.read()
             elif url.path == "/api/status":
                 data = overview(self.root)
+            elif url.path == "/api/solver-models":
+                data = build_catalog(self.root)
             elif url.path == "/api/runs":
                 query = parse_qs(url.query)
                 offset, limit = int(query.get("offset", ["0"])[0]), int(query.get("limit", ["30"])[0])

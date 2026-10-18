@@ -175,6 +175,8 @@ def skill_behavior(skill_id, level, char):
     result = {'damage_type': kind, 'attack_up': 0, 'attack_scale': 1, 'hits': 1,
               'targets': 1, 'interval_add': 0, 'speed_add': 0, 'block_add': 0,
               'mode': 'duration', 'self_heal_ratio': 0, 'defense_up': 0,
+              'flat_penetration': 0, 'normal_attack': True, 'passive': False,
+              'ground_block': True,
               'unknown': [], 'sp': copy.deepcopy(level['spData']), 'duration': level['duration'],
               'automatic': level.get('skillType') == 'AUTO'}
     if skill_id == 'skchr_f12yin_2':
@@ -213,12 +215,96 @@ def skill_behavior(skill_id, level, char):
     elif skill_id == 'skchr_shu_1':
         result.update(mode='conditional_heal', damage_type='healing', attack_scale=b['heal_scale'])
         result['unknown'].append('shu:heal_threshold_sowing_and_team_buffs_not_simulated')
+    elif skill_id == 'skchr_clemnt_1':
+        result.update(mode='next_attack', attack_scale=b['atk_scale'])
+        result['unknown'].append('clemnt:erosion_damage_not_simulated')
+    elif skill_id == 'skchr_clemnt_2':
+        result.update(attack_scale=b['attack@aoe_atk_scale'], speed_add=b['attack_speed'],
+                      targets=int(b['attack@max_target']))
+        result['unknown'].append('clemnt:banishment_pod_vortex_erosion_and_displacement_not_simulated')
+    elif skill_id == 'skchr_clemnt_3':
+        result.update(mode='ammo', attack_scale=b['attack@atk_scale'],
+                      targets=int(b['attack@max_target']), ammo=int(b['trigger_time']))
+        result['unknown'].append('clemnt:erosion_burst_ammo_and_elemental_damage_not_simulated')
+    elif skill_id in ('skchr_haruka_1', 'skchr_haruka_2', 'skchr_haruka_3'):
+        # Trait: normal attacks are arts; an active skill heals for 75% attack.
+        result.update(damage_type='healing', damage_type_normal='arts', attack_scale=.75)
+        if skill_id == 'skchr_haruka_1':
+            result.update(speed_add=b['attack_speed'])
+            result['unknown'].append('haruka:bubble_shield_and_retarget_not_simulated')
+        elif skill_id == 'skchr_haruka_2':
+            result.update(targets=1 + int(b['attack@max_target_heal_add']))
+            result['unknown'].append(
+                'haruka:heal_conversion_damage_and_second_use_atk_bonus_not_simulated')
+        else:
+            result.update(attack_up=b['atk'], interval_add=b['base_attack_time'])
+            result['unknown'].append('haruka:levitate_damage_and_shield_resistance_not_simulated')
+    elif skill_id in ('skchr_sbell2_1', 'skchr_sbell2_2', 'skchr_sbell2_3'):
+        # Trait: no normal attack; active skills deal area arts damage.
+        result.update(normal_attack=False)
+        if skill_id == 'skchr_sbell2_1':
+            result.update(mode='next_attack', attack_scale=b['atk_scale'])
+            result['unknown'].append('sbell2:cold_push_and_snow_spread_not_simulated')
+        elif skill_id == 'skchr_sbell2_2':
+            result.update(mode='permanent', attack_scale=b['attack@atk_scale_s2'])
+            result['unknown'].append('sbell2:snow_stacking_cold_freeze_and_tile_damage_not_simulated')
+        else:
+            result.update(attack_up=b['atk'], speed_add=b['attack_speed'],
+                          attack_scale=b['attack@atk_scale_s3'],
+                          flat_penetration=b['magic_resist_penetrate_fixed'])
+            result['unknown'].append('sbell2:attraction_and_snow_acceleration_not_simulated')
+        result['unknown'].append('sbell2:area_target_count_not_simulated')
+    elif skill_id == 'skchr_aglna2_1':
+        result.update(mode='permanent', passive=True, automatic=True, ground_block=False,
+                      attack_up=b['atk'], targets=int(b['attack@max_target']))
+        result['unknown'].append('aglna2:talent_extra_arts_damage_and_liftoff_not_simulated')
+    elif skill_id == 'skchr_aglna2_2':
+        result.update(damage_type='arts', damage_type_normal='physical', ground_block=False,
+                      attack_up=b['atk'], interval_add=b['base_attack_time'],
+                      targets=int(b['attack@max_target']))
+        result['unknown'].append('aglna2:levitate_groundbind_and_slide_not_simulated')
+    elif skill_id == 'skchr_aglna2_3':
+        result.update(mode='ammo', attack_up=b['atk'], attack_scale=b['attack@atk_scale'],
+                      targets=int(b['attack@max_walk_target']), ground_block=False,
+                      ammo=int(b['attack@trigger_time']))
+        result['unknown'].append(
+            'aglna2:air_protection_dash_flying_slow_and_extra_flying_target_not_simulated')
     elif skill_id == 'skcom_assist_cost[2]':
         result.update(mode='cost', block_add=-1, targets=0, cost_gain=b['value'])
     else:
         return None
     _require(result['hits'] >= 1 and result['targets'] >= 0, 'Invalid supported attack multiplicity')
     return result
+
+
+# Human-readable model intent for the dashboard and review. Every modeled skill
+# needs an entry here; the coverage test fails when the two drift apart.
+SKILL_MODEL_NOTES = {
+    'skchr_f12yin_2': '永久：攻击、防御与阻挡提升，多目标攻击并按最大生命比例自回。',
+    'skchr_huang_2': '永久：攻击与防御提升，攻击多个目标。',
+    'skchr_angel_3': '多段攻击：每段伤害按倍率结算，攻击间隔按技能值调整。',
+    'skchr_amgoat_2': '下次攻击：两段伤害，先降低目标法抗再结算第二段；溅射次要目标未建模。',
+    'skchr_amgoat_3': '持续：攻击力提升、攻击间隔缩短，攻击多个目标。',
+    'skchr_logos_1': '永久：攻击力提升；处决光环、额外元素伤害与减益未建模。',
+    'skchr_logos_3': '持续：攻击力提升，攻击多个目标；额外元素伤害与减益未建模。',
+    'skchr_wisdel_3': '弹药型：攻击力提升，每发按倍率结算；召唤物与标记爆炸未建模。',
+    'skchr_agoat2_1': '永久：攻击力提升、治疗两个目标；元素治疗与再生未建模。',
+    'skchr_cgbird_3': '持续：攻击力提升、治疗三个目标；圣域抗性、闪避与幻影未建模。',
+    'skchr_shu_1': '条件治疗：治疗量按技能倍率结算；阈值播种与团队增益未建模。',
+    'skchr_clemnt_1': '下次攻击：物理伤害倍率提升；额外侵蚀损伤未建模。',
+    'skchr_clemnt_2': '持续：范围扩大、攻击速度提升，对多名地面敌人造成范围物理伤害；放逐舱、漩涡与侵蚀未建模。',
+    'skchr_clemnt_3': '弹药型：多目标物理攻击；侵蚀爆发、元素伤害与消耗弹药未建模。',
+    'skchr_haruka_1': '治疗：治疗量为攻击力的固定比例，攻击速度提升；浮泡庇护与目标转移未建模。',
+    'skchr_haruka_2': '治疗：治疗目标数增加；治疗转伤害、浮泡目标数与二次使用加成未建模。',
+    'skchr_haruka_3': '治疗：攻击力提升、攻击间隔缩短；浮空伤害与庇护倍率未建模。',
+    'skchr_sbell2_1': '瞬发范围法术伤害，可充能；寒冷、推动与积雪扩散未建模；通常不攻击。',
+    'skchr_sbell2_2': '永久范围法术攻击；积雪层数、寒冷、冻结与地块伤害未建模；通常不攻击。',
+    'skchr_sbell2_3': '持续范围法术攻击，攻击力与攻击速度提升、无视部分法抗；诱导与积雪加速未建模；通常不攻击。',
+    'skchr_aglna2_1': '被动：部署后起飞，攻击力提升并攻击两个目标；天赋额外法术伤害与失重未建模。',
+    'skchr_aglna2_2': '持续：攻击变为法术、攻击力提升、攻击间隔缩短并攻击多个目标；浮空、缚地与滑翔未建模。',
+    'skchr_aglna2_3': '弹药型：物理多目标攻击；对空庇护、冲刺、飞行减速与额外飞行目标未建模。',
+    'skcom_assist_cost[2]': '回费：每次攻击获得费用，阻挡降低。',
+}
 
 
 def enemy_behavior(enemy, graph):
@@ -291,13 +377,15 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
     e = enemy['attributes']
     max_hp = number(e['maxHp'], 'enemy HP', .001)
     hp = max_hp * mechanics.get('initial_hp_ratio', 1)
+    passive = behavior.get('passive', False)
     sp_data = behavior['sp']
     sp, need = number(sp_data['initSp'], 'initial SP'), number(sp_data['spCost'], 'SP cost')
     sp_kind = sp_data['spType']
-    _require(sp_kind in ('INCREASE_WITH_TIME', 'INCREASE_WHEN_ATTACK', 'INCREASE_WHEN_TAKEN_DAMAGE'),
-             'Unknown SP recovery type')
+    if not passive:
+        _require(sp_kind in ('INCREASE_WITH_TIME', 'INCREASE_WHEN_ATTACK',
+                             'INCREASE_WHEN_TAKEN_DAMAGE'), 'Unknown SP recovery type')
     sp_rate = number(attrs.get('spRecoveryPerSec', 1), 'SP recovery')
-    now, last, active_until, next_ready = 0., 0., -1., 0.
+    now, last, active_until, next_ready = 0., 0., math.inf if passive else -1., 0.
     ammo, attacks, hits, total, revives, overloads = 0, 0, 0, 0., 0, 0
     stacks = mechanics.get('initial_stacks', 0) if start_stacks is None else start_stacks
     stack_hits, stunned_until, debuffed_until = 0, -1., -1.
@@ -330,6 +418,13 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
             interval = attack_interval(attrs['baseAttackTime'], attrs['attackSpeed'])
             now += interval
             continue
+        if not active and behavior.get('normal_attack', True) is False:
+            # Trait-level "does not attack normally" must not invent basic hits.
+            interval = attack_interval(attrs['baseAttackTime'], attrs['attackSpeed'])
+            now = max(now + interval, next_ready)
+            continue
+        damage_type = (behavior['damage_type'] if active
+                       else behavior.get('damage_type_normal', behavior['damage_type']))
         attack = attrs['atk'] * (1 + (behavior['attack_up'] if active else 0))
         multiplier = behavior['attack_scale'] if active else 1
         packets = behavior.get('packets_skill' if active else 'packets_normal')
@@ -344,7 +439,7 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
             reduction = stacks * mechanics.get('reduction_per_stack', 0) if now >= stunned_until else 0
             resistance = base_resistance * (1 + behavior.get('resistance_debuff', 0)
                 if now < debuffed_until else 1)
-            damage = damage_packet(attack * packet, behavior['damage_type'],
+            damage = damage_packet(attack * packet, damage_type,
                 defense=defense, resistance=resistance, reduction=reduction,
                 flat_penetration=behavior.get('flat_penetration', 0),
                 percent_penetration=behavior.get('percent_penetration', 0))
@@ -508,7 +603,8 @@ def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizo
         if behavior is not None:
             trait = module['trait']
             behavior['flat_penetration'] = (trait.get('magic_resist_penetrate_fixed', 0)
-                                            if behavior['damage_type'] == 'arts' else 0)
+                                            if behavior['damage_type'] == 'arts' else 0) + behavior[
+                                                'flat_penetration']
             if trait.get('attack_speed'):
                 bounds['attackSpeed'] = [v + trait['attack_speed'] for v in bounds['attackSpeed']]
             if sid == 'skchr_wisdel_3' and talents:

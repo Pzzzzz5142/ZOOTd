@@ -46,7 +46,9 @@ let state = {
   skland: null,
   sklandBusy: false,
   sklandClock: null,
-  sklandAnchor: 0
+  sklandAnchor: 0,
+  solver: null,
+  solverBusy: false
 };
 const expanded = new Map();
 
@@ -647,19 +649,27 @@ function select(id) {
 function route(initial = false) {
   if (state.view === 'history') state.historyScroll = window.scrollY;
   const match = location.hash.match(/^#run\/([0-9]{8}T[0-9]{6}\.[0-9]{6}Z-[0-9a-f]{8})$/);
-  const view = match ? 'detail' : location.hash === '#history' ? 'history' : 'overview';
+  const view = match ? 'detail' : location.hash === '#history' ? 'history'
+    : location.hash === '#solver' ? 'solver' : 'overview';
   state.view = view;
   state.selected = match ? match[1] : null;
-  for (const id of ['overview', 'history', 'detail', 'breadcrumb']) {
-    $(id).hidden = id === 'detail' ? !['overview', 'detail'].includes(view) : (id === 'breadcrumb' ? 'detail' : id) !== view;
-  }
+  $('overview').hidden = view !== 'overview';
+  $('history').hidden = view !== 'history';
+  $('detail').hidden = !['overview', 'detail'].includes(view);
+  $('breadcrumb').hidden = view !== 'detail';
   $('game-overview').hidden = view !== 'overview';
-  const titles = {overview:'运行概览', history:'历史记录', detail:'运行详情'};
+  $('solver').hidden = view !== 'solver';
+  const titles = {overview:'运行概览', history:'历史记录', detail:'运行详情', solver:'求解器模型'};
   $('page-title').textContent = titles[view];
   document.title = titles[view] + ' · ZOOTd';
-  $('page-eyebrow').textContent = 'OPERATIONS / ' + {overview:'OVERVIEW',history:'HISTORY',detail:'RUN DETAIL'}[view];
-  $('page-description').textContent = {overview:'核对游戏状态与托管执行结果。',history:'查询每轮任务的结果、阶段记录与执行证据。',detail:'查看本轮阶段结果，沿时间线追踪已记录的过程。'}[view];
-  for (const name of ['overview', 'history', 'detail']) {
+  $('page-eyebrow').textContent = 'OPERATIONS / ' + {overview:'OVERVIEW',history:'HISTORY',detail:'RUN DETAIL',solver:'SOLVER MODELS'}[view];
+  $('page-description').textContent = {
+    overview:'核对游戏状态与托管执行结果。',
+    history:'查询每轮任务的结果、阶段记录与执行证据。',
+    detail:'查看本轮阶段结果，沿时间线追踪已记录的过程。',
+    solver:'列出自动求解器能理解的干员、技能与建模边界。'
+  }[view];
+  for (const name of ['overview', 'history', 'detail', 'solver']) {
     const link = $('nav-' + name);
     link.classList.toggle('active', name === view);
     link.classList.toggle('parent-active', name === 'history' && view === 'detail');
@@ -673,12 +683,110 @@ function route(initial = false) {
   $('all-history').hidden = view !== 'overview';
   if (view === 'detail') loadRun(match[1]);
   if (view === 'overview') renderLatest(state.latest);
+  if (view === 'solver') loadSolver();
   if (!initial) {
     window.scrollTo({top:view === 'history' ? state.historyScroll : 0, behavior:'instant'});
     const previous = view === 'history' && state.lastSelected
       ? document.querySelector(`[data-run-id="${state.lastSelected}"]`) : null;
     (previous || $('page-title')).focus({preventScroll:true});
   }
+}
+
+async function loadSolver(force = false) {
+  if (state.solverBusy) return;
+  if (!force && state.solver) { renderSolver(); return; }
+  state.solverBusy = true;
+  $('solver-state').textContent = '正在读取模型清单…';
+  $('solver-state').className = 'badge';
+  try {
+    state.solver = await api('/api/solver-models');
+  } catch (error) {
+    state.solver = {state: 'error', message: '读取模型清单失败，请检查面板服务。'};
+  } finally {
+    state.solverBusy = false;
+  }
+  renderSolver();
+}
+
+function solverOperator(operator) {
+  const card = node('article', undefined, 'solver-card');
+  const head = node('header', undefined, 'solver-card-head');
+  head.append(node('h3', operator.name));
+  const tags = node('div', undefined, 'solver-tags');
+  tags.append(node('span', operator.rarity, 'badge'));
+  tags.append(node('span', operator.profession, 'badge'));
+  tags.append(node('span', operator.in_box ? '在 Box 中' : '未持有',
+    'badge ' + (operator.in_box ? 'success' : 'pending')));
+  head.append(tags);
+  card.append(head);
+  for (const skill of operator.skills) {
+    const row = node('section', undefined, 'solver-skill');
+    const top = node('div', undefined, 'solver-skill-head');
+    top.append(node('span', `S${skill.slot}`, 'solver-slot'), node('strong', skill.name));
+    top.append(node('span', skill.level_source === 'box' ? `练度 Lv ${skill.level}` : `满级 Lv ${skill.level}`,
+      'muted solver-level'));
+    if (!skill.note) top.append(node('span', '缺少建模说明', 'badge unfinished'));
+    row.append(top);
+    const chips = node('div', undefined, 'chips');
+    for (const chip of skill.summary || []) chips.append(node('span', chip, 'chip'));
+    row.append(chips);
+    if (skill.note) row.append(node('p', skill.note, 'solver-note'));
+    if (skill.unknown && skill.unknown.length) {
+      const unknown = node('p', undefined, 'solver-unknown');
+      unknown.append(node('span', '未建模：'));
+      for (const item of skill.unknown) unknown.append(node('code', item));
+      row.append(unknown);
+    }
+    card.append(row);
+  }
+  return card;
+}
+
+function renderSolver() {
+  if (state.view !== 'solver') return;
+  const data = state.solver, host = $('solver-content');
+  host.replaceChildren();
+  if (!data) {
+    $('solver-state').textContent = '正在读取模型清单…';
+    $('solver-state').className = 'badge';
+    host.append(node('p', '正在读取求解器模型清单…', 'muted'));
+    return;
+  }
+  if (data.state !== 'ready') {
+    $('solver-state').textContent = '模型清单不可用';
+    $('solver-state').className = 'badge unfinished';
+    host.append(node('p', data.message || '模型清单暂不可用。', 'notice'));
+    return;
+  }
+  const counts = data.counts || {};
+  $('solver-state').textContent = `已建模 ${counts.modeled_operators ?? '—'} 名干员`;
+  $('solver-state').className = 'badge success';
+  const metrics = node('div', undefined, 'solver-metrics');
+  const metric = (value, label) => {
+    const card = node('article');
+    card.append(node('strong', value), node('span', label, 'label'));
+    return card;
+  };
+  metrics.append(
+    metric(String(counts.modeled_operators ?? '—'), '已建模干员'),
+    metric(String(counts.modeled_skills ?? '—'), '已建模技能'),
+    metric(counts.box_operators == null ? '不可用' : `${counts.modeled_in_box} / ${counts.box_operators}`,
+      'Box 中可理解 / 总数'),
+    metric(counts.unmodeled_in_box == null ? '—' : String(counts.unmodeled_in_box),
+      'Box 中尚未建模')
+  );
+  host.append(metrics);
+  host.append(node('p',
+    `模型版本 v${data.model_version} · 静态数据 ${String(data.revision).slice(0, 12)} · `
+    + '技能数值按 Box 当前练度，未持有按满级建模。',
+    'muted solver-meta'));
+  const list = node('div', undefined, 'solver-list');
+  for (const operator of data.operators || []) list.append(solverOperator(operator));
+  host.append(list);
+  host.append(node('p',
+    '“未建模”列出模型明确不模拟的效果，不会因为一次实战通过而自动转正；'
+    + '没有模型的干员不会进入候选池。',
+    'muted solver-footnote'));
 }
 
 function renderLatest(r) {
@@ -913,7 +1021,10 @@ async function refresh() {
 $('latest-view').addEventListener('click', () => {
   if (state.latest) $('detail').scrollIntoView({block:'start'});
 });
-$('refresh').addEventListener('click', () => { refresh(); refreshUpstream(); refreshSkland(); });
+$('refresh').addEventListener('click', () => {
+  refresh(); refreshUpstream(); refreshSkland();
+  if (state.view === 'solver') loadSolver(true);
+});
 $('search').addEventListener('input', render);
 for (const b of document.querySelectorAll('[data-filter]')) b.addEventListener('click', () => {
   state.filter = b.dataset.filter;

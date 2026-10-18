@@ -134,8 +134,9 @@ def _profiles(graph, box, catalog, chars, skills, ranges, equipment, metadata, h
                     continue
                 requirements.update(module=module_slot, module_level=module.level)
             behavior = skill_behavior(sid, skills[sid]['levels'][level - 1], char)
-            oper = {'name': char['name'], 'skill': slot, 'skill_usage': 2
-                    if behavior['mode'] == 'permanent' else 1, 'requirements': requirements}
+            usage = 0 if behavior.get('passive') else 2 if behavior['mode'] == 'permanent' else 1
+            oper = {'name': char['name'], 'skill': slot, 'skill_usage': usage,
+                    'requirements': requirements}
             content = {'opers': [oper], 'actions': [dict(type='Deploy', name=char['name'],
                         location=list(position), direction='Right')]}
             try:
@@ -229,6 +230,7 @@ def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
     blockers = [p for p in profiles if p['position_type'] == 'MELEE'
                 and p['row']['block_count_normal'] >= 1
                 and p['row']['block_count_skill'] >= 2
+                and p['row']['behavior'].get('ground_block', True)
                 and p['row']['behavior']['mode'] != 'cost']
     weights = {r: sum(s['count'] for s in spawns if s['route_index'] == r) for r in paths}
     capacity = graph['options']['characterLimit']
@@ -255,14 +257,22 @@ def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
     ranged = [p for p in profiles if p['position_type'] == 'RANGED'
               and p['row']['behavior']['damage_type'] not in ('healing',)
               and p['row']['behavior']['mode'] != 'cost']
+    # Melee units that cannot block ground enemies still deal damage from melee
+    # tiles; keep them out of the blocker role while allowing damage placement.
+    melee_damage = [p for p in profiles if p['position_type'] == 'MELEE'
+                    and not p['row']['behavior'].get('ground_block', True)
+                    and p['row']['behavior']['damage_type'] not in ('healing',)
+                    and p['row']['behavior']['mode'] != 'cost']
+    damage_pool = ranged + melee_damage
     dp_pool = [p for p in profiles if p['row']['behavior']['mode'] == 'cost']
     remaining = capacity - len(selected) - bool(dp_pool)
     healing_slots = 2 if remaining >= 4 else 1
     damage_slots = min(3, remaining - healing_slots)
-    _require(damage_slots >= 1, 'No deployment slot remains for normal ranged damage')
+    _require(damage_slots >= 1, 'No deployment slot remains for normal damage')
 
     def fire_score(p, cell, direction, *, marginal=True):
         normal, active = _footprint(p, cell, direction), _footprint(p, cell, direction, skill=True)
+        basic = bool(p['row']['behavior'].get('normal_attack', True))
         result = 0
         for spawn in spawns:
             route = paths[spawn['route_index']]
@@ -270,7 +280,7 @@ def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
             existing = sum(bool(_footprint(x['profile'], x['point'], x['facing']) & terminal)
                            for x in selected if x['role'] == 'damage') if marginal else 0
             # Skill downtime cannot replace basic coverage at the blue gate.
-            contact = len(normal & terminal) + .35 * len(active & terminal)
+            contact = (len(normal & terminal) if basic else 0) + .35 * len(active & terminal)
             result += spawn['count'] * damage_rate(p, spawn['enemy_id']) * contact / (1 + existing)
         return result
 
@@ -278,7 +288,7 @@ def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
     # old independent greedy choices could scatter DPS across an unhealable map.
     # Search all one/two-medic networks and score their available damage cells.
     damage_cells = {}
-    for p, cell, direction in candidates(ranged):
+    for p, cell, direction in candidates(damage_pool):
         damage_cells[cell] = max(damage_cells.get(cell, 0), fire_score(p, cell, direction, marginal=False))
     heal_candidates = [(p, cell, direction, _footprint(p, cell, direction))
                        for p, cell, direction in candidates(healer_pool)]
@@ -311,7 +321,7 @@ def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
 
     # Extra damage uses marginal contact on the least-covered final approaches.
     for _ in range(damage_slots):
-        profile, cell, direction = best(ranged, lambda p, cell, direction:
+        profile, cell, direction = best(damage_pool, lambda p, cell, direction:
                                         fire_score(p, cell, direction) if cell in healing else 0)
         choose(profile, cell, direction, 'damage')
     if dp_pool and len(selected) < capacity:
@@ -327,7 +337,8 @@ def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
             continue
         route = paths[s['route_index']]
         if not any(_footprint(x['profile'], x['point'], x['facing']) & set(route['terminal'][-2:])
-                   for x in selected if x['role'] == 'damage'):
+                   for x in selected if x['role'] == 'damage'
+                   and x['profile']['row']['behavior'].get('normal_attack', True)):
             missing.append(s['route_index'])
     _require(not missing, 'Unblockable final approaches lack normal DPS: ' + str(sorted(set(missing))))
 

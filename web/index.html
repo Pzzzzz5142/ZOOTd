@@ -26,6 +26,7 @@
   <nav class="primary-nav" aria-label="监控页面">
     <a id="nav-overview" class="nav" href="#overview" aria-label="运行概览"><svg class="icon" aria-hidden="true"><use href="#i-grid"/></svg><span>运行概览<small>Overview</small></span><span class="nav-index" aria-hidden="true">01</span></a>
     <a id="nav-history" class="nav" href="#history" aria-label="历史记录"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>历史记录<small>Run history</small></span><span class="nav-index" aria-hidden="true">02</span></a>
+    <a id="nav-solver" class="nav" href="#solver" aria-label="求解器模型"><svg class="icon" aria-hidden="true"><use href="#i-cpu"/></svg><span>求解器模型<small>Model coverage</small></span><span class="nav-index" aria-hidden="true">03</span></a>
     <a id="nav-detail" class="nav nav-child" href="#history" aria-label="运行详情" hidden><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg><span>运行详情</span></a>
   </nav>
   <div class="aside-foot"><div class="observer-label"><span class="dot"></span> LOCAL OBSERVER</div><p>本地只读监控</p><small>MAA × WAYDROID</small><span class="rail-code" aria-hidden="true">RI / ZOOTD / CN-OFFICIAL</span></div>
@@ -89,6 +90,10 @@
     <div class="table-scroll"><table><thead><tr><th>运行时间 / ID</th><th>运行模式</th><th>结果</th><th>阶段记录</th><th>耗时</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
     <div id="empty" class="empty" hidden>暂无运行记录。完成一次托管运行后，记录会显示在这里。</div>
     <div class="pagination"><small>当前页通过 <span id="success">—</span> · 需关注 <span id="attention">—</span><br>每页 30 条 · 筛选仅作用于当前页</small><div><button id="prev">← 上一页</button><span id="page">1</span><button id="next">下一页 →</button></div></div>
+  </section>
+  <section id="solver" class="panel" hidden aria-labelledby="solver-title">
+    <div class="panel-heading"><div><div class="eyebrow">SOLVER / MODEL COVERAGE</div><h2 id="solver-title">求解器模型</h2></div><span id="solver-state" class="badge" role="status">正在读取模型清单…</span></div>
+    <div id="solver-content"></div>
   </section>
   <footer><span>ZOOTd / RHODES ISLAND OPERATIONS</span><span>时间：Asia/Shanghai · 本地状态 10 秒 / 森空岛同步 20 分钟</span><p>森空岛可能滞后于游戏；时间推算不包含刷图消耗、用药或任务操作。运行结果以审计证据为准。</p></footer>
 </main>

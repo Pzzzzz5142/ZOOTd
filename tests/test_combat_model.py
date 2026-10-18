@@ -247,6 +247,51 @@ class DamageModelTests(unittest.TestCase):
         self.assertEqual(len(blocking_queue(0, arrivals)['overflow']), 3)
         self.assertEqual(len(blocking_queue(2, [{'time': 0, 'block_cost': 3, 'service_seconds': 1}])['overflow']), 1)
 
+    def test_new_operator_models_keep_unmodeled_effects_explicit(self):
+        def level(skill_type, duration, sp, **blackboard):
+            return {'skillType': skill_type, 'duration': duration, 'spData': sp,
+                    'blackboard': [{'key': k, 'value': v} for k, v in blackboard.items()]}
+        sp = {'spType': 'INCREASE_WITH_TIME', 'initSp': 0, 'spCost': 20, 'maxChargeTime': 1}
+        clemnt = skill_behavior('skchr_clemnt_3', level(
+            'MANUAL', 0., sp, **{'attack@atk_scale': 2.35, 'attack@max_target': 3., 'trigger_time': 10.}),
+            {'profession': 'WARRIOR'})
+        self.assertEqual((clemnt['mode'], clemnt['attack_scale'], clemnt['targets'], clemnt['ammo']),
+                         ('ammo', 2.35, 3, 10))
+        self.assertTrue(any(item.startswith('clemnt:') for item in clemnt['unknown']))
+        haruka = skill_behavior('skchr_haruka_2', level(
+            'MANUAL', 26., sp, **{'attack@max_target_heal_add': 1.}), {'profession': 'SUPPORT'})
+        self.assertEqual((haruka['damage_type'], haruka['damage_type_normal'], haruka['targets']),
+                         ('healing', 'arts', 2))
+        self.assertAlmostEqual(haruka['attack_scale'], .75)
+        sbell = skill_behavior('skchr_sbell2_3', level(
+            'MANUAL', 35., sp, **{'atk': 1., 'attack_speed': 30., 'magic_resist_penetrate_fixed': 10.,
+                                  'attack@atk_scale_s3': 2.6}), {'profession': 'CASTER'})
+        self.assertFalse(sbell['normal_attack'])
+        self.assertEqual((sbell['flat_penetration'], sbell['attack_up'], sbell['speed_add']),
+                         (10., 1., 30.))
+        aglna = skill_behavior('skchr_aglna2_1', level(
+            'PASSIVE', 56., {'spType': 8, 'initSp': 0, 'spCost': 0, 'maxChargeTime': 0},
+            **{'atk': 1., 'attack@max_target': 2.}), {'profession': 'SPECIAL'})
+        self.assertTrue(aglna['passive'] and aglna['automatic'])
+        self.assertFalse(aglna['ground_block'])
+
+    def test_passive_skill_is_always_active_without_sp(self):
+        profile = behavior()
+        profile.update(mode='permanent', passive=True, attack_up=1., attack_scale=1.)
+        profile['sp'].update(spType=8)
+        result = duel(fighter(), profile, target(), {'kind': 'ordinary'}, horizon=2)
+        self.assertEqual(result['damage'], 400)
+        self.assertEqual(result['damage_instances'], 2)
+        self.assertEqual(result['skill_activations'], [])
+
+    def test_no_normal_attack_trait_does_not_invent_basic_hits(self):
+        profile = behavior()
+        profile.update(normal_attack=False, attack_up=1., attack_scale=1.)
+        profile['sp'].update(spCost=10, initSp=0)
+        result = duel(fighter(), profile, target(), {'kind': 'ordinary'}, horizon=5)
+        self.assertEqual((result['damage'], result['damage_instances']), (0, 0))
+        self.assertEqual(result['attack_events'], 5)
+
 
 if __name__ == '__main__':
     unittest.main()
