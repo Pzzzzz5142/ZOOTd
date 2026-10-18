@@ -50,6 +50,10 @@
 
 ## 战术求解开发约定
 
+`battle_generator.py` 负责共同准备与验收，`battle_search.py` 维护末段防守领域结构，
+`battle_strategies.py` 提供可替换的贪心/回溯算法，`battle_portfolio.py` 提供离线进程比较。
+扩展接口、兼容性与机制模型后续方案见[求解器架构](copilot/solver-architecture.md)。
+
 使用本项目程序化求解器时，战术迭代必须改进已有求解器的不足，再由程序重新生成计划和 Copilot 作业。私有计划 JSON 是程序的输出，不是绕过程序缺陷的开发入口。此约定同样适用于首次构造候选，不能先人工写出整套战术，再把编译成功称为程序求解。
 
 按作业来源区分两种流程：
