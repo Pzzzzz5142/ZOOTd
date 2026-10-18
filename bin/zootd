@@ -323,6 +323,8 @@ Commands:
                         Serve the read-only web panel (default: 0.0.0.0:8765)
   skland-sign [--dry-run] [--uid UID] [--endfield-role ROLE]
                         Claim daily Skland rewards for Arknights and Endfield
+  bark-notify morning|evening|attendance|test
+                        Send a service result or test notification to local Bark settings
   status                Show Waydroid and systemd timer status
   log-cleanup [--dry-run] Rotate logs and expire project history older than seven days
   logs                  Follow logs from the user service
@@ -373,6 +375,11 @@ case "${command_name}" in
         shift
         export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
         exec python3 -m maa_planner.skland_attendance --project-root "${project_root}" "$@"
+        ;;
+    bark-notify)
+        shift
+        export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec python3 -m maa_planner.bark --project-root "${project_root}" "$@"
         ;;
     proxy-status|proxy-reset)
         shift

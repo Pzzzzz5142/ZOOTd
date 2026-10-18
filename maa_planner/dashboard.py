@@ -98,6 +98,7 @@ def read_run(root: Path, run_id: str, *, explain: bool = False) -> dict:
             if terminal["status"] == "success" and not accepted:
                 raise ValueError("success without complete phase evidence")
         result.update(status=status, mode=start["mode"], started_at=events[0]["recorded_at"],
+                      service_invocation_id=start.get("service_invocation_id"),
                       updated_at=events[-1]["recorded_at"],
                       finished_at=finishes[0]["recorded_at"] if finishes else None,
                       expected_phases=list(expected), phases=phases,

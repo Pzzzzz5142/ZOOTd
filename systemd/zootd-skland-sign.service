@@ -9,6 +9,7 @@ Type=oneshot
 WorkingDirectory=%h/Projects/zootd
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStart=%h/Projects/zootd/bin/zootd skland-sign
+ExecStopPost=-/usr/bin/timeout --signal=TERM --kill-after=1s 8s %h/Projects/zootd/bin/zootd bark-notify attendance
 TimeoutStartSec=3m
 TimeoutStopSec=10s
 NoNewPrivileges=true

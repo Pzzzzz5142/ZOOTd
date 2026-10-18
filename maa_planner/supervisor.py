@@ -344,6 +344,9 @@ def start_run(root: Path, mode: str, *, now: datetime | None = None) -> str:
         "llm_policy": "exception-only",
         "recovery_policy": "unsandboxed-scoped-v4",
     }
+    invocation = os.environ.get("INVOCATION_ID", "")
+    if re.fullmatch(r"[0-9a-f]{32}", invocation):
+        payload["service_invocation_id"] = invocation
     recovery_active = os.environ.get("MAA_RECOVERY_ACTIVE", "false")
     recovery_values = {
         "parent_run_id": os.environ.get("MAA_RECOVERY_PARENT_RUN_ID"),

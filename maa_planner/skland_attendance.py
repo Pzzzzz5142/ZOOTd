@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import re
 import signal
 import sys
@@ -155,6 +156,9 @@ def run_attendance(root: Path, *, client=None, signer=sign_target, clock=time.ti
              "started_at": clock(), "finished_at": None,
              "games": {game: {"status": "pending", "checked_at": None, "rewards": [], "error": None}
                        for game in GAMES}}
+    invocation = os.environ.get("INVOCATION_ID", "")
+    if re.fullmatch(r"[0-9a-f]{32}", invocation):
+        value["service_invocation_id"] = invocation
     def save():
         if not dry_run:
             atomic_write_json(state_path(root), value)
@@ -239,6 +243,11 @@ def read_attendance(root: Path, *, clock=time.time) -> dict:
         if value["status"] != "running" and any(e["status"] in {"pending", "running"} for e in games.values()):
             raise ValueError("terminal state without terminal results")
         record = {"status": value["status"], "day": day, **times, "games": games}
+        invocation = value.get("service_invocation_id")
+        if invocation is not None:
+            if not isinstance(invocation, str) or not re.fullmatch(r"[0-9a-f]{32}", invocation):
+                raise ValueError("invalid service invocation")
+            record["service_invocation_id"] = invocation
         return {**empty, "state": "current" if day == today else "previous", "record": record}
     except Exception:
         return {**empty, "error": {"category": "storage", "message": ERRORS["storage"]}}
