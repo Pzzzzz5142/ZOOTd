@@ -304,6 +304,15 @@ class DamageModelTests(unittest.TestCase):
         self.assertEqual(result['damage_instances'], 2)
         self.assertEqual(result['skill_activations'], [])
 
+    def test_normal_only_contact_does_not_credit_a_deployment_passive_buff(self):
+        profile = behavior()
+        profile.update(mode='duration', passive=True, duration=56., attack_up=1., attack_scale=1.)
+        profile['sp'].update(spType=8)
+        result = duel(fighter(), profile, target(), {'kind': 'ordinary'}, horizon=2,
+                      skill_enabled=False)
+        self.assertEqual(result['damage'], 200)
+        self.assertEqual(result['attack_events'], 2)
+
     def test_timed_passive_skill_expires_and_falls_back_to_normal_attacks(self):
         profile = behavior()
         profile.update(mode='duration', passive=True, duration=1.5, attack_up=1., attack_scale=1.)

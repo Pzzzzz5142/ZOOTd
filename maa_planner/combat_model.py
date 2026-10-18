@@ -15,7 +15,7 @@ from .battle_solver import BattleSolverError, _require, _map, _shortest, _rotate
 from .util import canonical_json, sha256_bytes
 from .combat_effects import TargetEffects
 
-MODEL_VERSION = 7
+MODEL_VERSION = 8
 
 
 def number(value, label, minimum=0):
@@ -408,7 +408,7 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
                              'INCREASE_WHEN_TAKEN_DAMAGE'), 'Unknown SP recovery type')
     sp_rate = number(attrs.get('spRecoveryPerSec', 1), 'SP recovery')
     active_until = (max(0., behavior['duration']) if behavior.get('duration', -1) > 0
-                    else math.inf) if passive else -1.
+                    else math.inf) if passive and skill_enabled else -1.
     now = last = next_attack = next_ready = 0.
     ammo, attacks, hits, total, revives, overloads, launches = 0, 0, 0, 0., 0, 0, 0
     stacks = mechanics.get('initial_stacks', 0) if start_stacks is None else start_stacks
@@ -800,6 +800,14 @@ def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizo
                         skill_enabled=skill_enabled, effect_rules=effect_rules)
                     matchup['rotation'] = rotation_estimate(base, behavior, enemy, mechanics,
                         horizon=horizon, skill_enabled=skill_enabled, effect_rules=effect_rules)
+                    if mechanics['kind'] == 'matrix':
+                        # One ordinary attack, without a passive deployment buff
+                        # or active skill. Search combines this with finite path
+                        # contact; it must not credit an early buff forever.
+                        interval = entry['attack_interval_normal']
+                        normal = duel(base, behavior, enemy, mechanics, horizon=interval,
+                                      skill_enabled=False, effect_rules=effect_rules)
+                        matchup['normal_attack_damage'] = normal['damage']
                     unknown.extend(enemy['id'] + ':' + item for item in
                                    matchup['duel']['effects']['unknown'])
                     if mechanics['kind'] == 'basin':
