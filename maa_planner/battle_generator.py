@@ -14,7 +14,22 @@ from .battle_solver import (BattleSolverError, _device_tiles, _map, _mechanics,
 from .combat_model import enemy_behavior, evaluate_plan, route_segments, skill_behavior
 from .util import canonical_json, sha256_bytes
 
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
+
+
+def blocker_healing_need(profile, point, paths, spawns):
+    """Do not equate nonzero regeneration with surviving modeled pressure.
+
+    Use only the evaluator's reviewed incoming-damage scenarios and routes the
+    unit actually intercepts. Other attacks, control and shared healing remain
+    unknown; absence of this particular shortfall is not a survival proof.
+    """
+    enemies = {s['enemy_id'] for s in spawns if tuple(point) in paths[s['route_index']]['terminal']}
+    pressure = max((m.get('max_stacks_incoming_physical_dps', 0)
+                    for m in profile['row']['matchups'] if m['enemy_id'] in enemies), default=0)
+    recovery = profile['row']['self_heal_per_second_skill']
+    return {'required': recovery <= 0 or pressure > recovery,
+            'self_heal_per_second_skill': recovery, 'modeled_peak_physical_dps': pressure}
 
 
 def active_spawns(graph):
@@ -267,7 +282,10 @@ def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
         damage_cells[cell] = max(damage_cells.get(cell, 0), fire_score(p, cell, direction, marginal=False))
     heal_candidates = [(p, cell, direction, _footprint(p, cell, direction))
                        for p, cell, direction in candidates(healer_pool)]
-    must_heal = {x['point'] for x in selected if not x['profile']['row']['self_heal_per_second_skill']}
+    healing_requirements = [{**blocker_healing_need(x['profile'], x['point'], paths, spawns),
+                             'name': x['profile']['oper']['name'], 'location': list(x['point'])}
+                            for x in selected if x['role'] == 'blocker']
+    must_heal = {tuple(x['location']) for x in healing_requirements if x['required']}
     networks = itertools.combinations(heal_candidates, healing_slots)
     best_network, best_score = None, -1
     for network in networks:
@@ -341,6 +359,7 @@ def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
             'copilot_sha256': sha256_bytes(canonical_json(compiled['copilot'])),
             'horizon_seconds': horizon,
             'active_spawn_count': sum(s['count'] for s in spawns), 'excluded_profiles': excluded,
+            'blocker_healing_requirements': healing_requirements,
             'choices': [{'name': x['profile']['oper']['name'], 'role': x['role'],
                          'cost': x['profile']['cost'], 'location': list(x['point']),
                          'direction': x['facing']} for x in deployment],
