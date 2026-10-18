@@ -11,6 +11,8 @@ from pathlib import Path
 from .battle_data import _source, analyze_battle, fetch_battle, parse_battle, render_ascii
 from .battle_solver import analyze_candidates, compile_copilot
 from .battle_generator import generate_plan
+from .battle_portfolio import compare_plans
+from .battle_strategies import strategy_catalog
 from .combat_model import evaluate_plan
 from .copilot_static import build_catalog
 from .operator_box import ModuleProgress, Operator, OperatorBox, SkillProgress
@@ -104,6 +106,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project-root', type=Path, default=Path.cwd())
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('strategies', help='List reviewed offline solver strategies')
     fetch = commands.add_parser('fetch', help='Fetch public sources pinned to navigation revision')
     fetch.add_argument('stage')
     fetch.add_argument('--raid', action='store_true', help='Read explicit challenge (FOUR_STAR) identity and mechanics')
@@ -121,16 +124,27 @@ def main(argv=None) -> int:
     analyze.add_argument('--candidates', action='store_true', help='Rank geometric deployment coverage')
     analyze.add_argument('--placement', choices=('MELEE', 'RANGED', 'ALL'), default='MELEE')
     analyze.add_argument('--limit', type=int, default=20)
-    for name in ('compile', 'validate', 'evaluate', 'generate'):
+    strategy_ids = [s['id'] for s in strategy_catalog()]
+    for name in ('compile', 'validate', 'evaluate', 'generate', 'compare'):
         child = commands.add_parser(name, help='Check a local plan or Copilot against graph and Box')
         child.add_argument('--graph', type=Path, required=True)
         child.add_argument('--box', type=Path)
         child.add_argument('--offline', action='store_true', help='Require already cached public static sources')
-        if name == 'generate':
+        if name in ('generate', 'compare'):
             child.add_argument('--research', type=Path, required=True,
                                help='Graph-bound non-tactical mechanic notes and sources')
             child.add_argument('--output', type=Path, required=True, help='New private artifact directory')
             child.add_argument('--horizon', type=float, default=120)
+            child.add_argument('--max-candidates', type=int, default=8,
+                               help='Per-strategy formation attempt limit, 1..64')
+            child.add_argument('--branch-width', type=int, default=3,
+                               help='Ranked alternatives per decision, 2..8')
+            if name == 'generate':
+                child.add_argument('--strategy', choices=strategy_ids, default='greedy')
+            else:
+                child.add_argument('--strategies', nargs='+', choices=strategy_ids, default=strategy_ids)
+                child.add_argument('--workers', type=int, default=2,
+                                   help='Independent search processes, 1..8; 1 runs sequentially')
         elif name in ('compile', 'evaluate'):
             child.add_argument('--plan', type=Path, required=True)
             child.add_argument('--output', type=Path, required=name == 'compile')
@@ -143,7 +157,9 @@ def main(argv=None) -> int:
                                help='Bind researched mechanic acknowledgements to this candidate')
     args = parser.parse_args(argv)
     try:
-        if args.command == 'fetch':
+        if args.command == 'strategies':
+            output = {'schema': 1, 'strategies': strategy_catalog()}
+        elif args.command == 'fetch':
             graph = fetch_battle(args.project_root, args.stage, refresh=args.refresh, raid=args.raid)
             static_inputs(args.project_root, graph)
             if args.output:
@@ -166,36 +182,58 @@ def main(argv=None) -> int:
                       if args.candidates else render_ascii(graph) if args.format == 'ascii'
                       else analyze_battle(graph))
         else:
-            graph = decode(args.graph.read_bytes())
+            graph_raw = args.graph.read_bytes()
+            graph = decode(graph_raw)
             box, box_evidence = read_box(args.box or args.project_root / 'var/state/operator-box.json')
             catalog, chars, sources = static_inputs(args.project_root, graph, offline=args.offline)
-            if args.command == 'generate':
+            if args.command in ('generate', 'compare'):
                 require(not args.output.exists(), 'Generation output directory already exists; use a new candidate.')
                 combat, combat_sources = combat_inputs(args.project_root, graph, offline=args.offline)
                 research_raw = args.research.read_bytes()
-                generated = generate_plan(graph, box, catalog, chars,
-                    combat['skill_table'], combat['range_table'], research=decode(research_raw),
-                    equipment=combat['battle_equip_table'], equip_metadata=combat['uniequip_table'],
-                    horizon=args.horizon)
                 sources.update(combat_sources)
-                output = generated['generation']
-                output['inputs'] = {'box': box_evidence, 'static': sources,
-                    'graph_file_sha256': sha256_bytes(args.graph.read_bytes()),
-                    'research_file_sha256': sha256_bytes(research_raw)}
-                output['code'] = {'head': subprocess.check_output(
+                evidence = {'inputs': {'box': box_evidence, 'static': sources,
+                    'graph_file_sha256': sha256_bytes(graph_raw),
+                    'research_file_sha256': sha256_bytes(research_raw)}}
+                evidence['code'] = {'head': subprocess.check_output(
                     ['git', '-C', str(args.project_root), 'rev-parse', 'HEAD'], text=True).strip(),
                     'dirty': bool(subprocess.check_output(['git', '-C', str(args.project_root),
                         'status', '--porcelain'], text=True).strip())}
-                output['entrypoint'] = ['battle-solver', 'generate', '--graph', str(args.graph.resolve()),
+                evidence['entrypoint'] = ['battle-solver', args.command, '--graph', str(args.graph.resolve()),
                     '--research', str(args.research.resolve()), '--box', box_evidence['path'],
-                    '--horizon', str(args.horizon), '--output', str(args.output.resolve())
+                    '--horizon', str(args.horizon), '--max-candidates', str(args.max_candidates),
+                    '--branch-width', str(args.branch_width), '--output', str(args.output.resolve())
                     ] + (['--offline'] if args.offline else [])
-                output['output'] = str(args.output.resolve())
+                options = dict(research=decode(research_raw), equipment=combat['battle_equip_table'],
+                    equip_metadata=combat['uniequip_table'], horizon=args.horizon,
+                    max_candidates=args.max_candidates, branch_width=args.branch_width)
+                if args.command == 'generate':
+                    evidence['entrypoint'] += ['--strategy', args.strategy]
+                    generated = generate_plan(graph, box, catalog, chars,
+                        combat['skill_table'], combat['range_table'], strategy=args.strategy, **options)
+                    candidates = {args.strategy: generated}
+                    output = generated['generation']
+                else:
+                    evidence['entrypoint'] += ['--strategies', *args.strategies, '--workers', str(args.workers)]
+                    compared = compare_plans(graph, box, catalog, chars,
+                        combat['skill_table'], combat['range_table'], strategies=args.strategies,
+                        workers=args.workers, **options)
+                    candidates, output = compared['candidates'], compared['comparison']
+                output.update(evidence, output=str(args.output.resolve()))
                 args.output.mkdir(parents=True, mode=0o700)
-                for key in ('plan', 'copilot', 'combat', 'generation'):
-                    atomic_write_json(args.output / (key + '.json'), generated[key], mode=0o600)
+                for name, generated in candidates.items():
+                    directory = args.output if args.command == 'generate' else args.output / name
+                    if args.command == 'compare':
+                        directory.mkdir(mode=0o700)
+                    generated['generation'].update(evidence, output=str(directory.resolve()))
+                    for key in ('plan', 'copilot', 'combat', 'generation'):
+                        atomic_write_json(directory / (key + '.json'), generated[key], mode=0o600)
+                if args.command == 'compare':
+                    for row in output['results']:
+                        if row['status'] == 'candidate':
+                            row['copilot_file'] = str((args.output / row['strategy'] / 'copilot.json').resolve())
+                    atomic_write_json(args.output / 'comparison.json', output, mode=0o600)
                 print(json.dumps(output, ensure_ascii=False, indent=2, allow_nan=False))
-                return 0
+                return 0 if candidates else 1
             plan_raw = args.plan.read_bytes()
             plan = decode(plan_raw)
             if args.command in ('compile', 'evaluate'):

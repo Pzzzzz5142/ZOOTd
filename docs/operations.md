@@ -401,7 +401,7 @@ query 输出轻量候选 JSON（ID、标题、干员、分组、练度要求、�
 
 普通本地作业自动启用连续三次演习三星后真实作战的门槛，固定自有阵容并关闭信赖补位。`--practice-only` 只进行三次演习；远端普通作业可加 `--practice-first`。失败、证据缺失或作业变化立即停止，演习不预留真实理智、不登记代理、不回落普通开始或补药。相同作业、Box/资源快照与三个不同新鲜 run 才能放行真实战斗；独立调用重新累计。详细规则及模型限制见[战斗评估与演习门槛](copilot/combat-model.md)。
 
-显式 `./bin/zootd battle-solver` 可获取关卡出怪数据图、分析部署覆盖、编译和校验本地作业；`evaluate` 计算受支持技能对本关敌人的伤害、回转和阻挡情景，未知机制明确保留；这些命令不会启动设备。PRTS 数据与求解 skill 的使用见[活动关求解](copilot/event-solver.md)。导航和地图校验按 Core 的 base、MaaResource、hot cache 资源层顺序读取有效的关卡表，避免新活动地图仅在已提升的更新层时误报缺失；同样保留精确关卡身份和正式 runtime 更新流程。
+显式 `./bin/zootd battle-solver` 可获取关卡出怪数据图、分析部署覆盖、编译和校验本地作业；`evaluate` 计算受支持技能对本关敌人的伤害、回转和阻挡情景，未知机制明确保留；`generate --strategy` 选择候选生成策略，`compare --strategies greedy backtracking --workers 2` 以相同输入并行搜索并保存比较报告，`strategies` 列出支持项。这些命令不会启动设备，比较排名不自动执行候选。完整参数与 PRTS/skill 用法见[活动关求解](copilot/event-solver.md)。导航和地图校验按 Core 的 base、MaaResource、hot cache 资源层顺序读取有效的关卡表，避免新活动地图仅在已提升的更新层时误报缺失；同样保留精确关卡身份和正式 runtime 更新流程。
 
 PRTS 同一列表中的双模式作业可能使用突袭 Tile ID。仅在游戏数据已确认普通/突袭配对时，作业内容解析可将这个 ID 绑定到同一关卡；仍按 `difficulty` 筛选并绑定授权难度的执行地图。此内容别名不开放普通导航命令的突袭 ID 输入；其他关卡、不存在的突袭版本和歧义身份仍拒绝。
 

@@ -290,7 +290,7 @@ Commands:
                         Experimental: retrieve one full PRTS copilot (no game launch)
   navigate STAGE [--plan] [--refresh]
                         Navigate to the stage detail panel without starting battle
-  battle-solver fetch|analyze|compile|validate|evaluate [options]
+  battle-solver fetch|analyze|compile|validate|evaluate|generate|compare|strategies [options]
                         Experimental: public battle graph and local Copilot generation
   copilot-run STAGE [--raid] [--profile no-support|allow-support]
                         Local normal scripts: three fresh practices before live battle
