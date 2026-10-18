@@ -26,12 +26,13 @@ def problem():
             'options': {'characterLimit': 3}, 'mechanics': {'unknown': [], 'predefines': {}}}
 
 
-def profile(name, role, offsets):
+def profile(name, role, offsets, *, ground_block=True):
     healing = role == 'healer'
     return {'oper': {'name': name, 'skill': 1, 'skill_usage': 1},
             'cost': 10, 'position_type': 'MELEE' if role == 'blocker' else 'RANGED',
             'normal_offsets': offsets, 'skill_offsets': offsets,
-            'row': {'behavior': {'damage_type': 'healing' if healing else 'physical', 'mode': 'duration'},
+            'row': {'behavior': {'damage_type': 'healing' if healing else 'physical',
+                                 'mode': 'duration', 'ground_block': ground_block},
                     'attributes': {'maxHp': [2000, 2000], 'def': [400, 400]},
                     'block_count_normal': 2 if role == 'blocker' else 0,
                     'block_count_skill': 2 if role == 'blocker' else 0,
@@ -44,12 +45,13 @@ def profile(name, role, offsets):
 class GeneratorTests(unittest.TestCase):
     def setUp(self):
         self.graph = problem()
-        self.catalog = OperatorCatalog([OperatorIdentity(n, n, {1: n + '_s1'}) for n in ('Guard', 'Caster', 'Medic')])
+        names = ('Guard', 'Caster', 'Medic', 'Special')
+        self.catalog = OperatorCatalog([OperatorIdentity(n, n, {1: n + '_s1'}) for n in names])
         self.box = OperatorBox('fixture', '2026-10-18', 'private-fixture', {
             n: Operator(n, 2, 70, 1, 7, {n + '_s1': SkillProgress(0)}, {})
-            for n in ('Guard', 'Caster', 'Medic')})
-        self.chars = {n: {'name': n, 'position': 'MELEE' if n == 'Guard' else 'RANGED'}
-                      for n in ('Guard', 'Caster', 'Medic')}
+            for n in names})
+        self.chars = {n: {'name': n, 'position': 'MELEE' if n in ('Guard', 'Special') else 'RANGED'}
+                      for n in names}
         self.profiles = [profile('Guard', 'blocker', [[0, 0], [1, 0]]),
                          profile('Caster', 'damage', [[0, 0], [1, -1], [1, 0], [1, 1], [2, 0]]),
                          profile('Medic', 'healer', [[x, y] for x in range(3) for y in range(-1, 2)])]
@@ -126,6 +128,21 @@ class GeneratorTests(unittest.TestCase):
         self.assertFalse(blocker_healing_need(guard, (3, 0), paths, self.graph['spawns'])['required'])
         guard['row']['self_heal_per_second_skill'] = 500
         self.assertFalse(blocker_healing_need(guard, (3, 1), paths, self.graph['spawns'])['required'])
+
+    def test_melee_damage_without_ground_block_is_not_a_blocker(self):
+        self.graph['options']['characterLimit'] = 4
+        special = profile('Special', 'damage', [[0, 0], [1, 0], [2, 0], [1, -1], [1, 1]],
+                          ground_block=False)
+        special['position_type'] = 'MELEE'
+        special['row']['block_count_normal'] = 2
+        special['row']['block_count_skill'] = 2
+        special['row']['matchups'][0]['duel'] = {'damage': 100000, 'kill_time': 1}
+        special['row']['matchups'][0]['rotation']['average_dps'] = 100000
+        self.profiles.append(special)
+        result = self.generate()
+        choices = {row['name']: row['role'] for row in result['generation']['choices']}
+        self.assertEqual(choices.get('Special'), 'damage')
+        self.assertNotEqual(choices.get('Special'), 'blocker')
 
 
 if __name__ == '__main__':

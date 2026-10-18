@@ -179,6 +179,9 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)['state'], 'unavailable')
         self.assertEqual(request('/api/runs')[0], 200)
+        status, body = request('/api/solver-models')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['state'], 'unavailable')
         with patch('maa_planner.dashboard.service_status', return_value={'available': False}), \
                 patch('maa_planner.skland_attendance.sign_target') as sign:
             for _ in range(2):

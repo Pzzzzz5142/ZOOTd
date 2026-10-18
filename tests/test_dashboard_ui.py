@@ -85,12 +85,34 @@ class DashboardBrowserTests(unittest.TestCase):
                            service_failures=[], services={}, runtime={'receipt': {'core': {'active_version': 'v6.17.0'}}},
                            attendance=getattr(self, 'attendance', dict(state='unavailable', record=None, error=None)),
                            observed_at='2026-09-24T10:22:00Z')
+        elif path == 'solver-models':
+            payload = getattr(self, 'solver', dict(state='ready', revision='a' * 40, model_version=5,
+                box_available=True,
+                counts=dict(modeled_operators=1, modeled_skills=1, box_operators=2,
+                            modeled_in_box=1, unmodeled_in_box=1),
+                operators=[dict(id='char_test', name='测试干员', rarity='六星', rarity_rank=6,
+                    profession='近卫', in_box=True, skills=[dict(slot=1, skill_id='skchr_test',
+                        name='测试技能', level=10, level_source='box', mode='ammo',
+                        damage_type='physical', automatic=False, summary=['弹药', '物理'],
+                        unknown=['test:not_simulated'], note='测试说明。')])]))
         elif path.startswith('runs?'):
             runs = getattr(self, 'history_runs', [self.run])
             payload = dict(runs=runs, total=len(runs))
         else:
             payload = self.run
         route.fulfill(content_type='application/json', body=json.dumps(payload))
+
+    def test_solver_models_page_lists_models_and_unknowns(self):
+        self.page.locator('#nav-solver').click()
+        expect(self.page.locator('#solver')).to_be_visible()
+        expect(self.page.locator('.solver-card')).to_have_count(1)
+        self.assertIn('测试干员', self.page.locator('.solver-card').inner_text())
+        self.assertIn('未建模', self.page.locator('.solver-unknown').inner_text())
+        self.assertEqual(self.page.locator('#solver img').count(), 0)
+        for width in (390, 1280):
+            self.page.set_viewport_size({'width': width, 'height': 1000})
+            self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width)
+        self.assertFalse(self.errors)
 
     def test_attendance_results_previous_day_failure_and_mobile_layout(self):
         self.attendance = dict(state='current', error=None,
