@@ -8,15 +8,52 @@ from __future__ import annotations
 
 import copy
 import itertools
+import math
 
 from .battle_solver import (BattleSolverError, _device_tiles, _map, _mechanics,
                             _require, _shortest, compile_copilot)
 from .combat_model import enemy_behavior, evaluate_plan, route_segments, skill_behavior
 from .util import canonical_json, sha256_bytes
-from .battle_search import SearchProblem, assess_formation, blocker_healing_need
+from .battle_search import SearchProblem, assess_formation, blocker_healing_need, _footprint
 from .battle_strategies import SearchBudget, get_strategy, run_search
 
-GENERATOR_VERSION = 6
+GENERATOR_VERSION = 7
+
+
+def deployment_order(problem, selected):
+    """Prioritize the first observed pressure on each unit's defended routes.
+
+    Wave/fragment/action delays are ordered locally, never added into a global
+    clock. Initially inactive reviving objects do not invent immediate pressure.
+    This is an ordering heuristic, not a DP/arrival-time feasibility proof.
+    """
+    def first_pressure(item):
+        p, cell, facing = item['profile'], item['point'], item['facing']
+        times = []
+        for s in problem.spawns:
+            m, path = problem.mechanics[s['enemy_id']], problem.paths[s['route_index']]
+            if m.get('initial_hp_ratio') is not None and m.get('revive_ratio') == 0:
+                continue
+            if item['role'] == 'blocker':
+                covers = m.get('block_cost', 1) > 0 and cell in path['terminal'][-3:]
+            else:
+                covers = p['row']['behavior'].get('normal_attack', True) and bool(
+                    _footprint(p, cell, facing) & set(path['terminal'][-4:]))
+            if covers:
+                times.append(tuple(s.get(k, math.inf) for k in ('wave', 'fragment', 'pre_delay')))
+        return (min(times, default=(math.inf,) * 3), p['cost'], p['oper']['name'])
+
+    dp = [x for x in selected if x['role'] == 'dp']
+    healers = sorted((x for x in selected if x['role'] == 'healer'),
+                     key=lambda x: (x['profile']['cost'], x['profile']['oper']['name']))
+    combat = sorted((x for x in selected if x['role'] in ('blocker', 'damage')), key=first_pressure)
+    order, first_medic_added = list(dp), False
+    for item in combat:
+        order.append(item)
+        if item['role'] == 'damage' and healers and not first_medic_added:
+            order.append(healers.pop(0))
+            first_medic_added = True
+    return order + healers
 
 
 def active_spawns(graph):
@@ -180,15 +217,7 @@ def materialize_plan(problem, result, graph, box, catalog, chars, skills, ranges
     selected = [{'profile': problem.profiles[p.profile_index], 'point': p.point,
                  'facing': p.facing, 'role': p.role} for p in result.formation.placements]
     horizon, spawns, notes = problem.horizon, problem.spawns, research['mechanics']
-    # Interleave frontline, immediate ranged pressure and healing. Permanent
-    # warmup and SP initial charge remain in the report; actions never wait for
-    # invented absolute wave times. MAA waits for actual DP for each deployment.
-    order = {'dp': 0, 'blocker': 1, 'damage': 2, 'healer': 3}
-    selected.sort(key=lambda x: (order[x['role']], x['profile']['cost'], x['profile']['oper']['name']))
-    front = [x for x in selected if x['role'] == 'blocker']
-    other = [x for x in selected if x['role'] == 'damage']
-    healers = [x for x in selected if x['role'] == 'healer']
-    deployment = [x for x in selected if x['role'] == 'dp'] + front + other[:1] + healers[:1] + other[1:] + healers[1:]
+    deployment = deployment_order(problem, selected)
     actions, deployed, retired = [], 0, False
     for x in deployment:
         if deployed == problem.capacity:
