@@ -236,6 +236,19 @@ class BattleCliTests(unittest.TestCase):
             self.assertEqual(report['box_validation'], 'verified')
             self.assertNotIn(self.uid, process.stdout + process.stderr)
 
+    def test_combat_prefetch_is_opt_in_and_preserves_basic_fetch_dependencies(self):
+        from unittest.mock import Mock
+        graph = json.loads(self.graph.read_bytes())
+        for enabled in (False, True):
+            combat = Mock(return_value=({}, {}))
+            with patch('maa_planner.battle_cli.fetch_battle', return_value=graph), \
+                    patch('maa_planner.battle_cli.static_inputs', return_value=(None, {}, {})), \
+                    patch('maa_planner.battle_cli.combat_inputs', combat):
+                code, _, err = self.run_cli(['--project-root', str(self.root), 'fetch', 'T-1']
+                                           + (['--combat'] if enabled else []))
+            self.assertEqual(code, 0, err)
+            self.assertEqual(combat.call_count, int(enabled))
+
 
 if __name__ == '__main__':
     unittest.main()

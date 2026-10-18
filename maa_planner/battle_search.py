@@ -84,12 +84,12 @@ def assess_formation(problem, formation):
             _require(any(item.role == 'damage' and p['row']['behavior'].get('normal_attack', True)
                          and _footprint(p, item.point, item.facing) & set(route['terminal'][-2:])
                          for p, item in selected), 'Unblockable final approach lacks normal DPS')
-    rates = {}
+    rates, controls = {}, {}
     for r, path in sorted(problem.paths.items()):
         terminal = set(path['terminal'][-4:])
         route_spawns = [s for s in problem.spawns if s['route_index'] == r]
         count = sum(s['count'] for s in route_spawns)
-        value = 0
+        value = control = 0
         for p, item in selected:
             if item.role not in ('damage', 'blocker'):
                 continue
@@ -98,15 +98,23 @@ def assess_formation(problem, formation):
             contact += .35 * len(_footprint(p, item.point, item.facing, skill=True) & terminal)
             value += sum(s['count'] * _damage_rate(p, s['enemy_id'], problem.horizon)
                          for s in route_spawns) * contact / max(1, count)
+            by_enemy = {m['enemy_id']: m for m in p['row']['matchups']}
+            control += sum(s['count'] * by_enemy.get(s['enemy_id'], {}).get('rotation', {}).get(
+                'effects', {}).get('movement_delay_equivalent_seconds', 0)
+                for s in route_spawns) * contact / (max(1, count) * problem.horizon)
         rates[str(r)] = round(value, 6)
-    return {'objective_version': 1, 'kind': 'terminal_contact_heuristic',
+        controls[str(r)] = round(control, 6)
+    return {'objective_version': 2, 'kind': 'terminal_contact_heuristic',
             'route_damage_scores': rates, 'minimum_route_damage_score': min(rates.values(), default=0),
             'total_route_damage_score': round(sum(rates.values()), 6),
+            'route_control_contact_scores': controls,
+            'total_control_contact_score': round(sum(controls.values()), 6),
             'deployment_cost': sum(p['cost'] for p, _ in selected)}, requirements
 
 
 def objective(metrics):
     return (metrics['minimum_route_damage_score'], metrics['total_route_damage_score'],
+            metrics['total_control_contact_score'],
             -metrics['deployment_cost'])
 
 

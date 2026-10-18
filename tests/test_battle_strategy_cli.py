@@ -58,14 +58,19 @@ class StrategyCliTests(unittest.TestCase):
         self.box = self.root / 'var/state/operator-box.json'
         atomic_write_json(self.box, OperatorBox('fixture', '2026-10-18', 'private-cli-fixture', operators).to_dict())
         static = self.root / 'var/cache/battle-data' / revision / 'static'
+        effects = json.loads((repository / 'tests/fixtures/combat/effects.json').read_bytes())
         for name, table in {'character_table': chars, 'uniequip_table': {'charEquip': {}, 'equipDict': {}},
+            'buff_table': effects['buff_table'], 'ep_breakbuff_table': effects['ep_breakbuff_table'],
             'skill_table': skills, 'battle_equip_table': {}, 'range_table': {'range': {'grids': [
                 {'col': x, 'row': y} for x in range(3) for y in range(-1, 2)]}}}.items():
             path = static / (name + '.json')
             atomic_write_json(path, table)
+            source = ('buff_table.json' if name == 'buff_table' else
+                      'battle/ep_breakbuff_table.json' if name == 'ep_breakbuff_table' else
+                      'excel/' + path.name)
             atomic_write_json(path.with_name(path.name + '.source.json'), {
                 'url': f'https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/{revision}'
-                       f'/zh_CN/gamedata/excel/{path.name}',
+                       f'/zh_CN/gamedata/{source}',
                 'sha256': sha256_bytes(path.read_bytes()), 'fetched_at': 100})
         atomic_write_json(self.root / 'var/data/MaaResource/resource/battle_data.json', {
             'chars': {k: {'name': v['name']} for k, v in chars.items()}})
@@ -132,6 +137,48 @@ class StrategyCliTests(unittest.TestCase):
         self.assertEqual(report['ranking'], [])
         self.assertTrue(all(r['status'] == 'failed' for r in report['results']))
         self.assertEqual(list(directory.iterdir()), [directory / 'comparison.json'])
+
+    def test_both_strategies_use_pinned_erosion_rules_in_real_cli_generation(self):
+        from tests.test_combat_effects import clementia
+        graph = json.loads(self.graph.read_bytes())
+        graph['enemies']['enemy'].update(level_type='NORMAL', motion='WALK')
+        graph['enemies']['enemy']['attributes'].update(maxHp=100000, epResistance=0, epDamageResistance=0)
+        atomic_write_json(self.graph, graph)
+        research = json.loads(self.research.read_bytes())
+        research['graph_sha256'] = sha256_bytes(canonical_json(graph))
+        atomic_write_json(self.research, research)
+        static = self.root / 'var/cache/battle-data' / ('a' * 40) / 'static'
+        chars = json.loads((static / 'character_table.json').read_bytes())
+        chars['char_guard']['skills'][0]['skillId'] = 'skchr_clemnt_3'
+        skills = json.loads((static / 'skill_table.json').read_bytes())
+        profile = clementia()
+        blackboard = {'attack@atk_scale': profile['attack_scale'], 'attack@max_target': 3,
+                      'trigger_time': 10, 'attack@ep_damage_ratio': .2, 's3_atk_scale': 3,
+                      'ep_damage_scale': 2.5, 'projectile_life_time': 3.5}
+        skills['skchr_clemnt_3'] = {'levels': [{'skillType': 'MANUAL', 'duration': 0,
+            'spData': profile['sp'], 'blackboard': [{'key': k, 'value': v} for k, v in blackboard.items()]}] * 7}
+        for name, table in (('character_table', chars), ('skill_table', skills)):
+            path = static / (name + '.json')
+            atomic_write_json(path, table)
+            receipt = path.with_name(path.name + '.source.json')
+            source = json.loads(receipt.read_bytes())
+            source['sha256'] = sha256_bytes(path.read_bytes())
+            atomic_write_json(receipt, source)
+        box = json.loads(self.box.read_bytes())
+        box['operators']['char_guard']['skills'] = {'skchr_clemnt_3': {'mastery': 0}}
+        atomic_write_json(self.box, box)
+        directory = self.root / 'elemental'
+        result = self.cli('compare', '--workers', '2', '--max-candidates', '2', '--output', str(directory))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for strategy in ('greedy', 'backtracking'):
+            combat = json.loads((directory / strategy / 'combat.json').read_bytes())
+            guard = next(o for o in combat['operators'] if o['name'] == 'Guard')
+            matchup = guard['matchups'][0]
+            self.assertTrue(matchup['duel']['effects']['erosion_bursts'])
+            self.assertGreater(matchup['duel']['damage_by_type']['elemental'], 0)
+            generation = json.loads((directory / strategy / 'generation.json').read_bytes())
+            self.assertIn('buff_table', generation['inputs']['static'])
+            self.assertIn('ep_breakbuff_table', generation['inputs']['static'])
 
 
 if __name__ == '__main__':

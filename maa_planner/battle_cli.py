@@ -14,6 +14,7 @@ from .battle_generator import generate_plan
 from .battle_portfolio import compare_plans
 from .battle_strategies import strategy_catalog
 from .combat_model import evaluate_plan
+from .combat_effects import effect_rules
 from .copilot_static import build_catalog
 from .operator_box import ModuleProgress, Operator, OperatorBox, SkillProgress
 from .prts import PrtsError, decode, require
@@ -93,12 +94,16 @@ def combat_inputs(root, graph, *, offline=False):
             'Combat sources require a pinned game revision')
     directory = root / 'var/cache/battle-data' / revision / 'static'
     tables, evidence = {}, {}
-    for name in ('skill_table', 'range_table', 'battle_equip_table', 'uniequip_table'):
+    paths = {name: 'excel/' + name + '.json' for name in
+             ('skill_table', 'range_table', 'battle_equip_table', 'uniequip_table')}
+    paths.update(buff_table='buff_table.json', ep_breakbuff_table='battle/ep_breakbuff_table.json')
+    for name, source_path in paths.items():
         filename = name + '.json'
         require(not offline or (directory / filename).is_file()
                 and (directory / (filename + '.source.json')).is_file(), 'Combat source is not cached: ' + name)
-        url = f'https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/{revision}/zh_CN/gamedata/excel/{filename}'
+        url = f'https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/{revision}/zh_CN/gamedata/{source_path}'
         tables[name], evidence[name] = _source(directory, filename, url)
+    tables['effect_rules'] = effect_rules(tables['buff_table'], tables['ep_breakbuff_table'])
     return tables, evidence
 
 
@@ -111,6 +116,7 @@ def main(argv=None) -> int:
     fetch.add_argument('stage')
     fetch.add_argument('--raid', action='store_true', help='Read explicit challenge (FOUR_STAR) identity and mechanics')
     fetch.add_argument('--refresh', action='store_true', help='Redownload pinned immutable sources')
+    fetch.add_argument('--combat', action='store_true', help='Also cache combat and effect rules for offline evaluation')
     fetch.add_argument('--output', type=Path)
     analyze = commands.add_parser('analyze', help='Analyze local graph or raw local level/enemy sources')
     inputs = analyze.add_mutually_exclusive_group(required=True)
@@ -162,6 +168,8 @@ def main(argv=None) -> int:
         elif args.command == 'fetch':
             graph = fetch_battle(args.project_root, args.stage, refresh=args.refresh, raid=args.raid)
             static_inputs(args.project_root, graph)
+            if args.combat:
+                combat_inputs(args.project_root, graph)
             if args.output:
                 atomic_write_json(args.output, graph, mode=0o600)
             output = graph
@@ -205,6 +213,7 @@ def main(argv=None) -> int:
                     ] + (['--offline'] if args.offline else [])
                 options = dict(research=decode(research_raw), equipment=combat['battle_equip_table'],
                     equip_metadata=combat['uniequip_table'], horizon=args.horizon,
+                    effect_rules=combat['effect_rules'],
                     max_candidates=args.max_candidates, branch_width=args.branch_width)
                 if args.command == 'generate':
                     evidence['entrypoint'] += ['--strategy', args.strategy]
@@ -245,7 +254,8 @@ def main(argv=None) -> int:
                     combat, combat_sources = combat_inputs(args.project_root, graph, offline=args.offline)
                     output = evaluate_plan(graph, result['copilot'], box, catalog, chars,
                         combat['skill_table'], combat['range_table'], horizon=args.horizon,
-                        equipment=combat['battle_equip_table'], equip_metadata=combat['uniequip_table'])
+                        equipment=combat['battle_equip_table'], equip_metadata=combat['uniequip_table'],
+                        effect_rules=combat['effect_rules'])
                     sources.update(combat_sources)
             else:
                 expected = compile_copilot(graph, plan, box, catalog, character_table=chars)

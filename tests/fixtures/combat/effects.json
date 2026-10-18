@@ -1,0 +1,128 @@
+{
+  "schema": 1,
+  "kind": "reviewed_field_projection_not_full_game_data",
+  "revision": "bee3f83c5d60590b5e1cd42b8d09d00ce32ab10d",
+  "sources": {
+    "buff_table.json": {
+      "url": "https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/bee3f83c5d60590b5e1cd42b8d09d00ce32ab10d/zh_CN/gamedata/buff_table.json",
+      "sha256": "836e1fa34398d7abcbbff7d044d7fc0e425bf628a71017c6dd05a96c4fbb79ec"
+    },
+    "battle_ep_breakbuff_table.json": {
+      "url": "https://raw.githubusercontent.com/Kengxxiao/ArknightsGameData/bee3f83c5d60590b5e1cd42b8d09d00ce32ab10d/zh_CN/gamedata/battle/ep_breakbuff_table.json",
+      "sha256": "5d2df31b72546fe0b320173311b44231473080a788a0ac9575eeec58f1c7e8a4"
+    }
+  },
+  "buff_table": {
+    "ep_break_water_enemy": {
+      "templateKey": "ep_break_water_enemy",
+      "isDurableBuff": true,
+      "attributes": {
+        "abnormalFlags": null,
+        "abnormalImmunes": null,
+        "abnormalAntis": null,
+        "abnormalCombos": null,
+        "abnormalComboImmunes": null,
+        "attributeModifiers": [
+          {
+            "attributeType": "DEF",
+            "formulaItem": "ADDITION",
+            "value": -120.0,
+            "loadFromBlackboard": false,
+            "fetchBaseValueFromSourceEntity": false
+          }
+        ]
+      },
+      "blackboard": [
+        {
+          "key": "ep_water_damage",
+          "value": 5000.0,
+          "valueStr": null
+        },
+        {
+          "key": "max_stack_cnt",
+          "value": -1.0,
+          "valueStr": null
+        }
+      ]
+    },
+    "c2e_cold[debuff]": {
+      "templateKey": "empty",
+      "isDurableBuff": false,
+      "attributes": {
+        "abnormalFlags": null,
+        "abnormalImmunes": null,
+        "abnormalAntis": null,
+        "abnormalCombos": null,
+        "abnormalComboImmunes": null,
+        "attributeModifiers": [
+          {
+            "attributeType": "ATTACK_SPEED",
+            "formulaItem": "ADDITION",
+            "value": -30.0,
+            "loadFromBlackboard": false,
+            "fetchBaseValueFromSourceEntity": false
+          }
+        ]
+      },
+      "blackboard": null
+    },
+    "c2e_freeze": {
+      "templateKey": "empty",
+      "isDurableBuff": false,
+      "attributes": {
+        "abnormalFlags": null,
+        "abnormalImmunes": null,
+        "abnormalAntis": null,
+        "abnormalCombos": null,
+        "abnormalComboImmunes": null,
+        "attributeModifiers": [
+          {
+            "attributeType": "DEF",
+            "formulaItem": "FINAL_ADDITION",
+            "value": 0.0,
+            "loadFromBlackboard": false,
+            "fetchBaseValueFromSourceEntity": false
+          },
+          {
+            "attributeType": "MAGIC_RESISTANCE",
+            "formulaItem": "ADDITION",
+            "value": -15.0,
+            "loadFromBlackboard": false,
+            "fetchBaseValueFromSourceEntity": false
+          }
+        ]
+      },
+      "blackboard": null
+    },
+    "sluggish": {
+      "templateKey": "empty",
+      "isDurableBuff": false,
+      "attributes": {
+        "abnormalFlags": null,
+        "abnormalImmunes": null,
+        "abnormalAntis": null,
+        "abnormalCombos": null,
+        "abnormalComboImmunes": null,
+        "attributeModifiers": [
+          {
+            "attributeType": "MOVE_SPEED",
+            "formulaItem": "FINAL_SCALER",
+            "value": -0.8,
+            "loadFromBlackboard": false,
+            "fetchBaseValueFromSourceEntity": false
+          }
+        ]
+      },
+      "blackboard": null
+    }
+  },
+  "ep_breakbuff_table": {
+    "WATER": {
+      "elementBreakDuration": 10.0,
+      "enemyElementBreakDuration": 8.0,
+      "elementBuffs": [
+        "ep_break_water"
+      ]
+    }
+  }
+}

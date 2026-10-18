@@ -27,7 +27,7 @@ def skill_table():
              'duration': 0., 'spData': {'spType': 'INCREASE_WITH_TIME', 'initSp': 30, 'spCost': 42,
                                         'maxChargeTime': 1},
              'blackboard': [{'key': k, 'value': v} for k, v in {
-                 'attack@atk_scale': 2.35, 'attack@max_target': 3., 'trigger_time': 10.}.items()]}
+                 'attack@atk_scale': 2.35, 'attack@max_target': 3., 'attack@ep_damage_ratio': .2, 's3_atk_scale': 3., 'ep_damage_scale': 2.5, 'projectile_life_time': 3.5, 'trigger_time': 10.}.items()]}
     return {'skchr_clemnt_3': {'levels': [level] * 10}}
 
 
@@ -66,7 +66,7 @@ class SolverModelCatalogTests(unittest.TestCase):
         self.assertEqual(skill['mode'], 'ammo')
         self.assertIsNotNone(skill['note'])
         self.assertIn('弹药 10', skill['summary'])
-        self.assertEqual(skill['unknown'], ['clemnt:erosion_burst_ammo_and_elemental_damage_not_simulated'])
+        self.assertEqual(skill['unknown'], ['clemnt:global_erosion_sources_bombardment_overlap_and_secondary_targets_not_simulated'])
 
     def test_missing_box_is_explicit_instead_of_zero(self):
         result = build_catalog(self.root(with_box=False))

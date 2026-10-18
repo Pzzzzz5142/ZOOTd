@@ -43,7 +43,7 @@ SHA-256。`analyze` 可离线读取已保存图，不启动 MAA、Waydroid 或�
 
 `--candidates` 按几何覆盖给部署位置排名；`--placement` 可选 `MELEE`、
 `RANGED` 或 `ALL`。默认攻击范围只是本格与前方一格，不能代替具体干员或
-技能范围。`fetch` 同时缓存该 revision 的公开干员和模组静态表；后续编译
+技能范围。`fetch` 同时缓存该 revision 的公开干员和模组静态表；加 `--combat` 另缓存技能、范围和战斗效果，供离线评估及生成使用。后续编译
 或校验可加 `--offline` 要求已有完整缓存。
 
 schema 1 的关键内容：

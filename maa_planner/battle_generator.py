@@ -16,7 +16,7 @@ from .util import canonical_json, sha256_bytes
 from .battle_search import SearchProblem, assess_formation, blocker_healing_need
 from .battle_strategies import SearchBudget, get_strategy, run_search
 
-GENERATOR_VERSION = 3
+GENERATOR_VERSION = 4
 
 
 def active_spawns(graph):
@@ -70,7 +70,7 @@ def terminal_paths(graph, spawns):
     return result
 
 
-def _profiles(graph, box, catalog, chars, skills, ranges, equipment, metadata, horizon):
+def _profiles(graph, box, catalog, chars, skills, ranges, equipment, metadata, horizon, effect_rules=None):
     """Reuse the combat evaluator's training, module, talent and packet rules."""
     _, _, tiles = _map(graph)
     devices = _device_tiles(graph, tiles)
@@ -122,7 +122,7 @@ def _profiles(graph, box, catalog, chars, skills, ranges, equipment, metadata, h
                         location=list(position), direction='Right')]}
             try:
                 row = evaluate_plan(graph, content, box, catalog, chars, skills, ranges,
-                    horizon=horizon, equipment=equipment, equip_metadata=metadata)['operators'][0]
+                    horizon=horizon, equipment=equipment, equip_metadata=metadata, effect_rules=effect_rules)['operators'][0]
             except BattleSolverError as exc:
                 excluded.append({'name': char['name'], 'skill': slot, 'reason': str(exc)})
                 continue
@@ -134,7 +134,7 @@ def _profiles(graph, box, catalog, chars, skills, ranges, equipment, metadata, h
 
 
 def prepare_problem(graph, box, catalog, chars, skills, ranges, *, research,
-                    equipment=None, equip_metadata=None, horizon=120):
+                    equipment=None, equip_metadata=None, horizon=120, effect_rules=None):
     _require(graph['stage']['difficulty'] == 'NORMAL', 'Generator currently supports normal stages only')
     _require(isinstance(research, dict) and research.get('schema') == 1
              and research.get('graph_sha256') == sha256_bytes(canonical_json(graph)),
@@ -164,7 +164,7 @@ def prepare_problem(graph, box, catalog, chars, skills, ranges, *, research,
     unsupported = sorted({s['enemy_id'] for s in spawns if mechanics[s['enemy_id']]['kind'] == 'unsupported'})
     _require(not unsupported, 'Generator needs enemy adapters: ' + ', '.join(unsupported))
     profiles, excluded = _profiles(graph, box, catalog, chars, skills, ranges,
-                                   equipment, equip_metadata, horizon)
+                                   equipment, equip_metadata, horizon, effect_rules)
     _, _, tiles = _map(graph)
     devices = _device_tiles(graph, tiles)
     problem = SearchProblem(profiles, tiles, devices, paths, spawns, mechanics, capacity, horizon)
@@ -172,7 +172,7 @@ def prepare_problem(graph, box, catalog, chars, skills, ranges, *, research,
 
 
 def materialize_plan(problem, result, graph, box, catalog, chars, skills, ranges, *, research,
-                     excluded, equipment=None, equip_metadata=None):
+                     excluded, equipment=None, equip_metadata=None, effect_rules=None):
     """All strategies pass the same constraints, compiler and combat evaluator."""
     metrics, healing_requirements = assess_formation(problem, result.formation)
     selected = [{'profile': problem.profiles[p.profile_index], 'point': p.point,
@@ -196,7 +196,7 @@ def materialize_plan(problem, result, graph, box, catalog, chars, skills, ranges
                        + [{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}]}
     compiled = compile_copilot(graph, plan, box, catalog, character_table=chars)
     combat = evaluate_plan(graph, compiled['copilot'], box, catalog, chars, skills, ranges,
-                          horizon=horizon, equipment=equipment, equip_metadata=equip_metadata)
+                          horizon=horizon, equipment=equipment, equip_metadata=equip_metadata, effect_rules=effect_rules)
     coverage = {'graph_unknowns': graph['mechanics'].get('unknown', []),
         'enemy_unknowns': {eid: m['unknown'] for eid, m in problem.mechanics.items() if m['unknown']},
         'operator_unknowns': {row['name']: row.get('unknown', []) for row in combat.get('operators', [])
@@ -225,12 +225,12 @@ def materialize_plan(problem, result, graph, box, catalog, chars, skills, ranges
 
 def generate_plan(graph, box, catalog, chars, skills, ranges, *, research,
                   equipment=None, equip_metadata=None, horizon=120, strategy='greedy',
-                  max_candidates=8, branch_width=3):
+                  max_candidates=8, branch_width=3, effect_rules=None):
     """Backward-compatible single-strategy entry point; default remains greedy."""
     budget = SearchBudget(max_candidates, branch_width)
     get_strategy(strategy)
     problem, excluded = prepare_problem(graph, box, catalog, chars, skills, ranges,
-        research=research, equipment=equipment, equip_metadata=equip_metadata, horizon=horizon)
+        research=research, equipment=equipment, equip_metadata=equip_metadata, horizon=horizon, effect_rules=effect_rules)
     result = run_search(problem, strategy, budget)
     return materialize_plan(problem, result, graph, box, catalog, chars, skills, ranges,
-        research=research, excluded=excluded, equipment=equipment, equip_metadata=equip_metadata)
+        research=research, excluded=excluded, equipment=equipment, equip_metadata=equip_metadata, effect_rules=effect_rules)

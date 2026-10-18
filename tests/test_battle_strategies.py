@@ -128,6 +128,18 @@ class StrategyTests(unittest.TestCase):
         with self.assertRaisesRegex(BattleSolverError, 'enemy adapters'):
             self.compare(workers=2)
 
+    def test_only_primary_control_can_affect_common_comparison_metrics(self):
+        for profile in self.profiles:
+            profile['row']['conditional_control_scenarios'] = [
+                {'credited_to_primary_estimate': False, 'effects': {'movement_delay_equivalent_seconds': 1000}}]
+        baseline = self.generate()['generation']['metrics']
+        self.assertEqual(baseline['total_control_contact_score'], 0)
+        self.profiles[1]['row']['matchups'][0]['rotation']['effects'] = {
+            'movement_delay_equivalent_seconds': 10}
+        for strategy in ('greedy', 'backtracking'):
+            result = self.generate(strategy=strategy)['generation']['metrics']
+            self.assertGreater(result['total_control_contact_score'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()
