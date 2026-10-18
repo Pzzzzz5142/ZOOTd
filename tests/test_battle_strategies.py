@@ -116,6 +116,35 @@ class StrategyTests(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(BattleSolverError):
                 self.compare(**options)
 
+    def test_crossing_heavy_enemy_requires_independent_fire_for_the_other_stream(self):
+        problem = self.prepare()
+        # A heavy enemy crosses the normal stream at the defender. Its source
+        # route need not share the normal stream's goal or route ID.
+        problem.paths[1] = {'cells': {(3, 0), (3, 1), (3, 2)},
+                            'terminal': [(3, 0), (3, 1)], 'goal': (3, 2)}
+        problem.spawns.append({'enemy_id': 'heavy', 'route_index': 1, 'count': 1})
+        problem.mechanics['heavy'] = {'block_cost': 2}
+        problem.profiles[-1]['normal_offsets'] = [[x, y] for x in range(-6, 7)
+                                                 for y in range(-3, 4)]
+        def formation(caster):
+            return Formation((Placement(0, (3, 1), 'Right', 'blocker'),
+                              Placement(1, caster, 'Right', 'damage'),
+                              Placement(2, (5, 2), 'Right', 'healer')))
+        # Basic geometry and healing alone used to admit this formation.
+        with self.assertRaisesRegex(BattleSolverError, 'independent normal DPS'):
+            assess_formation(problem, formation((0, 0)))
+        metrics, _ = assess_formation(problem, formation((2, 0)))
+        self.assertEqual(metrics['required_normal_fire_routes'], [0, 1])
+        # Expanded skill range cannot stand in for permanent coverage.
+        problem.profiles[1]['skill_offsets'] = [[x, y] for x in range(-6, 7)
+                                               for y in range(-3, 4)]
+        with self.assertRaisesRegex(BattleSolverError, 'independent normal DPS'):
+            assess_formation(problem, formation((0, 0)))
+        # A one-slot crossing enemy does not alone saturate this two-block unit.
+        problem.mechanics['heavy']['block_cost'] = 1
+        metrics, _ = assess_formation(problem, formation((0, 0)))
+        self.assertEqual(metrics['required_normal_fire_routes'], [])
+
     def test_comparison_deduplicates_identical_outputs_without_deleting_evidence(self):
         result = self.compare(max_candidates=1)
         rows = result['comparison']['results']

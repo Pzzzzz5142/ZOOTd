@@ -16,7 +16,7 @@ from .util import canonical_json, sha256_bytes
 from .battle_search import SearchProblem, assess_formation, blocker_healing_need
 from .battle_strategies import SearchBudget, get_strategy, run_search
 
-GENERATOR_VERSION = 4
+GENERATOR_VERSION = 5
 
 
 def active_spawns(graph):
