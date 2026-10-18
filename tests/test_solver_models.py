@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from maa_planner.solver_models import build_catalog
+from maa_planner.solver_models import PROFESSIONS, build_catalog
 
 REVISION = 'a' * 40
 
@@ -75,6 +75,12 @@ class SolverModelCatalogTests(unittest.TestCase):
         self.assertIsNone(result['operators'][0]['in_box'])
         self.assertIsNone(result['counts']['box_operators'])
         self.assertEqual(result['operators'][0]['skills'][0]['level_source'], 'model')
+
+    def test_profession_labels_are_localized(self):
+        self.assertEqual(PROFESSIONS['SPECIAL'], '特种')
+        self.assertNotIn('SPECIALIST', PROFESSIONS)
+        for value in PROFESSIONS.values():
+            self.assertFalse(any('a' <= char.lower() <= 'z' for char in value), value)
 
     def test_missing_static_data_reports_unavailable(self):
         with tempfile.TemporaryDirectory() as directory:

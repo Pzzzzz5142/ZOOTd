@@ -255,9 +255,11 @@ def skill_behavior(skill_id, level, char):
             result['unknown'].append('sbell2:attraction_and_snow_acceleration_not_simulated')
         result['unknown'].append('sbell2:area_target_count_not_simulated')
     elif skill_id == 'skchr_aglna2_1':
-        result.update(mode='permanent', passive=True, automatic=True, ground_block=False,
+        # Passive but time-limited: active from deployment for the skill duration.
+        result.update(mode='duration', passive=True, automatic=True, ground_block=False,
                       attack_up=b['atk'], targets=int(b['attack@max_target']))
         result['unknown'].append('aglna2:talent_extra_arts_damage_and_liftoff_not_simulated')
+        result['unknown'].append('aglna2:post_duration_landing_state_not_simulated')
     elif skill_id == 'skchr_aglna2_2':
         result.update(damage_type='arts', damage_type_normal='physical', ground_block=False,
                       attack_up=b['atk'], interval_add=b['base_attack_time'],
@@ -300,7 +302,7 @@ SKILL_MODEL_NOTES = {
     'skchr_sbell2_1': '瞬发范围法术伤害，可充能；寒冷、推动与积雪扩散未建模；通常不攻击。',
     'skchr_sbell2_2': '永久范围法术攻击；积雪层数、寒冷、冻结与地块伤害未建模；通常不攻击。',
     'skchr_sbell2_3': '持续范围法术攻击，攻击力与攻击速度提升、无视部分法抗；诱导与积雪加速未建模；通常不攻击。',
-    'skchr_aglna2_1': '被动：部署后起飞，攻击力提升并攻击两个目标；天赋额外法术伤害与失重未建模。',
+    'skchr_aglna2_1': '限时被动：部署后起飞并计时，攻击力提升、攻击两个目标；时限结束后的落地状态、天赋额外法术伤害与失重未建模。',
     'skchr_aglna2_2': '持续：攻击变为法术、攻击力提升、攻击间隔缩短并攻击多个目标；浮空、缚地与滑翔未建模。',
     'skchr_aglna2_3': '弹药型：物理多目标攻击；对空庇护、冲刺、飞行减速与额外飞行目标未建模。',
     'skcom_assist_cost[2]': '回费：每次攻击获得费用，阻挡降低。',
@@ -385,7 +387,13 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
         _require(sp_kind in ('INCREASE_WITH_TIME', 'INCREASE_WHEN_ATTACK',
                              'INCREASE_WHEN_TAKEN_DAMAGE'), 'Unknown SP recovery type')
     sp_rate = number(attrs.get('spRecoveryPerSec', 1), 'SP recovery')
-    now, last, active_until, next_ready = 0., 0., math.inf if passive else -1., 0.
+    if passive and behavior.get('duration', -1) > 0:
+        # A passive with a positive duration starts at deployment and expires;
+        # only duration -1/0 means it lasts for the whole scenario.
+        active_until = max(0., behavior['duration'])
+    else:
+        active_until = math.inf if passive else -1.
+    now, last, next_ready = 0., 0., 0.
     ammo, attacks, hits, total, revives, overloads = 0, 0, 0, 0., 0, 0
     stacks = mechanics.get('initial_stacks', 0) if start_stacks is None else start_stacks
     stack_hits, stunned_until, debuffed_until = 0, -1., -1.
