@@ -3,7 +3,7 @@ import copy
 import unittest
 from unittest.mock import patch
 
-from maa_planner.battle_generator import active_spawns, generate_plan, terminal_paths
+from maa_planner.battle_generator import active_spawns, blocker_healing_need, generate_plan, terminal_paths
 from maa_planner.battle_solver import BattleSolverError
 from maa_planner.copilot_matcher import OperatorCatalog, OperatorIdentity
 from maa_planner.operator_box import Operator, OperatorBox, SkillProgress
@@ -113,6 +113,19 @@ class GeneratorTests(unittest.TestCase):
         path = terminal_paths(self.graph, self.graph['spawns'])[0]
         self.assertNotIn((2, 1), path['cells'])
         self.assertEqual(path['terminal'], [(3, 1), (4, 1)])
+
+    def test_regeneration_shortfall_requires_healing_only_on_intercepted_enemy_routes(self):
+        guard = self.profiles[0]
+        guard['row']['self_heal_per_second_skill'] = 192
+        guard['row']['matchups'][0]['max_stacks_incoming_physical_dps'] = 430
+        paths = terminal_paths(self.graph, self.graph['spawns'])
+        need = blocker_healing_need(guard, (3, 1), paths, self.graph['spawns'])
+        self.assertTrue(need['required'])
+        self.assertEqual(need['modeled_peak_physical_dps'], 430)
+        # An enemy on a different lane must not mandate healing this blocker.
+        self.assertFalse(blocker_healing_need(guard, (3, 0), paths, self.graph['spawns'])['required'])
+        guard['row']['self_heal_per_second_skill'] = 500
+        self.assertFalse(blocker_healing_need(guard, (3, 1), paths, self.graph['spawns'])['required'])
 
 
 if __name__ == '__main__':
