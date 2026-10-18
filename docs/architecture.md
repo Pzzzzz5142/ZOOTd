@@ -118,6 +118,8 @@ Copilot 独立运行资源层在 `Copilot@EndOfAction` 识别后明确等待 250
 
 ## Copilot 关卡目录与导航
 
+目录缓存有效期为六小时。刷新先从公开游戏数据仓库的 GitHub API 解析 `master` 的当前 revision；只有该准确端点明确限流（429 或剩余额度为零的 403）时，才用 `git ls-remote` 查询同一仓库、同一分支。备用查询要求唯一且准确的分支引用及 40 位 SHA，随后仍下载该 revision 的全部四张表并正常校验；不是延长旧缓存时效。其它 403、认证错误、表下载失败、引用歧义及超时继续停止，不更换数据仓库。
+
 `navigation_catalog.py` 从同一游戏数据 revision 的 stage、zone、activity、retro 表建立按普通/突袭模式隔离的关卡目录。突袭记录必须与实际普通记录的 code、zone、levelId、diffGroup 一致，保留独立的 canonical stageId 与 Tile 核对；PRTS 查询 ID 映射到普通版本，返回身份在本轮模式目录内重新解析。运行缓存和来源哈希位于 `var/cache/copilot-navigation/`，当期活动与分区窗口每次按当前时间检查；旧活动使用常驻表的 zone，而不是已经过期的复刻 zone。安装的 MAA `stages.json` 仅兼容既有 `_perm` 账本身份，Tile overview 用于核对可执行地图。原作业与绑定精确地图后的执行副本分别保存哈希，模式授权进入整轮快照和逐尝试结果；成功终态必须匹配执行副本的地图身份。模式过滤、确认及预算边界见[运维手册](operations.md#单次-copilot-通关实验phase-3)。
 
 `copilot_navigation.py` 按入口类别生成每次运行的 OCR/滑动任务，活动名、分区名、目标编号来自数据，不维护逐关导航配置。`navigation_layouts.py` 单独描述已有证据的 UI 适配：绿野幻梦归档版实验基地的两个 DV-S 隐藏关、长夜临光归档版城市霓虹的五个 NL-S 棋子入口。适配绑定活动、分区、关卡和难度身份；不根据 `-S-` 或 `apCost=0` 推断版式，不决定关卡是否存在。任务图、地图回退与特殊页证据共用选择函数，只有适配匹配且本次完整 Custom 证明成立，才调整隔离 Core 的特殊标题和按钮 ROI。未知版式继续通用导航，并须证明准确详情才能执行。地图选关先使用 MAA 的 `ClickStageName`；失败后由 `navigation_vision.py` 依次读取上游 `StageNavigation/SideStory/<前缀>/<编号>.png` 模板、执行上游 `MultiCopilotTaskPlugin::find_stage` 的白字 HSV 预处理，再对反色图执行相同处理以覆盖浅色卡片上的深色编号。不新增逐关模板，不修改 live runtime；使用当前 runtime 的 PaddleCharOCR 模型和 ClickStageName 替换规则，当前发布版 MaaCore v6.18.0 没有独立的地图 OCR API，因此 RapidOCR 仅提供推理调用。资源关列表保留横向位置时，使用原生滑动任务双向搜索数据中的分区名，入口最多滑动 9 次。
