@@ -261,6 +261,29 @@ journalctl --user -u zootd-dashboard.service -n 50
 
 面板默认监听 `0.0.0.0:8765`，允许通过服务器任意 IPv4 地址或主机名访问，无需登录，适用于可信内网；无需新增 Python 或 Node 依赖。如需仅本机访问，将 `--host` 改为 `127.0.0.1`。面板不启动游戏、不修改 runtime 或审计记录，也不提供执行任务的接口。
 
+## Bark 结果推送
+
+早晚托管与森空岛签到可在结束后向手机推送一次结果，成功和异常都会通知；默认关闭。参考 Apple pickup watcher 的 JSON POST 方式，接口格式见 [Bark 官方说明](https://github.com/Finb/Bark/blob/master/docs/tutorial.md)。在已忽略的本机配置 `config/host.local.env` 中设置：
+
+```bash
+ZOOTD_BARK_URL='https://api.day.app/你的设备Key'
+ZOOTD_BARK_SOURCE='本机名称'
+```
+
+`ZOOTD_BARK_SOURCE` 可省略，默认使用主机名。已有本机配置请保留其他字段；设备地址只放在本机，文件权限设为 `0600`，不要提交到 Git。加载新 unit 并发送测试通知：
+
+```bash
+chmod 600 config/host.local.env
+./scripts/install-systemd.sh
+./bin/zootd bark-notify test
+```
+
+测试命令只发推送，不启动游戏或签到。Bark 分组固定为 `ZOOTd`，正文标注来源主机、北京时间；签到通知逐游戏显示成功、今日已签、奖励或固定错误提示，不包含账号 ID、凭据或原始日志。手动 `run` 和 `skland-sign` 不自动推送；直接启动对应的 systemd service 会推送。
+
+三个 service 使用 `ExecStopPost`，因此正常退出、超时、被中止及启动失败都会尝试发送。成功同时要求 systemd 正常结束，以及与本次 `INVOCATION_ID` 匹配的完整运行验收或签到记录；恢复重跑可使用同一次 service 中最新的完整成功记录。旧记录缺少此可选身份字段时仍可在面板读取，但不能证明本次推送成功。通知不会向前寻找旧成功记录，不改写审计或签到状态。无证据时提示结果未确认，早晨任务失败时不会额外执行签到。
+
+每次请求超时为 5 秒，整个通知 hook 最多运行 8 秒并预留 1 秒强制退出；响应需同时满足 HTTP 200 和 JSON 整数 `code: 200`。拒绝重定向，响应最多读取 8 KiB，正文按 UTF-8 限长；推送失败仅记录错误类型，不打印设备地址或响应正文，不重试、不影响原任务结果。整台主机断电或断网时，该机无法自行推送。后续关闭只需删除 `ZOOTD_BARK_URL` 或设为空。
+
 ## 森空岛自动签到
 
 每天 06:00（Asia/Shanghai）启动的 `zootd.service` 完成整轮日常、普通奖励领取、资源清理及成功验收后，通过 `ExecStartPost` 异步启动 `zootd-skland-sign.service`，为明日方舟和明日方舟：终末地的国服官服角色领取森空岛每日游戏签到奖励。签到没有独立定时器；18:00 的晚间任务不触发，早晨任务失败或被中止也不触发。签到服务有独立的三分钟超时，失败不会改写游戏任务的验收结果。这里领取的是两款游戏的每日签到奖励，不包含社区积分的登岛检票。
