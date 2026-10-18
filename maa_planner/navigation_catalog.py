@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -12,6 +14,20 @@ from .util import atomic_write_json, canonical_json, sha256_bytes
 TABLES = ('stage_table', 'zone_table', 'activity_table', 'retro_table')
 REPOSITORY = 'Kengxxiao/ArknightsGameData'
 MAX_AGE = 6 * 3600
+REVISION_URL = f'https://api.github.com/repos/{REPOSITORY}/commits/master'
+
+
+def _git_revision():
+    """Resolve the same public branch without the GitHub REST rate bucket."""
+    try:
+        result = subprocess.run(['git', 'ls-remote', f'https://github.com/{REPOSITORY}.git',
+                                 'refs/heads/master'], check=True, capture_output=True,
+                                text=True, timeout=40)
+    except (OSError, subprocess.SubprocessError):
+        raise PrtsError('navigation_data', 'Cannot resolve current game data revision via Git.') from None
+    match = re.fullmatch(r'([0-9a-f]{40})\trefs/heads/master\n?', result.stdout)
+    require(match is not None, 'Invalid public game branch identity.')
+    return {'sha': match.group(1)}
 
 
 def compact_code(value: str) -> str:
@@ -23,6 +39,14 @@ def _request(url):
     try:
         with urllib.request.build_opener(_NoRedirect()).open(request, timeout=40) as response:
             raw = response.read(64 * 1024 * 1024 + 1)
+    except urllib.error.HTTPError as exc:
+        # Only the exact public revision endpoint may change transport. A table
+        # failure, generic 403, or authorization failure must not gain fallback.
+        limited = exc.code == 429 or exc.code == 403 and exc.headers.get('X-RateLimit-Remaining') == '0'
+        exc.close()
+        if url == REVISION_URL and limited:
+            return _git_revision()
+        raise PrtsError('navigation_data', 'Cannot refresh game navigation data.') from None
     except OSError:
         raise PrtsError('navigation_data', 'Cannot refresh game navigation data.') from None
     require(len(raw) <= 64 * 1024 * 1024, 'Game table too large.')
@@ -40,7 +64,7 @@ def load_tables(root: Path, *, refresh=False, now=None):
                 return saved['tables'], {k: saved[k] for k in ('revision', 'fetched_at', 'sha256')}
         except (KeyError, TypeError, OSError, PrtsError):
             pass
-    revision = _request(f'https://api.github.com/repos/{REPOSITORY}/commits/master').get('sha')
+    revision = _request(REVISION_URL).get('sha')
     require(isinstance(revision, str) and re.fullmatch('[0-9a-f]{40}', revision),
             'Invalid game data revision.')
     tables = {name: _request(f'https://raw.githubusercontent.com/{REPOSITORY}/{revision}/'
