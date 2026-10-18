@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import argparse
+import contextlib
+import io
 import os
 import subprocess
 import sys
 import tempfile
+import tarfile
 import types
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -20,6 +24,8 @@ from maa_planner.codex_recovery import (
 from maa_planner.codex_sdk import CodexSDKRequest, run_sdk_request
 from maa_planner.config import load_config
 from maa_planner.recovery import recover_failed_run, validate_recovery_report
+from maa_planner.cli import command_supervisor_start
+from maa_planner.worktree_preservation import worktree_snapshot
 from maa_planner.supervisor import (
     PHASES,
     describe_evidence_files,
@@ -222,7 +228,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 13,
+                    "version": 14,
                 },
             }
             seen: dict[str, object] = {}
@@ -332,6 +338,156 @@ class RecoveryTests(unittest.TestCase):
                     environ={"HOME": directory},
                     sdk_runner=sdk_runner,
                 )
+
+    def _dirty_startup(self, repo: Path) -> str:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with patch("maa_planner.cli._config", return_value=load_config(ROOT / "config/farming.toml")):
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                result = command_supervisor_start(argparse.Namespace(
+                    project_root=str(repo), config=None, mode="full",
+                ))
+        self.assertEqual(result, 1)
+        self.assertIn("gameplay refused", stderr.getvalue())
+        run_id = stdout.getvalue().strip()
+        events = load_run_events(repo, run_id)
+        self.assertTrue(events[0]["payload"]["repository"]["dirty"])
+        self.assertEqual(events[1]["payload"]["outcome"], "working-tree-dirty")
+        outcome = finish_run(
+            repo, run_id, process_status=1, supervisor_enabled=True,
+            supervisor_required=True, command=(), timeout_seconds=1, diagnose=False,
+        )
+        self.assertEqual(outcome.status, "failed")
+        return run_id
+
+    def _startup_report(self, evidence, *, successful_run_id=None):
+        recovered = successful_run_id is not None
+        return {
+            "schema_version": 2, "failed_run_id": evidence["failed_run_id"],
+            "status": "recovered" if recovered else "scope-blocked",
+            "classification": "configuration" if recovered else "scope",
+            "summary": "Preserved edits and retried." if recovered else "Development is active.",
+            "actions_taken": ["Inspected worktree and retained its backup."],
+            "verification": {
+                "command": evidence["retry_command"],
+                "exit_status": 0 if recovered else None,
+                "successful_run_id": successful_run_id,
+                "audit_path": (
+                    f"var/state/supervisor/runs/{successful_run_id}/events/"
+                    "0010-run-finished.json" if recovered else None
+                ),
+            },
+            "code_repair": self._no_code_repair(evidence["controller_repository"]["head"]),
+            "scope_blocker": "none" if recovered else "hard-policy",
+        }
+
+    def test_dirty_startup_agent_preserves_files_and_retries_with_same_slot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            original = b"#!/bin/bash\nexit 0\n\x00private binary\n"
+            (repo / "install-arch.sh").write_bytes(original)
+            failed = self._dirty_startup(repo)
+            seen = {}
+
+            def runner(argv, **kwargs):
+                evidence = json.loads(kwargs["input"])
+                seen.update(evidence)
+                self.assertEqual(evidence["retry_argv"], ["./bin/zootd", "run", "--evening-slot"])
+                self.assertEqual(evidence["scope"]["version"], 14)
+                backup = evidence["controller_repository"]["worktree_backup"]
+                archive = repo / backup["files"]["untracked.tar"]["path"]
+                with tarfile.open(archive) as stream:
+                    self.assertEqual(stream.extractfile("install-arch.sh").read(), original)
+                target = repo / "var/preserved-install-arch.sh"
+                (repo / "install-arch.sh").rename(target)
+                success = self._successful_full_run(
+                    repo, now=datetime.now(UTC) + timedelta(seconds=1),
+                    recovery_evidence=evidence,
+                )
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(self._startup_report(
+                        evidence, successful_run_id=success,
+                    )).encode(), b"",
+                )
+
+            outcome = recover_failed_run(
+                repo, failed, slot="evening", command=("fake-recovery",),
+                timeout_seconds=60, runner=runner,
+            )
+            self.assertEqual(outcome.status, "recovered", outcome.summary)
+            self.assertEqual((repo / "var/preserved-install-arch.sh").read_bytes(), original)
+            events = load_run_events(repo, failed)
+            self.assertEqual(events[-3]["payload"]["status"], "failed")
+            self.assertEqual(events[-2]["payload"]["scope"]["version"], 14)
+            self.assertTrue(events[-2]["payload"]["controller_repository"]["worktree_backup"])
+            self.assertEqual(seen["recovery_attempt"]["slot"], "evening")
+
+    def test_dirty_startup_blocker_preserves_staged_unstaged_and_symlink_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            (repo / "install-arch.sh").write_bytes(b"untracked")
+            tracked = repo / "config/tasks/proxy-preflight.toml"
+            tracked.write_bytes(b"staged\x00version")
+            subprocess.run(("git", "add", str(tracked)), cwd=repo, check=True)
+            tracked.write_bytes(b"unstaged\x00version")
+            (repo / "untracked-link").symlink_to("/private/nonexistent")
+            failed = self._dirty_startup(repo)
+            before = worktree_snapshot(repo)
+
+            def runner(argv, **kwargs):
+                evidence = json.loads(kwargs["input"])
+                files = evidence["controller_repository"]["worktree_backup"]["files"]
+                self.assertEqual((repo / files["index.patch"]["path"]).read_bytes(), before["index.patch"])
+                self.assertEqual((repo / files["worktree.patch"]["path"]).read_bytes(), before["worktree.patch"])
+                with tarfile.open(repo / files["untracked.tar"]["path"]) as stream:
+                    self.assertTrue(stream.getmember("untracked-link").issym())
+                    self.assertEqual(stream.getmember("untracked-link").linkname, "/private/nonexistent")
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(self._startup_report(evidence)).encode(), b"",
+                )
+
+            outcome = recover_failed_run(
+                repo, failed, slot="manual", command=("fake-recovery",),
+                timeout_seconds=60, runner=runner,
+            )
+            self.assertEqual(outcome.status, "scope-blocked", outcome.summary)
+            self.assertEqual(before, worktree_snapshot(repo))
+            self.assertEqual(load_run_events(repo, failed)[-1]["payload"][
+                "controller_verification"]["code_repair"]["status"], "unchanged-dirty-startup")
+
+    def test_dirty_startup_modified_backup_rejects_agent_terminal_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            (repo / "install-arch.sh").write_text("original")
+            failed = self._dirty_startup(repo)
+
+            def runner(argv, **kwargs):
+                evidence = json.loads(kwargs["input"])
+                files = evidence["controller_repository"]["worktree_backup"]["files"]
+                (repo / files["untracked.tar"]["path"]).write_bytes(b"tampered")
+                return subprocess.CompletedProcess(
+                    argv, 0, json.dumps(self._startup_report(evidence)).encode(), b"",
+                )
+
+            outcome = recover_failed_run(
+                repo, failed, slot="manual", command=("fake-recovery",),
+                timeout_seconds=60, runner=runner,
+            )
+            self.assertEqual(outcome.status, "failed")
+            self.assertIn("backup was modified", outcome.summary)
+
+    def test_dirty_audit_cannot_succeed_even_with_all_successful_phases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = self._repo(directory)
+            (repo / "untracked").write_text("preserve")
+            run_id = start_run(repo, "full", audit_dirty=True)
+            for phase in PHASES:
+                record_phase(repo, run_id, phase=phase, result="succeeded", outcome="synthetic")
+            result = finish_run(
+                repo, run_id, process_status=0, supervisor_enabled=True,
+                supervisor_required=True, command=(), timeout_seconds=1, diagnose=False,
+            )
+            self.assertEqual(result.status, "failed")
 
     def test_recovery_is_green_only_after_new_complete_full_audit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

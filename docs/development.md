@@ -120,6 +120,6 @@ MAA 自定义 MatchTemplate 任务使用 `baseTask` 时应显式指定继承任�
 
 若发现遗留的未提交改动或本地 `main` 上未推送的提交，先用备份分支、stash 或补丁妥善保存，再整理到对应开发分支；不得删除或混入无关工作。不要把仅存在于本地 `main` 的提交带入新 PR 分支后又留在本地 `main`，以免后续远端合并导致主分支分叉。遇到凭据、网络或 PR 检查阻塞时，保留已验证的本地提交和干净工作区，明确报告尚未完成的 push、PR 或合并步骤，不声称流程已完成。
 
-managed run 启动前要求 Git 工作树为 clean；未提交的代码修改会直接阻止无人值守任务，避免执行一个无法从历史恢复的版本。**无人值守恢复不适用自动合并步骤**：恢复 agent 的 tracked 修改必须位于 base 后代的独立分支并先提交，只能发 PR，不能合并；controller 会校验分支 ref、commit ancestry、changed paths、active checkout 和 GitHub PR URL。恢复后的 checkout 状态遵循[恢复 scope](llm-recovery-scope.md)，未声明或 dirty 的变化不能记为恢复成功。
+managed run 启动前要求 Git 工作树为 clean；未提交的代码修改会阻止游戏阶段，并留下失败审计进入恢复 agent，避免执行一个无法从历史恢复的版本。**无人值守恢复不适用自动合并步骤**：恢复 agent 的 tracked 修改必须位于 base 后代的独立分支并先提交，只能发 PR，不能合并；controller 会校验分支 ref、commit ancestry、changed paths、active checkout 和 GitHub PR URL。恢复后的 checkout 状态遵循[恢复 scope](llm-recovery-scope.md)，未声明或 dirty 的变化不能记为恢复成功。
 
 代码历史与运行历史分开保存：Git 记录可执行代码和文档；`var/state/supervisor/runs/` 记录本地游戏运行证据，不提交可能含账号状态的日志。每个 run 起始事件固定当时的 Git HEAD、dirty 标志、status 哈希和 tracked diff 哈希；每个后续事件包含前一事件 SHA-256 且以 exclusive-create 写入，既不能覆盖旧阶段，也不能给同一阶段补写第二个“更好看”的终态。`latest-run.json` 只是可变索引，不是历史真相。

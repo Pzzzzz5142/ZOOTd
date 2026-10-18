@@ -22,6 +22,9 @@ from .supervisor import (
     runtime_snapshot,
 )
 from .util import canonical_json, load_json, parse_iso_datetime, sha256_bytes
+from .worktree_preservation import (
+    PreservationError, preserve_worktree, verify_preservation, worktree_matches_backup,
+)
 
 
 class RecoveryError(RuntimeError):
@@ -700,11 +703,19 @@ def _incident_evidence(
                 seen_paths.add(descriptor["path"])
     retry = _retry_argv(slot)
     recovery_head, recovery_dirty = _git_identity(root)
-    if recovery_dirty:
+    startup_dirty = start.get("repository", {}).get("dirty") is True
+    if recovery_dirty and not startup_dirty:
         raise RecoveryError(
             "operational recovery requires a clean controller working tree"
         )
     controller_repository = _git_repository_context(root, recovery_head)
+    if recovery_dirty:
+        if recovery_head != start.get("repository", {}).get("head"):
+            raise RecoveryError("dirty startup recovery must preserve the failed HEAD")
+        controller_repository["dirty"] = True
+        controller_repository["worktree_backup"] = preserve_worktree(
+            root, failed_run_id, attempt_id,
+        )
     failed_started = _recorded_at(events[0])
     recent_success = _recent_successful_full_run(
         root, failed_run_id, failed_started=failed_started
@@ -765,7 +776,7 @@ def _incident_evidence(
         "scope": {
             "path": "docs/llm-recovery-scope.md",
             "sha256": sha256_bytes(scope_bytes),
-            "version": 13,
+            "version": 14,
         },
         "controller_repository": controller_repository,
         "repair_policy": {
@@ -959,6 +970,25 @@ def _verify_code_repair(
 
     current_head, current_dirty = _git_identity(root)
     current_branch = _git_text(root, "symbolic-ref", "--quiet", "--short", "HEAD")
+    backup = repository.get("worktree_backup")
+    if backup is not None:
+        try:
+            verify_preservation(root, backup)
+        except (OSError, PreservationError) as exc:
+            raise RecoveryError(f"cannot verify pre-existing worktree backup: {exc}") from exc
+    if (
+        current_dirty and not recovered and backup is not None
+        and repair.get("status") == "not-needed"
+        and current_head == base_head and current_branch == base_branch
+    ):
+        try:
+            unchanged = worktree_matches_backup(root, backup)
+        except (OSError, PreservationError) as exc:
+            raise RecoveryError(f"cannot verify unchanged dirty worktree: {exc}") from exc
+        if not unchanged:
+            raise RecoveryError("agent changed pre-existing dirty worktree without preserving it")
+        return {"status": "unchanged-dirty-startup", "active_head": current_head,
+                "active_branch": current_branch, "worktree_backup": backup}
     if current_dirty:
         raise RecoveryError("agent left the controller repository dirty")
 
@@ -1248,7 +1278,7 @@ def recover_failed_run(
             slot=slot,
             attempt_id=attempt_id,
         )
-    except (OSError, SupervisorError, ValueError) as exc:
+    except (OSError, SupervisorError, PreservationError, ValueError) as exc:
         raise RecoveryError(f"cannot build failed-run recovery evidence: {exc}") from exc
 
     deadline = time.monotonic() + timeout_seconds

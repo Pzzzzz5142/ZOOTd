@@ -49,6 +49,8 @@
 
 daily 的 `GameOffline` 先由启动器进行快速中断和一次确定性会话重建；成功后的完整 daily 重试仍需通过原有证据验收，本地修复或重试失败才调用 LLM。触发条件、等待上限和日志见[运维手册](operations.md#手动运行与检查)。
 
+工作区不干净也会先写入失败 full run，再由 cleanup 触发同一个恢复 agent；未提交代码仍不能进入游戏任务。controller 在调用 agent 前只读备份原始 Git 状态、tracked/index 二进制补丁与未跟踪文件归档，并将路径、大小和 SHA-256 写入恢复起始事件。备份与含 base HEAD 的 manifest 存在 `var/state/preserved-worktrees/<run-id>/<attempt-id>/`，不随 7 天日志清理删除。agent 可在确认没有开发冲突后保留 stash，或把无关未跟踪文件移入忽略的保留目录，再以原 HEAD 重跑。成功后保持主工作区干净，不自动还原阻塞定时运行的文件。备份被修改、仍为 dirty 或没有新 full 成功均不能通过恢复验收；正在开发等无法安全整理的情况允许保留完全未变的原状态并明确报告 scope blocker。具体权限见[恢复契约](llm-recovery-scope.md#startup-failures-and-pre-existing-worktree-changes)。审计存储、Python/planner 或全局锁本身不可用仍可能无法启动恢复，错误由 service journal 保留。
+
 手动运行的终端挂断（SIGHUP）也会记录失败并进入整轮恢复；后续输出写入 `var/state/host/<run-id>-hangup.log`，cleanup 和恢复子进程忽略重复 HUP，不再依赖已断开的终端输入输出。只有启动器实际收到 SIGINT（如 Ctrl-C）或 SIGTERM 时才按显式停止处理，不自动重启任务，以保留 systemd 停止和槽位交接的语义。普通命令返回 129/130/143 本身不代表操作者取消，不能据此跳过恢复。嵌套恢复仍由已有恢复线程接管，不递归调用代理。
 
 服务器临时维护属于可等待的恢复条件，不能以 `stage-closed` 提前结束；维护窗口、轮询、剩余预算与终态规则见[恢复契约](llm-recovery-scope.md#server-maintenance-and-reopening)。

@@ -1665,20 +1665,8 @@ stop_user_service_if_active() {
     fi
 }
 
-require_command adb
-require_command env
 require_command flock
-require_command grep
-require_command ln
-require_command mktemp
-require_command rm
-require_command setsid
-require_command systemctl
-require_command timeout
-require_command waydroid
-[[ -x "${maa}" ]] || die "MAA wrapper is not executable: ${maa}"
 [[ -x "${planner}" ]] || die "planner wrapper is not executable: ${planner}"
-[[ -x "${scaled_ui}" ]] || die "scaled Waydroid launcher is not executable: ${scaled_ui}"
 
 if [[ "${dry_run}" != true && "${evening_slot}" == true ]]; then
     stop_user_service_if_active zootd.service
@@ -1702,10 +1690,24 @@ else
     supervisor_mode=full
 fi
 supervisor_run_id="$("${planner}" supervisor-start --mode "${supervisor_mode}" 8>&- 9>&-)" ||
-    die "could not start the append-only phase supervisor"
+    die "managed startup refused; phase audit: ${supervisor_run_id:-unavailable}"
 info "phase audit: var/state/supervisor/runs/${supervisor_run_id}"
 # All planner subprocesses share this run's failure budget.
 export MAA_PROXY_RUN_ID="${supervisor_run_id}"
+
+# Audit failures in device prerequisites too, before starting a game.
+require_command adb
+require_command env
+require_command grep
+require_command ln
+require_command mktemp
+require_command rm
+require_command setsid
+require_command systemctl
+require_command timeout
+require_command waydroid
+[[ -x "${maa}" ]] || die "MAA wrapper is not executable: ${maa}"
+[[ -x "${scaled_ui}" ]] || die "scaled Waydroid launcher is not executable: ${scaled_ui}"
 
 if [[ "${check_device}" != true ]]; then
     supervisor_begin_phase runtime-readiness
