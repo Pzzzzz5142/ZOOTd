@@ -253,7 +253,8 @@ class DamageModelTests(unittest.TestCase):
                     'blackboard': [{'key': k, 'value': v} for k, v in blackboard.items()]}
         sp = {'spType': 'INCREASE_WITH_TIME', 'initSp': 0, 'spCost': 20, 'maxChargeTime': 1}
         clemnt = skill_behavior('skchr_clemnt_3', level(
-            'MANUAL', 0., sp, **{'attack@atk_scale': 2.35, 'attack@max_target': 3., 'trigger_time': 10.}),
+            'MANUAL', 0., sp, **{'attack@atk_scale': 2.35, 'attack@max_target': 3., 'trigger_time': 10., 'attack@ep_damage_ratio': .2, 's3_atk_scale': 3.,
+            'ep_damage_scale': 2.5, 'projectile_life_time': 3.5}),
             {'profession': 'WARRIOR'})
         self.assertEqual((clemnt['mode'], clemnt['attack_scale'], clemnt['targets'], clemnt['ammo']),
                          ('ammo', 2.35, 3, 10))

@@ -15,7 +15,7 @@
 | [Copilot 实验路线图与进度](copilot/README.md) | 显式实验命令的分阶段任务、依赖和验收进度 |
 | [活动关求解与本地 Copilot 作业](copilot/event-solver.md) | 出怪数据图、程序化求解能力边界、PRTS 现成作业适配与本地作业验收 |
 | [可替换求解策略与机制模型](copilot/solver-architecture.md) | 共享问题、贪心/回溯策略、进程并行比较及敌人机制模型后续设计 |
-| [战斗评估与演习门槛](copilot/combat-model.md) | 逐段伤害、技能和敌人状态、地图约束及三次演习后真实作战 |
+| [战斗评估与演习门槛](copilot/combat-model.md) | 逐段伤害、侵蚀与控制状态、地图约束及三次演习后真实作战 |
 | [Copilot 剧情协议样本](../tests/fixtures/copilot/README.md) | 原生 helper 生命周期脱敏回放、变化依据与合成验证限制 |
 | [AGENTS.md](../AGENTS.md) | 代理工作约定与文档维护规则 |
 

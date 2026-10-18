@@ -58,7 +58,8 @@ flowchart TD
 [Python ProcessPoolExecutor 文档](https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor)。
 并行仅涉及离线搜索，设备执行仍遵守原有锁与预算。
 
-共同评分 `objective_version=1` 依次比较：最弱路线的接触伤害启发分、所有路线之和、较低总部署费用。
+共同评分 `objective_version=2` 依次比较：最弱路线接触伤害启发分、所有路线之和、主情景控制接触分、较低总部署费用。
+控制分由主情景移动延缓等效时长除以情景时长，再按出怪和覆盖加权；条件控制情景不计入。
 各路线按出怪数量加权，综合有限生命击杀与持续接触回转估计，再乘常态及技能覆盖；
 技能覆盖系数沿用现有构造的 0.35。并列时使用稳定策略 ID 排序。
 它不模拟队伍共享目标、实际接触时间或存活，不是伤害单位、通关概率或风险证明。
@@ -75,12 +76,13 @@ CLI 共同证据绑定原始输入字节、静态来源、Git HEAD/dirty 及完�
 候选仍为 `proof_status=unproven`，比较命令不会自动执行排名第一的作业。
 
 兼容性：旧 `generate` 默认、计划/Copilot schema 与目录布局保持；generation 的
-`generator_version` 升为 3，增加策略、预算、共同指标和覆盖信息。不重写旧产物。
+`generator_version` 为 4，增加策略、预算、共同指标和覆盖信息；战斗模型版本 6 增加侵蚀与控制状态。不重写旧产物。
 新增策略必须进入经审查的内置表；未知 ID 与重复策略拒绝。
 
 ## 后续设计：敌人机制进入共同世界模型
 
-以下尚未实现。当前 `enemy_behavior` 已覆盖少量叠层、减伤、复活与双形态，
+完整世界模型尚未实现。共同 `TargetEffects` 已接入侵蚀、控制及延迟伤害，见[战斗评估](combat-model.md)。
+当前 `enemy_behavior` 覆盖少量叠层、减伤、复活与双形态，
 `duel` 仍主要模拟持续接触的单目标情景。继续增加 ID 分支无法表达
 敌人吸收场景对象、场景对象改变干员技力、力场改变后续敌人的完整因果链。
 

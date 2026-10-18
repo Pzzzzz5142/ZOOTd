@@ -13,8 +13,9 @@ import math
 
 from .battle_solver import BattleSolverError, _require, _map, _shortest, _rotate
 from .util import canonical_json, sha256_bytes
+from .combat_effects import TargetEffects
 
-MODEL_VERSION = 5
+MODEL_VERSION = 6
 
 
 def number(value, label, minimum=0):
@@ -34,7 +35,7 @@ def blackboard(rows):
     return result
 
 
-def damage_packet(attack, damage_type, *, defense=0, resistance=0,
+def damage_packet(attack, damage_type, *, defense=0, resistance=0, elemental_resistance=0,
                   flat_penetration=0, percent_penetration=0, reduction=0, damage_scale=1):
     """One damage instance: penetration before mitigation; minimum before reduction."""
     a = number(attack, 'attack')
@@ -49,6 +50,8 @@ def damage_packet(attack, damage_type, *, defense=0, resistance=0,
     elif damage_type == 'arts':
         effective = max(0, r - flat) * (1 - percent)
         base = max(.05 * a, a * max(0, 1 - effective / 100))
+    elif damage_type == 'elemental':
+        base = max(.05 * a, a * max(0, 1 - number(elemental_resistance, 'elemental resistance') / 100))
     elif damage_type in ('true', 'healing'):
         base = a
     else:
@@ -216,16 +219,23 @@ def skill_behavior(skill_id, level, char):
         result.update(mode='conditional_heal', damage_type='healing', attack_scale=b['heal_scale'])
         result['unknown'].append('shu:heal_threshold_sowing_and_team_buffs_not_simulated')
     elif skill_id == 'skchr_clemnt_1':
-        result.update(mode='next_attack', attack_scale=b['atk_scale'])
-        result['unknown'].append('clemnt:erosion_damage_not_simulated')
+        result.update(mode='next_attack', attack_scale=b['atk_scale'], erosion_ratio=b['ep_damage_ratio'])
     elif skill_id == 'skchr_clemnt_2':
         result.update(attack_scale=b['attack@aoe_atk_scale'], speed_add=b['attack_speed'],
-                      targets=int(b['attack@max_target']))
+                      targets=int(b['attack@max_target']), control_events=[
+                          {'trigger': 'field', 'kind': 'slow', 'duration': 'contact',
+                           'ratio': 1 + b['attack@move_speed'], 'condition': 'target_in_vortex'}],
+                      vortex={'erosion_per_second': b['attack@water_element'],
+                              'physical_scale_per_second': b['attack@physical_atk_scale']})
         result['unknown'].append('clemnt:banishment_pod_vortex_erosion_and_displacement_not_simulated')
     elif skill_id == 'skchr_clemnt_3':
         result.update(mode='ammo', attack_scale=b['attack@atk_scale'],
-                      targets=int(b['attack@max_target']), ammo=int(b['trigger_time']))
-        result['unknown'].append('clemnt:erosion_burst_ammo_and_elemental_damage_not_simulated')
+                      targets=int(b['attack@max_target']), ammo=int(b['trigger_time']),
+                      erosion_ratio=b['attack@ep_damage_ratio'], ammo_trigger='erosion',
+                      erosion_rocket={'physical_scale': b['s3_atk_scale'],
+                                      'elemental_scale': b['ep_damage_scale'], 'ticks': 3,
+                                      'interval': 1., 'lifetime': b['projectile_life_time']})
+        result['unknown'].append('clemnt:global_erosion_sources_bombardment_overlap_and_secondary_targets_not_simulated')
     elif skill_id in ('skchr_haruka_1', 'skchr_haruka_2', 'skchr_haruka_3'):
         # Trait: normal attacks are arts; an active skill heals for 75% attack.
         result.update(damage_type='healing', damage_type_normal='arts', attack_scale=.75)
@@ -237,14 +247,17 @@ def skill_behavior(skill_id, level, char):
             result['unknown'].append(
                 'haruka:heal_conversion_damage_and_second_use_atk_bonus_not_simulated')
         else:
-            result.update(attack_up=b['atk'], interval_add=b['base_attack_time'])
-            result['unknown'].append('haruka:levitate_damage_and_shield_resistance_not_simulated')
+            result.update(attack_up=b['atk'], interval_add=b['base_attack_time'], control_events=[
+                {'trigger': 'reactive', 'kind': 'levitate', 'duration': b['levitate_duration'],
+                 'condition': 'enemy_attacks_friendly_bubble'}])
+            result['unknown'].append('haruka:bubble_targeting_periodic_arts_and_shield_resistance_not_simulated')
     elif skill_id in ('skchr_sbell2_1', 'skchr_sbell2_2', 'skchr_sbell2_3'):
         # Trait: no normal attack; active skills deal area arts damage.
         result.update(normal_attack=False)
         if skill_id == 'skchr_sbell2_1':
-            result.update(mode='next_attack', attack_scale=b['atk_scale'])
-            result['unknown'].append('sbell2:cold_push_and_snow_spread_not_simulated')
+            result.update(mode='next_attack', attack_scale=b['atk_scale'],
+                          control_events=[{'trigger': 'hit', 'kind': 'cold', 'duration': b['cold']}])
+            result['unknown'].append('sbell2:push_and_snow_spread_not_simulated')
         elif skill_id == 'skchr_sbell2_2':
             result.update(mode='permanent', attack_scale=b['attack@atk_scale_s2'])
             result['unknown'].append('sbell2:snow_stacking_cold_freeze_and_tile_damage_not_simulated')
@@ -263,12 +276,16 @@ def skill_behavior(skill_id, level, char):
     elif skill_id == 'skchr_aglna2_2':
         result.update(damage_type='arts', damage_type_normal='physical', ground_block=False,
                       attack_up=b['atk'], interval_add=b['base_attack_time'],
-                      targets=int(b['attack@max_target']))
-        result['unknown'].append('aglna2:levitate_groundbind_and_slide_not_simulated')
+                      targets=int(b['attack@max_target']), control_events=[
+                          {'trigger': 'skill', 'kind': 'levitate', 'duration': b['buff_duration_levitate'],
+                           'condition': 'target_in_glide_sweep'}])
+        result['unknown'].append('aglna2:glide_sweep_geometry_groundbind_and_slide_not_simulated')
     elif skill_id == 'skchr_aglna2_3':
         result.update(mode='ammo', attack_up=b['atk'], attack_scale=b['attack@atk_scale'],
                       targets=int(b['attack@max_walk_target']), ground_block=False,
                       ammo=int(b['attack@trigger_time']))
+        result['control_events'] = [{'trigger': 'skill', 'kind': 'slow', 'duration': 'skill',
+                                    'ratio': 1 + b['move_speed'], 'condition': 'flying_target_in_range'}]
         result['unknown'].append(
             'aglna2:air_protection_dash_flying_slow_and_extra_flying_target_not_simulated')
     elif skill_id == 'skcom_assist_cost[2]':
@@ -293,17 +310,17 @@ SKILL_MODEL_NOTES = {
     'skchr_agoat2_1': '永久：攻击力提升、治疗两个目标；元素治疗与再生未建模。',
     'skchr_cgbird_3': '持续：攻击力提升、治疗三个目标；圣域抗性、闪避与幻影未建模。',
     'skchr_shu_1': '条件治疗：治疗量按技能倍率结算；阈值播种与团队增益未建模。',
-    'skchr_clemnt_1': '下次攻击：物理伤害倍率提升；额外侵蚀损伤未建模。',
+    'skchr_clemnt_1': '下次攻击：物理伤害倍率提升，按实际伤害积累侵蚀，计算爆发、冷却和永久减防；天赋随机效果未建模。',
     'skchr_clemnt_2': '持续：范围扩大、攻击速度提升，对多名地面敌人造成范围物理伤害；放逐舱、漩涡与侵蚀未建模。',
-    'skchr_clemnt_3': '弹药型：多目标物理攻击；侵蚀爆发、元素伤害与消耗弹药未建模。',
+    'skchr_clemnt_3': '物理攻击积累侵蚀；仅爆发触发轰炸时消耗弹药，分别结算三次延迟物理与元素伤害；全场其他目标与轰炸位置竞争未建模。',
     'skchr_haruka_1': '治疗：治疗量为攻击力的固定比例，攻击速度提升；浮泡庇护与目标转移未建模。',
     'skchr_haruka_2': '治疗：治疗目标数增加；治疗转伤害、浮泡目标数与二次使用加成未建模。',
-    'skchr_haruka_3': '治疗：攻击力提升、攻击间隔缩短；浮空伤害与庇护倍率未建模。',
-    'skchr_sbell2_1': '瞬发范围法术伤害，可充能；寒冷、推动与积雪扩散未建模；通常不攻击。',
+    'skchr_haruka_3': '治疗：攻击力提升、攻击间隔缩短；攻击浮泡后浮空为独立条件情景，浮空持续伤害与庇护倍率未建模。',
+    'skchr_sbell2_1': '瞬发范围法术伤害，可充能；命中后寒冷、重复寒冷触发冻结及冻结减法抗已建模；推动与积雪扩散未建模；通常不攻击。',
     'skchr_sbell2_2': '永久范围法术攻击；积雪层数、寒冷、冻结与地块伤害未建模；通常不攻击。',
     'skchr_sbell2_3': '持续范围法术攻击，攻击力与攻击速度提升、无视部分法抗；诱导与积雪加速未建模；通常不攻击。',
     'skchr_aglna2_1': '限时被动：部署后起飞并计时，攻击力提升、攻击两个目标；时限结束后的落地状态、天赋额外法术伤害与失重未建模。',
-    'skchr_aglna2_2': '持续：攻击变为法术、攻击力提升、攻击间隔缩短并攻击多个目标；浮空、缚地与滑翔未建模。',
+    'skchr_aglna2_2': '持续法术多目标攻击；掠过目标的浮空为独立条件情景，计算免疫与重量；缚地和滑翔轨迹未建模。',
     'skchr_aglna2_3': '弹药型：物理多目标攻击；对空庇护、冲刺、飞行减速与额外飞行目标未建模。',
     'skcom_assist_cost[2]': '回费：每次攻击获得费用，阻挡降低。',
 }
@@ -372,8 +389,9 @@ def enemy_behavior(enemy, graph):
     return result
 
 
-def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, start_stacks=None):
-    """Event-driven single-target continuous-contact scenario starting at deployment."""
+def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, start_stacks=None,
+         effect_rules=None, conditions=()):
+    """Continuous-contact attack and delayed-effect events; no spatial admission."""
     horizon = number(horizon, 'horizon', .001)
     _require(horizon <= 600, 'Combat horizon exceeds 600 seconds')
     e = enemy['attributes']
@@ -387,24 +405,96 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
         _require(sp_kind in ('INCREASE_WITH_TIME', 'INCREASE_WHEN_ATTACK',
                              'INCREASE_WHEN_TAKEN_DAMAGE'), 'Unknown SP recovery type')
     sp_rate = number(attrs.get('spRecoveryPerSec', 1), 'SP recovery')
-    if passive and behavior.get('duration', -1) > 0:
-        # A passive with a positive duration starts at deployment and expires;
-        # only duration -1/0 means it lasts for the whole scenario.
-        active_until = max(0., behavior['duration'])
-    else:
-        active_until = math.inf if passive else -1.
-    now, last, next_ready = 0., 0., 0.
-    ammo, attacks, hits, total, revives, overloads = 0, 0, 0, 0., 0, 0
+    active_until = (max(0., behavior['duration']) if behavior.get('duration', -1) > 0
+                    else math.inf) if passive else -1.
+    now = last = next_attack = next_ready = 0.
+    ammo, attacks, hits, total, revives, overloads, launches = 0, 0, 0, 0., 0, 0, 0
     stacks = mechanics.get('initial_stacks', 0) if start_stacks is None else start_stacks
-    stack_hits, stunned_until, debuffed_until = 0, -1., -1.
-    invulnerable_until = -1.
+    stack_hits, stunned_until, debuffed_until, invulnerable_until = 0, -1., -1., -1.
     defense, base_resistance = e['def'], e['magicResistance']
     first_activation = kill_time = None
-    activations = []
-    while now < horizon and attacks < 100000:
+    activations, pending = [], []
+    breakdown = {}
+    effects = TargetEffects(enemy, effect_rules)
+
+    def packet(attack, kind, *, penetration=False):
+        nonlocal hp, total, hits, stacks, stack_hits, stunned_until, overloads
+        nonlocal revives, next_ready, invulnerable_until, defense, base_resistance, debuffed_until
+        if now < next_ready:
+            return 'hidden', 0
+        reduction = stacks * mechanics.get('reduction_per_stack', 0) if now >= stunned_until else 0
+        resistance = max(0, base_resistance + effects.resistance_add(now)) * (
+            1 + behavior.get('resistance_debuff', 0) if now < debuffed_until else 1)
+        def_loss = effects.defense_stacks * (effect_rules['erosion_defense_loss'] if effect_rules else 0)
+        value = damage_packet(attack, kind, defense=max(0, defense - def_loss), resistance=resistance,
+            elemental_resistance=e.get('epDamageResistance', 0), reduction=reduction,
+            flat_penetration=behavior.get('flat_penetration', 0) if penetration else 0,
+            percent_penetration=behavior.get('percent_penetration', 0) if penetration else 0)
+        if now < invulnerable_until:
+            value = 0
+        actual = min(hp, value)
+        total += actual
+        breakdown[kind] = breakdown.get(kind, 0) + actual
+        hp -= value
+        hits += 1
+        if mechanics['kind'] == 'basin' and now >= stunned_until:
+            stack_hits += 1
+            if stack_hits >= mechanics['hits_per_stack']:
+                stack_hits = 0
+                stacks += 1
+                if stacks > mechanics['max_stacks']:
+                    stacks = 0
+                    stunned_until = now + mechanics['stun_duration']
+                    overloads += 1
+        if hp <= 0 and mechanics.get('revive_ratio', 0) and not revives:
+            hp = max_hp * mechanics['revive_ratio']
+            revives += 1
+            next_ready = now + mechanics['revive_delay']
+            invulnerable_until = next_ready + mechanics.get('revive_invulnerability', 0)
+            defense = max(0, defense + mechanics.get('revive_defense_add', 0))
+            base_resistance = max(0, base_resistance + mechanics.get('revive_resistance_add', 0))
+            stacks = mechanics.get('revive_stacks', stacks)
+            debuffed_until = -1.
+            effects.reborn(now)
+            return 'reborn', actual
+        return ('dead' if hp <= 0 else 'alive'), actual
+
+    def apply_controls(trigger):
+        for spec in behavior.get('control_events', []):
+            if spec['trigger'] != trigger:
+                continue
+            if effect_rules is None:
+                effects.unknown.add('control:pinned_effect_rules_missing')
+                continue
+            condition = spec.get('condition')
+            if condition == 'flying_target_in_range':
+                accepted = enemy.get('motion', enemy.get('data', {}).get('motion')) == 'FLY'
+            else:
+                accepted = condition is None or condition in conditions
+            if not accepted:
+                if condition != 'flying_target_in_range':
+                    effects.unknown.add('control:condition_not_assumed:' + str(condition))
+                continue
+            duration = min(horizon - now, active_until - now) if spec['duration'] == 'skill' else spec['duration']
+            if effects.apply(spec['kind'], now, duration, ratio=spec.get('ratio')) and spec['duration'] == 'skill':
+                effects.statuses[-1]['bound_to_skill'] = True
+
+    while attacks < 100000:
+        next_attack = max(next_attack, next_ready)
+        # Delayed damage precedes an ordinary attack at the same timestamp.
+        delayed = bool(pending and pending[0][0] <= next_attack)
+        now = pending[0][0] if delayed else next_attack
+        if now >= horizon:
+            break
+        if delayed:
+            _, _, kind, value = heapq.heappop(pending)
+            outcome, _ = packet(value, kind)
+            if outcome == 'dead':
+                kill_time = now
+                break
+            continue
         active = active_until > now
         if sp_kind == 'INCREASE_WITH_TIME':
-            # Recharge only the part of the interval outside SP lockout.
             free_time = max(0., now - max(last, active_until)) if active_until > last else now - last
             sp = min(need * sp_data.get('maxChargeTime', 1), sp + free_time * sp_rate)
         if skill_enabled and not active and sp >= need and need > 0:
@@ -420,81 +510,68 @@ def duel(attrs, behavior, enemy, mechanics, *, horizon=60, skill_enabled=True, s
             else:
                 active_until = now + max(0, behavior['duration'])
             active = True
+            apply_controls('skill')
         last = now
         attacks += 1
-        if behavior['mode'] == 'cost' and active:
-            interval = attack_interval(attrs['baseAttackTime'], attrs['attackSpeed'])
-            now += interval
+        if behavior['mode'] == 'cost' and active or (not active and behavior.get('normal_attack', True) is False):
+            next_attack = now + attack_interval(attrs['baseAttackTime'], attrs['attackSpeed'])
             continue
-        if not active and behavior.get('normal_attack', True) is False:
-            # Trait-level "does not attack normally" must not invent basic hits.
-            interval = attack_interval(attrs['baseAttackTime'], attrs['attackSpeed'])
-            now = max(now + interval, next_ready)
-            continue
-        damage_type = (behavior['damage_type'] if active
-                       else behavior.get('damage_type_normal', behavior['damage_type']))
+        kind = behavior['damage_type'] if active else behavior.get('damage_type_normal', behavior['damage_type'])
         attack = attrs['atk'] * (1 + (behavior['attack_up'] if active else 0))
         multiplier = behavior['attack_scale'] if active else 1
         packets = behavior.get('packets_skill' if active else 'packets_normal')
         packets = packets if packets is not None else [multiplier] * (behavior['hits'] if active else 1)
-        # Ignition reduces the primary target's RES before its splash and
-        # additional primary-target packet. Each packet advances enemy state.
         if active and behavior.get('resistance_debuff'):
             debuffed_until = now + behavior['debuff_duration']
-        for packet in packets:
-            if hp <= 0:
+        for scale in packets:
+            outcome, actual = packet(attack * scale, kind, penetration=True)
+            if outcome != 'alive':
                 break
-            reduction = stacks * mechanics.get('reduction_per_stack', 0) if now >= stunned_until else 0
-            resistance = base_resistance * (1 + behavior.get('resistance_debuff', 0)
-                if now < debuffed_until else 1)
-            damage = damage_packet(attack * packet, damage_type,
-                defense=defense, resistance=resistance, reduction=reduction,
-                flat_penetration=behavior.get('flat_penetration', 0),
-                percent_penetration=behavior.get('percent_penetration', 0))
-            if now < invulnerable_until:
-                damage = 0
-            # Sum damage against HP, excluding overkill, so multi-hit ordering matters.
-            total += min(hp, damage)
-            hp -= damage
-            hits += 1
-            if mechanics['kind'] == 'basin' and now >= stunned_until:
-                stack_hits += 1
-                if stack_hits >= mechanics['hits_per_stack']:
-                    stack_hits = 0
-                    stacks += 1
-                    if stacks > mechanics['max_stacks']:
-                        stacks = 0
-                        stunned_until = now + mechanics['stun_duration']
-                        overloads += 1
-            if hp <= 0 and mechanics.get('revive_ratio', 0) and not revives:
-                hp = max_hp * mechanics['revive_ratio']
-                revives += 1
-                next_ready = now + mechanics['revive_delay']
-                invulnerable_until = next_ready + mechanics.get('revive_invulnerability', 0)
-                defense = max(0, defense + mechanics.get('revive_defense_add', 0))
-                base_resistance = max(0, base_resistance + mechanics.get('revive_resistance_add', 0))
-                stacks = mechanics.get('revive_stacks', stacks)
-                debuffed_until = -1.
-                break
+            if active and effects.feed_erosion(actual * behavior.get('erosion_ratio', 0), now):
+                outcome, _ = packet(effect_rules['erosion_damage'], 'elemental')
+                if outcome != 'alive':
+                    break
+                rocket = behavior.get('erosion_rocket')
+                if rocket and active_until > now and ammo > 0 and enemy.get('motion', enemy.get('data', {}).get('motion')) == 'WALK':
+                    ammo -= 1
+                    launches += 1
+                    # Fixed-target/tile contact scenario. Each physical and
+                    # elemental packet resolves separately with live defenses.
+                    for tick in range(1, rocket['ticks'] + 1):
+                        for damage_kind, raw in (('physical', attrs['atk'] * rocket['physical_scale']),
+                                                  ('elemental', attrs['atk'] * rocket['elemental_scale'])):
+                            due = now + tick * rocket['interval']
+                            if due <= now + rocket['lifetime']:
+                                heapq.heappush(pending, (due, launches * 10 + tick * 2 + (damage_kind == 'elemental'), damage_kind, raw))
+                    if ammo <= 0:
+                        active_until = now
         if hp <= 0:
             kill_time = now
             break
+        if active and outcome == 'alive' and now >= invulnerable_until:
+            apply_controls('hit')
         if sp_kind == 'INCREASE_WHEN_ATTACK' and not active:
             sp += 1
-        if active and behavior['mode'] == 'ammo':
+        if active and behavior['mode'] == 'ammo' and behavior.get('ammo_trigger') != 'erosion':
             ammo -= 1
             if ammo <= 0:
                 active_until = now
+                for state in effects.statuses:
+                    if state.get('bound_to_skill') and state['end'] > now:
+                        state['end'] = now
         elif active and behavior['mode'] in ('next_attack', 'conditional_heal'):
             active_until = now
         interval = attack_interval(attrs['baseAttackTime'] + (behavior['interval_add'] if active else 0),
                                    attrs['attackSpeed'] + (behavior['speed_add'] if active else 0))
-        now = max(now + interval, next_ready)
+        next_attack = max(now + interval, next_ready)
     return {'damage': round(total, 3), 'kill_time': kill_time, 'damage_instances': hits,
+            'damage_by_type': {k: round(v, 3) for k, v in breakdown.items()},
             'attack_events': attacks, 'skill_activations': activations,
             'average_dps_over_horizon': round(total / horizon, 3),
             'first_skill_activation': first_activation, 'revives': revives, 'overloads': overloads,
             'remaining_hp': round(max(0, hp), 3), 'final_stacks': stacks,
+            'remaining_ammo': ammo, 'bombardments_launched': launches,
+            'effects': effects.report(kill_time if kill_time is not None else horizon),
             'scenario': 'continuous_single_target_contact_from_deployment',
             'timing': 'attack_cadence_estimate_without_animation_or_SP_tick_quantization'}
 
@@ -522,7 +599,7 @@ def route_segments(route):
     return {'segments': segments, 'wait_seconds': wait, 'unsupported': unknown}
 
 
-def rotation_estimate(attrs, behavior, enemy, mechanics, *, horizon=120, skill_enabled=True):
+def rotation_estimate(attrs, behavior, enemy, mechanics, *, horizon=120, skill_enabled=True, effect_rules=None):
     """Sustained single-target scenario with the enemy's defenses and state rules.
 
     Artificial durability avoids stopping at the first kill. This does not alter
@@ -530,14 +607,18 @@ def rotation_estimate(attrs, behavior, enemy, mechanics, *, horizon=120, skill_e
     Revival/inactive HP transitions are intentionally reserved for the real-HP
     duel; the rotation scenario measures attack/SP cadence against one life.
     """
-    target = {'attributes': dict(enemy['attributes'], maxHp=1e15)}
+    target = copy.deepcopy(enemy)
+    target['attributes']['maxHp'] = 1e15
     state = dict(mechanics, revive_ratio=0, initial_hp_ratio=1)
-    result = duel(attrs, behavior, target, state, horizon=horizon, skill_enabled=skill_enabled)
+    result = duel(attrs, behavior, target, state, horizon=horizon, skill_enabled=skill_enabled,
+                  effect_rules=effect_rules)
     return {'scenario': 'sustained_contact_with_enemy_defences_and_artificial_durability',
             'horizon_seconds': horizon, 'damage': result['damage'],
             'average_dps': result['average_dps_over_horizon'],
             'attack_events': result['attack_events'], 'damage_instances': result['damage_instances'],
-            'skill_activations': result['skill_activations'], 'overloads': result['overloads']}
+            'skill_activations': result['skill_activations'], 'overloads': result['overloads'],
+            'damage_by_type': result['damage_by_type'], 'effects': result['effects'],
+            'bombardments_launched': result['bombardments_launched'], 'remaining_ammo': result['remaining_ammo']}
 
 
 def blocking_queue(capacity, arrivals):
@@ -563,7 +644,7 @@ def blocking_queue(capacity, arrivals):
 
 
 def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizon=60,
-                  equipment=None, equip_metadata=None):
+                  equipment=None, equip_metadata=None, effect_rules=None):
     _require(graph.get('stage', {}).get('difficulty') == 'NORMAL',
              'Challenge combat evaluation is unsupported: difficulty runes are not simulated.')
     _, _, tiles = _map(graph)
@@ -682,6 +763,27 @@ def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizo
         entry['first_charge_seconds'] = ((behavior['sp']['spCost'] - behavior['sp']['initSp']) /
             base['spRecoveryPerSec'] if behavior['sp']['spType'] == 'INCREASE_WITH_TIME'
             and base['spRecoveryPerSec'] > 0 else None)
+        entry['conditional_control_scenarios'] = []
+        for spec in behavior.get('control_events', []):
+            if not spec.get('condition') or spec['condition'] == 'flying_target_in_range':
+                continue
+            for enemy in graph['enemies'].values():
+                state = TargetEffects(enemy, effect_rules)
+                if effect_rules is None:
+                    state.unknown.add('control:pinned_effect_rules_missing')
+                else:
+                    duration = horizon if isinstance(spec['duration'], str) else spec['duration']
+                    state.apply(spec['kind'], 0, duration, ratio=spec.get('ratio'))
+                scenario = {'enemy_id': enemy['id'], 'condition': spec['condition'],
+                    'assumption': 'one qualifying trigger at scenario start; contact duration is hypothetical',
+                    'credited_to_primary_estimate': False, 'effects': state.report(horizon)}
+                if spec['condition'] == 'target_in_vortex':
+                    vortex = behavior['vortex']
+                    scenario['while_in_vortex'] = {
+                        'erosion_per_second_before_resistance': vortex['erosion_per_second'],
+                        'physical_damage_per_tick_before_enemy_mechanics': damage_packet(base['atk'] * vortex[
+                            'physical_scale_per_second'], 'physical', defense=enemy['attributes']['def'])}
+                entry['conditional_control_scenarios'].append(scenario)
         if behavior['damage_type'] != 'healing':
             for enemy in graph['enemies'].values():
                 mechanics = enemy_behavior(enemy, graph)
@@ -693,14 +795,16 @@ def evaluate_plan(graph, content, box, catalog, chars, skills, ranges, *, horizo
                     skill_enabled = behavior['automatic'] or spec.get('skill_usage', 0) != 0 or any(
                         a.get('type') == 'Skill' and a.get('name') == spec['name'] for a in content['actions'])
                     matchup['duel'] = duel(base, behavior, enemy, mechanics, horizon=horizon,
-                        skill_enabled=skill_enabled)
+                        skill_enabled=skill_enabled, effect_rules=effect_rules)
                     matchup['rotation'] = rotation_estimate(base, behavior, enemy, mechanics,
-                        horizon=horizon, skill_enabled=skill_enabled)
+                        horizon=horizon, skill_enabled=skill_enabled, effect_rules=effect_rules)
+                    unknown.extend(enemy['id'] + ':' + item for item in
+                                   matchup['duel']['effects']['unknown'])
                     if mechanics['kind'] == 'basin':
                         # A second explicit scenario exposes sensitivity to external matrix feeding.
                         matchup['max_stacks_duel'] = duel(base, behavior, enemy, mechanics, horizon=horizon,
                             skill_enabled=behavior['automatic'] or spec.get('skill_usage', 0) != 0,
-                            start_stacks=mechanics['max_stacks'])
+                            start_stacks=mechanics['max_stacks'], effect_rules=effect_rules)
                         enemy_atk = enemy['attributes']['atk'] + mechanics['max_stacks'] * mechanics['attack_per_stack']
                         matchup['max_stacks_incoming_physical_dps'] = damage_packet(enemy_atk, 'physical',
                             defense=base['def'] * (1 + behavior['defense_up'])) / attack_interval(

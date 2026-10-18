@@ -27,7 +27,7 @@ def _attempt(problem, strategy, budget):
 
 def compare_plans(graph, box, catalog, chars, skills, ranges, *, research,
                   strategies=('greedy', 'backtracking'), workers=1,
-                  max_candidates=8, branch_width=3, equipment=None, equip_metadata=None, horizon=120):
+                  max_candidates=8, branch_width=3, equipment=None, equip_metadata=None, horizon=120, effect_rules=None):
     _require(isinstance(strategies, (list, tuple)) and strategies
              and len(set(strategies)) == len(strategies), 'Strategies must be nonempty and distinct')
     for name in strategies:
@@ -36,7 +36,7 @@ def compare_plans(graph, box, catalog, chars, skills, ranges, *, research,
     budget = SearchBudget(max_candidates, branch_width)
     started = time.monotonic()
     problem, excluded = prepare_problem(graph, box, catalog, chars, skills, ranges,
-        research=research, equipment=equipment, equip_metadata=equip_metadata, horizon=horizon)
+        research=research, equipment=equipment, equip_metadata=equip_metadata, horizon=horizon, effect_rules=effect_rules)
     preparation_seconds = time.monotonic() - started
     count = min(workers, len(strategies))
     if count == 1:
@@ -63,7 +63,7 @@ def compare_plans(graph, box, catalog, chars, skills, ranges, *, research,
             try:
                 generated = materialize_plan(problem, outcome['result'], graph, box, catalog,
                     chars, skills, ranges, research=research, excluded=excluded,
-                    equipment=equipment, equip_metadata=equip_metadata)
+                    equipment=equipment, equip_metadata=equip_metadata, effect_rules=effect_rules)
                 candidates[name] = generated
                 evidence = generated['generation']
                 fingerprint = evidence['copilot_sha256']
