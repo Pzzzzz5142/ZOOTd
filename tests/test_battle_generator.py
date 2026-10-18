@@ -154,6 +154,23 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(choice['location'], [5, 1])
         self.assertEqual(choice['direction'], 'Left')
 
+    def test_opening_dp_retires_before_the_final_unit_reaches_the_map_limit(self):
+        dp = profile('Special', 'blocker', [[0, 0], [1, 0]])
+        dp['row']['behavior']['mode'] = 'cost'
+        self.profiles.append(dp)
+        result = self.generate()
+        self.assertTrue(result['generation']['opening_dp_retired'])
+        active, peak = set(), 0
+        for action in result['copilot']['actions']:
+            if action['type'] == 'Deploy':
+                active.add(action['name'])
+            elif action['type'] == 'Retreat':
+                self.assertEqual(action['name'], 'Special')
+                active.remove(action['name'])
+            peak = max(peak, len(active))
+        self.assertEqual(peak, 3)
+        self.assertEqual(active, {'Guard', 'Caster', 'Medic'})
+
 
 if __name__ == '__main__':
     unittest.main()

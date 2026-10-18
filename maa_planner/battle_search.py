@@ -6,7 +6,8 @@ or device handles. Unknown mechanisms remain attached to the prepared problem.
 from __future__ import annotations
 
 import itertools
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 
 from .battle_solver import _require, _rotate
 
@@ -21,6 +22,8 @@ class SearchProblem:
     mechanics: dict
     capacity: int
     horizon: float
+    enemy_attributes: dict = field(default_factory=dict)
+    move_multiplier: float | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,7 @@ class Placement:
 @dataclass(frozen=True)
 class Formation:
     placements: tuple[Placement, ...]
+    retire_dp: bool = False
 
 
 def required_normal_fire_routes(problem, blockers):
@@ -54,9 +58,62 @@ def required_normal_fire_routes(problem, blockers):
             or saturated & set(problem.paths[s['route_index']]['terminal'][-3:])}
 
 
+def matrix_contact_damage(problem, profile, point, facing, route, enemy_id):
+    """Conditional ordinary damage during visible, unblocked matrix passage.
+
+    Each separate range contact loses a full initial attack interval. No skill,
+    field absorption, talent RNG, slowdown or blocking time is invented. Target
+    competition and exact within-tile movement still need device validation.
+    """
+    if not profile['row']['behavior'].get('normal_attack', True):
+        return 0
+    matchup = next((m for m in profile['row']['matchups'] if m['enemy_id'] == enemy_id), {})
+    per_attack = matchup.get('normal_attack_damage', 0)
+    attrs = problem.enemy_attributes.get(enemy_id, {})
+    speed, multiplier = attrs.get('moveSpeed'), problem.move_multiplier
+    interval = profile['row']['attack_interval_normal']
+    _require(all(type(n) in (int, float) and math.isfinite(n) and n > 0
+                 for n in (speed, multiplier, interval)), 'Matrix contact needs known movement and attack intervals')
+    footprint = _footprint(profile, point, facing)
+    runs, length = [], 0
+    for cell in problem.paths[route]['terminal']:
+        if cell in footprint:
+            length += 1
+        elif length:
+            runs.append(length)
+            length = 0
+    if length:
+        runs.append(length)
+    hits = sum(max(0, math.ceil(length / (speed * multiplier * interval)) - 1) for length in runs)
+    return hits * per_attack
+
+
+def normal_fire_deficits(problem, selected, fire_routes):
+    """Independent geometric cover plus a finite-contact floor for matrix leaks."""
+    deficits = {}
+    for route in sorted(fire_routes):
+        cover = any(p['row']['behavior'].get('normal_attack', True)
+                    and _footprint(p, cell, direction) & set(problem.paths[route]['terminal'][-2:])
+                    for p, cell, direction in selected)
+        matrices = {s['enemy_id'] for s in problem.spawns if s['route_index'] == route
+                    and problem.mechanics[s['enemy_id']].get('kind') == 'matrix'}
+        remaining = {}
+        for eid in sorted(matrices):
+            hp = problem.enemy_attributes[eid]['maxHp']
+            damage = sum(matrix_contact_damage(problem, p, cell, direction, route, eid)
+                         for p, cell, direction in selected)
+            if damage < hp:
+                remaining[eid] = hp - damage
+        if not cover or remaining:
+            deficits[route] = {'coverage_missing': not cover, 'matrix_damage_missing': remaining}
+    return deficits
+
+
 def assess_formation(problem, formation):
     """Common admission and heuristic metrics, independent of strategy scores."""
-    _require(0 < len(formation.placements) <= problem.capacity, 'Invalid formation size')
+    _require(type(formation.retire_dp) is bool
+             and 0 < len(formation.placements) <= problem.capacity + int(formation.retire_dp),
+             'Invalid formation size')
     selected, used, occupied = [], set(), set(problem.devices)
     for item in formation.placements:
         _require(type(item.profile_index) is int and 0 <= item.profile_index < len(problem.profiles),
@@ -83,6 +140,9 @@ def assess_formation(problem, formation):
         selected.append((p, item))
         occupied.add(item.point)
         used.add(p['oper']['name'])
+    _require(not formation.retire_dp or (len(formation.placements) == problem.capacity + 1
+             and sum(item.role == 'dp' for _, item in selected) == 1),
+             'Opening DP retirement requires exactly one extra DP unit')
     heal = set().union(*(_footprint(p, item.point, item.facing)
                          for p, item in selected if item.role == 'healer'))
     requirements = []
@@ -104,6 +164,9 @@ def assess_formation(problem, formation):
             _require(any(item.role == 'damage' and p['row']['behavior'].get('normal_attack', True)
                          and _footprint(p, item.point, item.facing) & set(route['terminal'][-2:])
                          for p, item in selected), 'Exposed final approach lacks independent normal DPS')
+    deficits = normal_fire_deficits(problem, [
+        (p, item.point, item.facing) for p, item in selected if item.role == 'damage'], fire_routes)
+    _require(not deficits, 'Exposed matrix stream lacks finite-contact normal damage: ' + str(deficits))
     rates, controls = {}, {}
     for r, path in sorted(problem.paths.items()):
         terminal = set(path['terminal'][-4:])
@@ -260,9 +323,12 @@ def terminal_formation(problem, decisions):
     fire_routes = required_normal_fire_routes(problem, [
         (x['profile'], x['point']) for x in selected if x['role'] == 'blocker'])
     dp_pool = [p for p in profiles if p['row']['behavior']['mode'] == 'cost']
-    remaining = capacity - len(selected) - bool(dp_pool)
+    # The opening DP unit can retire after paying for the main formation. Its
+    # deployment slot must not permanently displace a required damage unit.
+    remaining = capacity - len(selected)
     healing_slots = 2 if remaining >= 4 else 1
-    damage_slots = min(3, remaining - healing_slots)
+    damage_slots = min(3, remaining - healing_slots,
+                       len({p['oper']['name'] for p in damage_pool if available(p)}))
     _require(damage_slots >= 1, 'No deployment slot remains for normal damage')
 
     def fire_score(p, cell, direction, *, marginal=True):
@@ -282,9 +348,24 @@ def terminal_formation(problem, decisions):
     # Select a small healing network before committing ranged placements. The
     # old independent greedy choices could scatter DPS across an unhealable map.
     # Search all one/two-medic networks and score their available damage cells.
-    damage_cells = {}
+    damage_cells, fire_cells = {}, {}
+    matrix_targets = {r: {s['enemy_id'] for s in spawns if s['route_index'] == r
+                         and mechanics[s['enemy_id']].get('kind') == 'matrix'} for r in fire_routes}
     for p, cell, direction in candidates(damage_pool):
         damage_cells[cell] = max(damage_cells.get(cell, 0), fire_score(p, cell, direction, marginal=False))
+        if not p['row']['behavior'].get('normal_attack', True):
+            continue
+        cover = _footprint(p, cell, direction)
+        for r in fire_routes:
+            if not cover & set(paths[r]['terminal'][-2:]):
+                continue
+            potential = min((min(1, matrix_contact_damage(problem, p, cell, direction, r, eid)
+                                / problem.enemy_attributes[eid]['maxHp'])
+                             for eid in matrix_targets[r]), default=1)
+            by_route = fire_cells.setdefault(cell, {})
+            by_name = by_route.setdefault(r, {})
+            name = p['oper']['name']
+            by_name[name] = max(by_name.get(name, 0), potential)
     heal_candidates = [(p, cell, direction, _footprint(p, cell, direction))
                        for p, cell, direction in candidates(healer_pool)]
     healing_requirements = [{**blocker_healing_need(x['profile'], x['point'], paths, spawns),
@@ -306,7 +387,21 @@ def terminal_formation(problem, decisions):
             continue
         value = sum(useful[:damage_slots]) + sum(h[0]['row']['healing_per_second_skill_per_target']
                     * h[0]['row']['healing_target_limit_skill'] for h in network)
-        ranked_networks.append((value, network))
+        # Do not choose a medic network that strands the only adequate normal
+        # fire outside healing. This remains an optimistic placement bound;
+        # distinct operators and the final damage gate are checked afterwards.
+        potentials = {}
+        for r in fire_routes:
+            by_name = {}
+            for cell in coverage - cells:
+                for name, potential in fire_cells.get(cell, {}).get(r, {}).items():
+                    by_name[name] = max(by_name.get(name, 0), potential)
+            # Distinct damage operators can contribute together. Reusing one
+            # exceptional profile at many tiles must not dominate this bound.
+            potentials[r] = sum(sorted(by_name.values(), reverse=True)[:damage_slots])
+        network_score = (min(potentials.values(), default=1),
+                         sum(weights[r] * v for r, v in potentials.items()), value)
+        ranked_networks.append((network_score, network))
         ranked_networks.sort(key=lambda item: item[0], reverse=True)
         del ranked_networks[decisions.branch_width:]
     _require(bool(ranked_networks), 'No normal healing coverage network for blockers and ranged damage')
@@ -318,19 +413,26 @@ def terminal_formation(problem, decisions):
     healing = set().union(*(_footprint(x['profile'], x['point'], x['facing'])
                            for x in selected if x['role'] == 'healer'))
 
-    # Extra damage uses marginal contact on the least-covered final approaches.
+    # Complete required normal fire before maximizing marginal damage scores.
     for _ in range(damage_slots):
-        missing_fire = {r for r in fire_routes if not any(
-            x['role'] == 'damage' and x['profile']['row']['behavior'].get('normal_attack', True)
-            and _footprint(x['profile'], x['point'], x['facing']) & set(paths[r]['terminal'][-2:])
-            for x in selected)}
+        deficits = normal_fire_deficits(problem, [
+            (x['profile'], x['point'], x['facing']) for x in selected if x['role'] == 'damage'], fire_routes)
+        def fire_priority(p, cell, direction):
+            value = 0
+            for r, need in deficits.items():
+                missing = need['matrix_damage_missing']
+                if missing:
+                    value += weights[r] * min(min(1, matrix_contact_damage(
+                        problem, p, cell, direction, r, eid) / amount) for eid, amount in missing.items())
+                elif (need['coverage_missing'] and p['row']['behavior'].get('normal_attack', True)
+                      and _footprint(p, cell, direction) & set(paths[r]['terminal'][-2:])):
+                    value += weights[r]
+            return value
         profile, cell, direction = best(damage_pool, lambda p, cell, direction:
             fire_score(p, cell, direction) if cell in healing else 0,
-            priority=lambda p, cell, direction: sum(weights[r] for r in missing_fire
-                if p['row']['behavior'].get('normal_attack', True)
-                and _footprint(p, cell, direction) & set(paths[r]['terminal'][-2:])))
+            priority=fire_priority)
         choose(profile, cell, direction, 'damage')
-    if dp_pool and len(selected) < capacity:
+    if dp_pool and len(selected) <= capacity:
         # A DP unit has no facing-sensitive tactical score. Prefer an inward
         # gesture over the old alphabetical Up tie-break at the map's edge.
         xmax, ymax = max(x for x, y in tiles), max(y for x, y in tiles)
@@ -351,7 +453,10 @@ def terminal_formation(problem, decisions):
                    and x['profile']['row']['behavior'].get('normal_attack', True)):
             missing.append(r)
     _require(not missing, 'Exposed final approaches lack independent normal DPS: ' + str(missing))
+    _require(not normal_fire_deficits(problem, [
+        (x['profile'], x['point'], x['facing']) for x in selected if x['role'] == 'damage'], fire_routes),
+        'Exposed matrix streams lack finite-contact normal damage')
 
     indices = {id(p): i for i, p in enumerate(profiles)}
     return Formation(tuple(Placement(indices[id(x['profile'])], x['point'], x['facing'], x['role'])
-                           for x in selected))
+                           for x in selected), retire_dp=len(selected) > capacity)

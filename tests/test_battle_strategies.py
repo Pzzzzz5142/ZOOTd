@@ -1,11 +1,13 @@
 """Alternative search, shared constraints and real spawn-process isolation."""
 import copy
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 from maa_planner.battle_generator import prepare_problem
 from maa_planner.battle_portfolio import compare_plans
-from maa_planner.battle_search import Formation, Placement, assess_formation
+from maa_planner.battle_search import (Formation, Placement, assess_formation,
+                                     matrix_contact_damage, normal_fire_deficits)
 from maa_planner.battle_solver import BattleSolverError
 from maa_planner.battle_strategies import SearchBudget, SearchResult, get_strategy, run_search
 from maa_planner.util import canonical_json, sha256_bytes
@@ -115,6 +117,33 @@ class StrategyTests(unittest.TestCase):
                         {'workers': 0}):
             with self.subTest(options=options), self.assertRaises(BattleSolverError):
                 self.compare(**options)
+
+    def test_matrix_normal_contact_checks_damage_attack_phase_speed_and_gaps(self):
+        problem = self.prepare()
+        problem.mechanics['enemy']['kind'] = 'matrix'
+        problem = replace(problem, enemy_attributes={'enemy': {'maxHp': 1000, 'moveSpeed': 1}},
+                          move_multiplier=1)
+        caster = problem.profiles[1]
+        caster['row']['matchups'][0]['normal_attack_damage'] = 100
+        selected = [(caster, (2, 0), 'Down')]
+        # Three contiguous tiles allow two guaranteed attacks after reserving
+        # a full initial attack interval; a boundary tie is not a free hit.
+        self.assertEqual(matrix_contact_damage(problem, *selected[0], 0, 'enemy'), 200)
+        self.assertIn(0, normal_fire_deficits(problem, selected, {0}))
+        # Huge skill DPS must not hide an insufficient normal attack.
+        caster['row']['matchups'][0]['rotation']['average_dps'] = 100000
+        self.assertIn(0, normal_fire_deficits(problem, selected, {0}))
+        caster['row']['matchups'][0]['normal_attack_damage'] = 500
+        self.assertFalse(normal_fire_deficits(problem, selected, {0}))
+        problem.enemy_attributes['enemy']['moveSpeed'] = 2
+        self.assertIn(0, normal_fire_deficits(problem, selected, {0}))
+        # Two disconnected one-tile windows cannot be merged into two attacks.
+        problem.enemy_attributes['enemy']['moveSpeed'] = 1
+        caster['normal_offsets'] = [[0, 0], [2, 0]]
+        self.assertEqual(matrix_contact_damage(problem, caster, (0, 1), 'Right', 0, 'enemy'), 0)
+        problem = replace(problem, move_multiplier=None)
+        with self.assertRaisesRegex(BattleSolverError, 'known movement'):
+            matrix_contact_damage(problem, caster, (0, 1), 'Right', 0, 'enemy')
 
     def test_crossing_heavy_enemy_requires_independent_fire_for_the_other_stream(self):
         problem = self.prepare()

@@ -16,7 +16,7 @@ from .util import canonical_json, sha256_bytes
 from .battle_search import SearchProblem, assess_formation, blocker_healing_need
 from .battle_strategies import SearchBudget, get_strategy, run_search
 
-GENERATOR_VERSION = 5
+GENERATOR_VERSION = 6
 
 
 def active_spawns(graph):
@@ -167,7 +167,9 @@ def prepare_problem(graph, box, catalog, chars, skills, ranges, *, research,
                                    equipment, equip_metadata, horizon, effect_rules)
     _, _, tiles = _map(graph)
     devices = _device_tiles(graph, tiles)
-    problem = SearchProblem(profiles, tiles, devices, paths, spawns, mechanics, capacity, horizon)
+    problem = SearchProblem(profiles, tiles, devices, paths, spawns, mechanics, capacity, horizon,
+        enemy_attributes={eid: e['attributes'] for eid, e in graph['enemies'].items()},
+        move_multiplier=graph['options'].get('moveMultiplier'))
     return problem, excluded
 
 
@@ -187,13 +189,22 @@ def materialize_plan(problem, result, graph, box, catalog, chars, skills, ranges
     other = [x for x in selected if x['role'] == 'damage']
     healers = [x for x in selected if x['role'] == 'healer']
     deployment = [x for x in selected if x['role'] == 'dp'] + front + other[:1] + healers[:1] + other[1:] + healers[1:]
+    actions, deployed, retired = [], 0, False
+    for x in deployment:
+        if deployed == problem.capacity:
+            _require(result.formation.retire_dp and not retired, 'No opening DP slot to release')
+            dp = next(y for y in deployment if y['role'] == 'dp')
+            actions.append(dict(type='Retreat', name=dp['profile']['oper']['name']))
+            deployed -= 1
+            retired = True
+        actions.append(dict(type='Deploy', name=x['profile']['oper']['name'],
+                            location=list(x['point']), direction=x['facing']))
+        deployed += 1
     plan = {'schema_version': 1, 'stage_id': graph['stage']['stage_id'],
             'title': graph['stage']['code'] + ' generated terminal defence',
             'mechanics_acknowledged': sorted(notes),
             'opers': [copy.deepcopy(x['profile']['oper']) for x in deployment],
-            'actions': [dict(type='Deploy', name=x['profile']['oper']['name'],
-                             location=list(x['point']), direction=x['facing']) for x in deployment]
-                       + [{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}]}
+            'actions': actions + [{'type': 'SpeedUp'}, {'type': 'SkillDaemon'}]}
     compiled = compile_copilot(graph, plan, box, catalog, character_table=chars)
     combat = evaluate_plan(graph, compiled['copilot'], box, catalog, chars, skills, ranges,
                           horizon=horizon, equipment=equipment, equip_metadata=equip_metadata, effect_rules=effect_rules)
@@ -213,6 +224,7 @@ def materialize_plan(problem, result, graph, box, catalog, chars, skills, ranges
             'copilot_sha256': sha256_bytes(canonical_json(compiled['copilot'])),
             'horizon_seconds': horizon,
             'active_spawn_count': sum(s['count'] for s in spawns), 'excluded_profiles': excluded,
+            'opening_dp_retired': retired,
             'blocker_healing_requirements': healing_requirements,
             'choices': [{'name': x['profile']['oper']['name'], 'role': x['role'],
                          'cost': x['profile']['cost'], 'location': list(x['point']),
