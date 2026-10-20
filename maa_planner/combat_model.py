@@ -15,7 +15,7 @@ from .battle_solver import BattleSolverError, _require, _map, _shortest, _rotate
 from .util import canonical_json, sha256_bytes
 from .combat_effects import TargetEffects
 
-MODEL_VERSION = 8
+MODEL_VERSION = 9
 
 
 def number(value, label, minimum=0):
@@ -371,8 +371,8 @@ def enemy_behavior(enemy, graph):
     elif envs and enemy['id'] in (
             'enemy_10213_klbm', 'enemy_10213_klbm_2', 'enemy_10213_klbm_2_2',
             'enemy_10214_klgn', 'enemy_10214_klgn_2',
-            'enemy_10215_klhjd_2', 'enemy_10215_klhjd_2_a',
-            'enemy_10216_kltwhp_2', 'enemy_10216_kltwhp_2_2'):
+            'enemy_10215_klhjd', 'enemy_10215_klhjd_2', 'enemy_10215_klhjd_2_a',
+            'enemy_10216_kltwhp', 'enemy_10216_kltwhp_2', 'enemy_10216_kltwhp_2_2'):
         result.update(kind='reviving', revive_ratio=1 + b['reborn_attr.max_hp'],
                       revive_delay=b['reborn.duration'])
         inactive = b.get('fireseedAbility.init_stack_cnt') == 0
@@ -380,9 +380,9 @@ def enemy_behavior(enemy, graph):
             result.update(initial_hp_ratio=1 + b['reborn_attr.max_hp'], revive_ratio=0)
         if enemy['id'] in ('enemy_10213_klbm', 'enemy_10213_klbm_2', 'enemy_10213_klbm_2_2'):
             result['block_cost'] = 0
-        if enemy['id'] in ('enemy_10215_klhjd_2', 'enemy_10215_klhjd_2_a'):
+        if enemy['id'] in ('enemy_10215_klhjd', 'enemy_10215_klhjd_2', 'enemy_10215_klhjd_2_a'):
             result['block_cost'] = 2
-        if enemy['id'] in ('enemy_10216_kltwhp_2', 'enemy_10216_kltwhp_2_2'):
+        if enemy['id'] in ('enemy_10216_kltwhp', 'enemy_10216_kltwhp_2', 'enemy_10216_kltwhp_2_2'):
             result['unknown'].append('vase:channel_stun_and_beam_suppression_not_simulated')
         result['unknown'].append('matrix_release_and_energy_field_interaction_not_simulated')
     elif enemy.get('skills') or enemy.get('talent_blackboard'):
