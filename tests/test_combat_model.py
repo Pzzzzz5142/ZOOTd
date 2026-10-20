@@ -66,10 +66,10 @@ class DamageModelTests(unittest.TestCase):
         self.assertEqual(result['skill_activations'], [0, 4])
         self.assertEqual(enemy['attributes']['def'], 0)
 
-    def test_reviewed_ex_shields_consume_two_block_slots(self):
+    def test_reviewed_normal_and_ex_shields_consume_two_block_slots(self):
         graph = {'mechanics': {'runes': [{'key': 'env_system_new',
                   'blackboard': [{'key': 'key', 'valueStr': 'env_044_act52side'}]}]}}
-        for eid in ('enemy_10215_klhjd_2', 'enemy_10215_klhjd_2_a'):
+        for eid in ('enemy_10215_klhjd', 'enemy_10215_klhjd_2', 'enemy_10215_klhjd_2_a'):
             enemy = dict(target(), id=eid, talent_blackboard=[
                 {'key': 'reborn_attr.max_hp', 'value': -.4},
                 {'key': 'reborn.duration', 'value': 1}])
@@ -83,6 +83,22 @@ class DamageModelTests(unittest.TestCase):
             self.assertEqual(enemy_behavior(enemy, graph)['kind'], 'unsupported')
             enemy['id'] = eid
             self.assertEqual(enemy_behavior(enemy, {})['kind'], 'unsupported')
+
+    def test_normal_vase_preserves_revival_and_unmodeled_control(self):
+        graph = {'mechanics': {'runes': [{'key': 'env_system_new',
+                  'blackboard': [{'key': 'key', 'valueStr': 'env_044_act52side'}]}]}}
+        enemy = dict(target(100), id='enemy_10216_kltwhp', skills=[{'prefabKey': 'Lasso'}],
+            talent_blackboard=[{'key': 'reborn_attr.max_hp', 'value': -.4},
+                              {'key': 'reborn.duration', 'value': 1},
+                              {'key': 'fireseedAbility.init_stack_cnt', 'value': 1}])
+        state = enemy_behavior(enemy, graph)
+        result = duel(fighter(), behavior(), enemy, state, horizon=5)
+        self.assertEqual(result['revives'], 1)
+        self.assertEqual(result['damage'], 160)
+        self.assertIn('vase:channel_stun_and_beam_suppression_not_simulated', state['unknown'])
+        self.assertEqual(enemy_behavior(enemy, {})['kind'], 'unsupported')
+        enemy['id'] += '_future'
+        self.assertEqual(enemy_behavior(enemy, graph)['kind'], 'unsupported')
 
     def test_challenge_cannot_be_evaluated_with_unmodified_normal_enemy_stats(self):
         with self.assertRaisesRegex(BattleSolverError, 'difficulty runes are not simulated'):
