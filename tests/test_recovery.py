@@ -5,6 +5,7 @@ import argparse
 import contextlib
 import io
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,11 @@ START = datetime(2026, 8, 28, 0, 0, tzinfo=UTC)
 
 
 class RecoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        notifications = patch("maa_planner.recovery.notify_recovery", return_value=True)
+        self.notifications = notifications.start()
+        self.addCleanup(notifications.stop)
+
     @staticmethod
     def _no_code_repair(base_head: str) -> dict[str, object]:
         return {
@@ -493,6 +499,13 @@ class RecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo = self._repo(directory)
             failed_run_id = self._failed_full_run(repo)
+            notification_events = []
+
+            def failed_notification(_run_id, _slot, status=None, **state):
+                notification_events.append((status, load_run_events(repo, failed_run_id)[-1]["event_type"]))
+                return False  # Delivery failure must not change a verified recovery.
+
+            self.notifications.side_effect = failed_notification
 
             def adapter_runner(
                 argv: tuple[str, ...], **kwargs: object
@@ -555,6 +568,9 @@ class RecoveryTests(unittest.TestCase):
             final = events[-1]["payload"]
             self.assertEqual(final["status"], "recovered")
             self.assertEqual(final["controller_verification"]["status"], "success")
+            self.assertEqual(notification_events, [("started", "recovery-started"),
+                                                   ("recovered", "recovery-finished")])
+            self.assertEqual(self.notifications.call_args.kwargs["successful_run_id"], outcome.successful_run_id)
 
     def test_incident_includes_runtime_upgrade_and_recent_phase_diff(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -859,6 +875,9 @@ class RecoveryTests(unittest.TestCase):
             self.assertIn("Bad Request", attempts[1]["prior_errors"][0])
             final = load_run_events(repo, failed_run_id)[-1]["payload"]
             self.assertEqual(len(final["agent"]["attempt_errors"]), 1)
+            self.assertEqual(self.notifications.call_count, 2)
+            self.assertEqual(self.notifications.call_args.kwargs["status"], "scope-blocked")
+            self.assertEqual(self.notifications.call_args.kwargs["scope_blocker"], "manual-login")
 
     def test_invalid_scope_classification_resumes_with_same_deadline_and_full_proof(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -952,6 +971,50 @@ class RecoveryTests(unittest.TestCase):
             final = load_run_events(repo, failed_run_id)[-1]["payload"]
             self.assertEqual(final["controller_verification"]["status"], "not-run")
             self.assertEqual(len(final["agent"]["attempt_errors"]), 2)
+            self.assertEqual(self.notifications.call_args.kwargs["status"], "failed")
+
+    def test_recovery_exit_notification_survives_interruption_and_audit_failure(self) -> None:
+        for failure in ("term", "interrupt", "audit"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                repo = self._repo(directory)
+                failed_run_id = self._failed_full_run(repo)
+                self.notifications.reset_mock()
+                original_term = signal.getsignal(signal.SIGTERM)
+
+                def runner(argv, **kwargs):
+                    if failure == "term":
+                        signal.raise_signal(signal.SIGTERM)
+                    if failure == "interrupt":
+                        raise KeyboardInterrupt
+                    return subprocess.CompletedProcess(argv, 0, b"{}", b"")
+
+                error = OSError if failure == "audit" else SystemExit if failure == "term" else KeyboardInterrupt
+                with patch("maa_planner.recovery.record_recovery_report", side_effect=OSError("audit unavailable")), \
+                     self.assertRaises(error):
+                    recover_failed_run(repo, failed_run_id, slot="manual", command=("fake-recovery",),
+                                       timeout_seconds=60, runner=runner)
+                self.assertEqual(signal.getsignal(signal.SIGTERM), original_term)
+                self.assertEqual(self.notifications.call_count, 2)
+                self.assertEqual(self.notifications.call_args.kwargs["status"],
+                                 "failed" if failure == "audit" else "interrupted")
+                self.assertEqual(load_run_events(repo, failed_run_id)[-1]["event_type"], "recovery-started")
+
+    def test_adapter_start_failure_and_timeout_send_one_failed_exit(self) -> None:
+        for failure in (OSError("SECRET"), subprocess.TimeoutExpired("fake-recovery", 60)):
+            with self.subTest(failure=type(failure).__name__), tempfile.TemporaryDirectory() as directory:
+                repo = self._repo(directory)
+                failed_run_id = self._failed_full_run(repo)
+                self.notifications.reset_mock()
+
+                def runner(*_args, **_kwargs):
+                    raise failure
+
+                outcome = recover_failed_run(repo, failed_run_id, slot="manual", command=("fake-recovery",),
+                                             timeout_seconds=60, runner=runner)
+                self.assertEqual(outcome.status, "failed")
+                self.assertEqual(self.notifications.call_count, 2)
+                self.assertEqual(self.notifications.call_args.kwargs["status"], "failed")
+                self.assertIsNone(self.notifications.call_args.kwargs["successful_run_id"])
 
     def test_report_retry_stops_when_remaining_budget_is_too_short(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1050,6 +1113,7 @@ class RecoveryTests(unittest.TestCase):
                 "not linked to this recovery attempt",
                 final["controller_verification"]["error"],
             )
+            self.assertEqual(self.notifications.call_args.kwargs["status"], "failed")
 
     def test_applied_source_repair_cannot_rewrite_audit_producers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

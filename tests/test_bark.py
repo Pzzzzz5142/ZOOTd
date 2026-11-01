@@ -15,6 +15,8 @@ from maa_planner.util import atomic_write_json
 
 
 INVOCATION = "a" * 32
+FAILED_RUN = "20261101T040000.000000Z-12345678"
+SUCCESSFUL_RUN = "20261101T050000.000000Z-12345678"
 
 
 class BarkTests(unittest.TestCase):
@@ -49,6 +51,65 @@ class BarkTests(unittest.TestCase):
             self.assertTrue(title.endswith("异常"))
         title, _ = bark.notification(self.root, "morning", {**self.env, "INVOCATION_ID": "b" * 32})
         self.assertTrue(title.endswith("异常"))
+
+    def test_source_can_be_hidden_without_replacing_it_with_hostname(self):
+        for kind in ("test", "morning", "evening", "attendance"):
+            for configured, expected in [(None, "[zenbox] "), (" home ", "[home] "),
+                                         ("", ""), ("  ", "")]:
+                with self.subTest(kind=kind, source=configured):
+                    env = {key: value for key, value in self.env.items() if key != "ZOOTD_BARK_SOURCE"}
+                    if configured is not None:
+                        env["ZOOTD_BARK_SOURCE"] = configured
+                    with patch.object(bark.socket, "gethostname", return_value="zenbox"), \
+                         patch.object(bark, "daily_result", return_value=(True, "整轮验收通过")), \
+                         patch.object(bark, "attendance_result", return_value=(True, "今日已签到")):
+                        _, body = bark.notification(self.root, kind, env)
+                    if expected:
+                        self.assertTrue(body.startswith(expected), body)
+                    else:
+                        self.assertFalse(body.startswith(("[", " ")), body)
+                        self.assertNotIn("zenbox", body)
+                    self.assertIn("北京时间", body)
+
+    def test_recovery_notifications_use_safe_controller_status_and_same_source_policy(self):
+        cases = [("started", "进场"), ("recovered", "退出（成功）"),
+                 ("scope-blocked", "退出（需人工处理）"), ("failed", "退出（失败）"),
+                 ("interrupted", "退出（已中断）"), ("future", "退出（结果未确认）")]
+        with patch.dict(os.environ, {"ZOOTD_BARK_URL": "https://example.invalid/SECRET", "ZOOTD_BARK_SOURCE": ""}), \
+             patch.object(bark, "send_bark", return_value=True) as send:
+            for status, expected in cases:
+                with self.subTest(status=status):
+                    self.assertTrue(bark.notify_recovery(
+                        FAILED_RUN, "morning", status,
+                        successful_run_id=SUCCESSFUL_RUN, scope_blocker="manual-login"))
+                    _, title, body = send.call_args.args
+                    self.assertIn(expected, title)
+                    self.assertIn(FAILED_RUN, body)
+                    self.assertFalse(body.startswith(("[", " ")))
+                    self.assertIn("北京时间", body)
+                    if status == "started":
+                        self.assertIn("早晨托管出现故障", body)
+                    if status == "scope-blocked":
+                        self.assertIn("需要手动登录", body)
+                    self.assertEqual(SUCCESSFUL_RUN in body, status == "recovered")
+            self.assertTrue(bark.notify_recovery(FAILED_RUN, "manual", "scope-blocked", scope_blocker="SECRET"))
+            self.assertNotIn("SECRET", send.call_args.args[2])
+            send.reset_mock()
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertFalse(bark.notify_recovery("SECRET", "manual", "started"))
+                self.assertFalse(bark.notify_recovery(FAILED_RUN, "manual", "recovered"))
+            send.assert_not_called()
+            self.assertNotIn("SECRET", output.getvalue())
+
+    def test_recovery_notification_failure_or_disabled_delivery_is_nonfatal(self):
+        with patch.dict(os.environ, {"ZOOTD_BARK_URL": ""}), patch.object(bark, "send_bark") as send:
+            self.assertFalse(bark.notify_recovery(FAILED_RUN, "manual", "started"))
+            send.assert_not_called()
+        with patch.dict(os.environ, {"ZOOTD_BARK_URL": "https://example.invalid/SECRET"}), \
+             patch.object(bark, "send_bark", side_effect=OSError("SECRET")), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertFalse(bark.notify_recovery(FAILED_RUN, "manual", "failed"))
+            self.assertNotIn("SECRET", output.getvalue())
 
     def test_old_missing_or_newer_unfinished_failed_and_corrupt_evidence_is_not_success(self):
         self.assertFalse(bark.daily_result(self.root, INVOCATION)[0])

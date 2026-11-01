@@ -4,15 +4,19 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from secrets import token_hex
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
+from .bark import notify_recovery
 from .supervisor import (
     ACCEPTED_RESULTS,
     SupervisorError,
@@ -1257,6 +1261,29 @@ def verify_recovered_run(
     }
 
 
+@contextmanager
+def _recovery_notifications(failed_run_id: str, slot: str) -> Iterator[dict[str, Any]]:
+    state: dict[str, Any] = {"status": "failed"}
+
+    def terminate(signum: int, _frame: object) -> None:
+        raise SystemExit(128 + signum)
+
+    # The CLI runs in the main thread. Turn TERM into normal stack unwinding
+    # so service handoff/timeouts can send an interrupted exit notification.
+    handle_term = threading.current_thread() is threading.main_thread()
+    previous_term = signal.signal(signal.SIGTERM, terminate) if handle_term else None
+    try:
+        notify_recovery(failed_run_id, slot, "started")
+        yield state
+    except (KeyboardInterrupt, SystemExit):
+        state = {"status": "interrupted"}
+        raise
+    finally:
+        if handle_term:
+            signal.signal(signal.SIGTERM, previous_term)
+        notify_recovery(failed_run_id, slot, **state)
+
+
 def recover_failed_run(
     root: Path,
     failed_run_id: str,
@@ -1313,6 +1340,32 @@ def recover_failed_run(
     except (OSError, json.JSONDecodeError, RecoveryError) as exc:
         raise RecoveryError("cannot reload the recovery attempt identity") from exc
 
+    with _recovery_notifications(failed_run_id, slot) as notification_state:
+        outcome = _complete_recovery_attempt(
+            root, failed_run_id, slot=slot, attempt_id=attempt_id, evidence=evidence,
+            deadline=deadline, recovery_started_at=recovery_started_at, command=command,
+            runner=runner, pull_request_verifier=pull_request_verifier,
+        )
+        notification_state.update(
+            status=outcome.status, successful_run_id=outcome.successful_run_id,
+            scope_blocker=outcome.scope_blocker,
+        )
+        return outcome
+
+
+def _complete_recovery_attempt(
+    root: Path,
+    failed_run_id: str,
+    *,
+    slot: str,
+    attempt_id: str,
+    evidence: Mapping[str, Any],
+    deadline: float,
+    recovery_started_at: datetime,
+    command: Sequence[str],
+    runner: Callable[..., subprocess.CompletedProcess[bytes]],
+    pull_request_verifier: PullRequestVerifier,
+) -> RecoveryOutcome:
     report: dict[str, Any] | None = None
     adapter_error: str | None = None
     controller: dict[str, Any] = {"status": "not-run"}
