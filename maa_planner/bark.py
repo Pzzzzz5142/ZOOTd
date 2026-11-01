@@ -1,4 +1,4 @@
-"""Optional, bounded Bark delivery after systemd stops a scheduled service."""
+"""Optional, bounded Bark delivery for scheduled results and recovery lifecycle."""
 from __future__ import annotations
 
 import argparse
@@ -8,6 +8,7 @@ import re
 import socket
 from datetime import datetime
 from pathlib import Path
+from typing import Mapping
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zoneinfo import ZoneInfo
@@ -20,6 +21,11 @@ GAME_NAMES = {"arknights": "明日方舟", "endfield": "终末地"}
 RESULTS = {"success": "正常结束", "timeout": "执行超时", "signal": "被信号中止",
            "exit-code": "执行失败", "core-dump": "进程崩溃", "resources": "资源不足",
            "start-limit-hit": "启动次数受限", "oom-kill": "内存不足被终止"}
+BLOCKERS = {"manual-login": "需要手动登录", "captcha-or-terms": "需要验证码或人工确认条款",
+            "six-star-recruitment": "需要人工确认六星公招", "unsupported-client": "客户端无法安全更新",
+            "proxy-unavailable": "没有可用代理", "stage-closed": "关卡不可用",
+            "privileged-host-change": "需要人工处理宿主权限", "destructive-game-data": "操作会破坏游戏数据",
+            "hard-policy": "需要人工处理授权边界", "time-window-expired": "恢复时间窗口已耗尽"}
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -50,6 +56,46 @@ def send_bark(url: str, title: str, body: str) -> bool:
         return True
     except Exception as exc:
         print(f"[zootd-bark] 推送失败（{type(exc).__name__}）。")
+        return False
+
+
+def _message_body(text: str, env: Mapping[str, str]) -> str:
+    source = env.get("ZOOTD_BARK_SOURCE", socket.gethostname()).strip()
+    prefix = f"[{source}] " if source else ""
+    timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
+    return f"{prefix}{text}\n{timestamp}（北京时间）"
+
+
+def notify_recovery(
+    failed_run_id: str, slot: str, status: str, *,
+    successful_run_id: str | None = None, scope_blocker: str = "none",
+) -> bool:
+    """Project only controller state and validated run IDs, never agent prose."""
+    url = os.environ.get("ZOOTD_BARK_URL", "").strip()
+    if not url:
+        return False
+    try:
+        if not RUN_ID.fullmatch(failed_run_id):
+            raise ValueError("invalid failed run identity")
+        if status == "started":
+            title = "ZOOTd 恢复 agent 进场"
+            text = f"{LABELS.get(slot, '手动运行')}出现故障，开始诊断与恢复。"
+        else:
+            label, text = {
+                "recovered": ("成功", "新一轮完整运行已通过独立验收。"),
+                "scope-blocked": ("需人工处理", BLOCKERS.get(scope_blocker, "恢复受阻，需要人工处理") + "。"),
+                "failed": ("失败", "恢复未通过验收，请查看恢复审计。"),
+                "interrupted": ("已中断", "恢复被中断，结果未确认。"),
+            }.get(status, ("结果未确认", "请查看恢复审计。"))
+            title = f"ZOOTd 恢复 agent 退出（{label}）"
+        text += f"\n失败运行：{failed_run_id}"
+        if status == "recovered":
+            if not isinstance(successful_run_id, str) or not RUN_ID.fullmatch(successful_run_id):
+                raise ValueError("invalid successful run identity")
+            text += f"\n成功运行：{successful_run_id}"
+        return send_bark(url, title, _message_body(text, os.environ))
+    except Exception as exc:
+        print(f"[zootd-bark] 恢复状态推送失败（{type(exc).__name__}）。")
         return False
 
 
@@ -93,10 +139,8 @@ def attendance_result(root: Path, invocation: str) -> tuple[bool, str]:
 
 
 def notification(root: Path, kind: str, env: dict) -> tuple[str, str]:
-    source = env.get("ZOOTD_BARK_SOURCE", "").strip() or socket.gethostname()
-    timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S")
     if kind == "test":
-        return "ZOOTd 推送测试", f"[{source}] Bark 已接入早晚托管与森空岛签到结果推送。\n{timestamp}（北京时间）"
+        return "ZOOTd 推送测试", _message_body("Bark 已接入早晚托管、森空岛签到与恢复 agent 进出状态推送。", env)
     invocation = env.get("INVOCATION_ID", "")
     if not re.fullmatch(r"[0-9a-f]{32}", invocation):
         raise ValueError("service invocation required")
@@ -110,7 +154,7 @@ def notification(root: Path, kind: str, env: dict) -> tuple[str, str]:
     service_detail = RESULTS.get(result, "服务结果未知")
     if kind == "morning" and result != "success":
         detail += "\n早晨服务未成功时，不会触发自动签到。"
-    return f"ZOOTd {LABELS[kind]}{status}", f"[{source}] {service_detail}\n{detail}\n{timestamp}（北京时间）"
+    return f"ZOOTd {LABELS[kind]}{status}", _message_body(f"{service_detail}\n{detail}", env)
 
 
 def main(argv=None) -> int:
