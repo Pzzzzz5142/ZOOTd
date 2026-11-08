@@ -1,11 +1,13 @@
 import fcntl
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
 
-from maa_planner.log_retention import RETENTION_SECONDS, retain
+from maa_planner.log_retention import RETENTION_SECONDS, main, retain
 from maa_planner.util import canonical_json, sha256_bytes
 
 
@@ -112,17 +114,79 @@ class LogRetentionTests(unittest.TestCase):
         self.assertEqual(result['status'], 'deferred')
         self.assertTrue(expired.exists())
 
-    def test_unfinished_recovery_defers_cleanup(self):
-        old = self.file('host/old.log')
-        rid = self.run_audit(1)
+    def unfinished_recovery(self, *, stamp=None, evidence=None):
+        rid = self.run_audit(1, extra={'evidence': evidence} if evidence else None)
         directory = self.root / f'var/state/supervisor/runs/{rid}/events'
         previous = json.loads((directory / '0001-run-finished.json').read_text())
         event = {'schema_version': 1, 'run_id': rid, 'sequence': 2,
                  'event_type': 'recovery-started', 'payload': {},
                  'previous_event_sha256': previous['event_sha256']}
         event['event_sha256'] = sha256_bytes(canonical_json(event))
-        self.file(f'supervisor/runs/{rid}/events/0002-recovery-started.json', json.dumps(event))
+        self.file(f'supervisor/runs/{rid}/events/0002-recovery-started.json', json.dumps(event), stamp)
+        return rid
+
+    def test_recent_unfinished_recovery_defers_cleanup_at_boundary(self):
+        old = self.file('host/old.log')
+        rid = self.unfinished_recovery(stamp=self.now - RETENTION_SECONDS)
+        result = retain(self.root, now=self.now)
+        self.assertEqual(result['status'], 'deferred')
+        self.assertIn(rid, result['reason'])
+        self.assertTrue(old.exists())
+
+    def test_stale_unfinished_recovery_keeps_bundle_and_evidence_without_blocking(self):
+        unrelated = self.file('host/unrelated.log')
+        evidence = self.file('host/incident.log')
+        rid = self.unfinished_recovery(evidence='var/state/host/incident.log')
+        screenshot = self.file(f'recovery/{rid}/screen.png')
+        audit = self.root / f'var/state/supervisor/runs/{rid}/events/0002-recovery-started.json'
+        original = audit.read_bytes()
+        preview = retain(self.root, dry_run=True, now=self.now)
+        self.assertEqual(preview['status'], 'dry-run')
+        self.assertEqual(preview['stale_recoveries'], [rid])
+        self.assertIn('unfinished-recovery', preview['retained_runs'][rid])
+        self.assertTrue(unrelated.exists())
+        result = retain(self.root, now=self.now)
+        self.assertEqual(result['status'], 'ok')
+        self.assertFalse(unrelated.exists())
+        self.assertTrue(evidence.exists())
+        self.assertTrue(screenshot.exists())
+        self.assertEqual(audit.read_bytes(), original)
+
+    def test_recent_recovery_file_still_blocks_even_with_old_start_event(self):
+        old = self.file('host/old.log')
+        rid = self.unfinished_recovery()
+        self.file(f'recovery/{rid}/codex-thread.json', '{}', self.now)
         self.assertEqual(retain(self.root, now=self.now)['status'], 'deferred')
+        self.assertTrue(old.exists())
+
+    def test_summary_counts_expired_rotation_and_excluded_data_without_mutation(self):
+        old = self.file('host/old.log', '1234')
+        active = self.file('debug/asst.log', 'core', self.now)
+        self.file('copilot/private-job.json', 'keep')
+        self.file('navigation/run/screen.png', 'image')
+        self.file('event-solver/plan.json', '{}')
+        self.file('preserved-worktrees/incident/untracked.tar', 'user work')
+        self.run_audit(1)
+        result = retain(self.root, dry_run=True, now=self.now)
+        self.assertEqual(result['bytes_expired'], sum(r['bytes_expired'] for r in result['summary'].values()))
+        host = result['summary']['var/state/host']
+        self.assertEqual((host['files'], host['bytes'], host['expired_files'], host['bytes_expired']), (1, 4, 1, 4))
+        core = result['summary']['var/state/debug']
+        self.assertEqual((core['rotated_files'], core['bytes_rotated'], core['bytes_expired']), (1, 4, 0))
+        for area in ('copilot', 'navigation', 'event-solver', 'preserved-worktrees'):
+            row = result['summary'][f'var/state/{area}']
+            self.assertEqual(row['policy'], 'excluded')
+            self.assertEqual(row['expired_files'], 0)
+        self.assertEqual(old.read_text(), '1234')
+        self.assertEqual(active.read_text(), 'core')
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            main(['--project-root', str(self.root), '--dry-run', '--summary'])
+        compact = json.loads(output.getvalue())
+        self.assertEqual(compact['status'], 'dry-run')
+        self.assertNotIn('deleted', compact)
+        self.assertNotIn('rotated', compact)
+        self.assertIn('deleted_entries', compact)
+        self.assertIn('summary', compact)
         self.assertTrue(old.exists())
 
     def test_repair_worktree_is_not_deleted(self):

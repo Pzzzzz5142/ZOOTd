@@ -195,15 +195,20 @@ Core 和资源按完整代际验证、原子提升或回滚，详见[运行时�
 
 清理范围包括 `host/` 日志、`debug/` 日志与截图、历史规划和探针，以及已结束的 supervisor run 和对应 recovery 目录。审计按整轮删除，不截断或改写单条事件。持续追加的 `asst.log` / `asst.bak.log` 在空闲时移入 `debug/archive/`，保留原始内容和修改时间，下次 MAA 运行重新创建日志；归档同样按 7 天过期。刚启用时，已有聚合日志内部可能包含更早的行，随整个文件过期清除。
 
-当前状态、库存、能力账本、runtime/receipt 和缓存不清理。未结束的 run、最近一次成功 full run、当前状态或保留审计引用的证据及关联 run 会延长保留；带 repair worktree 的事故也保留，避免删除未交付的修复。存在未结束的恢复时整次清理延后。孤立的 recovery 目录保守保留，需人工确认归属。系统 journal 由宿主 journald 管理，不更改其他服务的保留策略。
+当前状态、库存、能力账本、runtime/receipt 和缓存不清理。未结束的 run、最近一次成功 full run、当前状态或保留审计引用的证据及关联 run 会延长保留；带 repair worktree 的事故也保留，避免删除未交付的修复。存在未结束且事故目录最近 7 天仍有文件更新的恢复时，整次清理延后；事故目录包括该 run 的审计和对应 recovery 文件。若这些文件均已超过 7 天未更新，已远超恢复 controller 最长 9 小时预算，则只保留这个历史未结束事故、关联 run 和引用证据，不再阻塞其他过期日志。不会补写恢复结束或改写旧审计。孤立的 recovery 目录保守保留，需人工确认归属。系统 journal 由宿主 journald 管理，不更改其他服务的保留策略。
+
+分类预览统计各目录的文件数、字节数、过期可回收量、轮转量及受保护 run 的保留原因，并列出上述历史未结束事故。轮转只是移动文件，不计入释放空间。`copilot/`、`navigation/`、`event-solver/`、`var/battle-solver/` 的作业、截图和执行资料仅统计占用，不纳入删除；`preserved-worktrees/` 用户备份、`var/cache/` 和 `var/data/` 同样保留。不要把这些路径下的作业、输入、凭据、状态或 runtime 当作普通日志按后缀删除。
 
 预览和手动执行（不启动游戏）：
 
 ```bash
 ./bin/zootd log-cleanup --dry-run
+./bin/zootd log-cleanup --dry-run --summary
 ./bin/zootd log-cleanup
 systemctl --user status zootd-log-cleanup.timer
 ```
+
+`--dry-run` 不删除或轮转文件；加 `--summary` 隐藏逐文件清单并格式化分类结果。原有 JSON 字段继续可用，分类信息是新增字段；显式使用 `--summary` 时用条目数替代详细路径列表。若结果为 `busy` 或 `deferred`，本次不会部分清理，分别查看锁名或具体延期原因。
 
 ## 上游资料
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+from dataclasses import dataclass
 import fcntl
 import json
 import os
@@ -13,6 +14,28 @@ import time
 from .supervisor import SupervisorError, load_run_events
 
 RETENTION_SECONDS = 7 * 24 * 60 * 60
+REPORT_AREAS = {
+    'var/state/host': 'managed',
+    'var/state/debug': 'managed',
+    'var/state/planner': 'managed',
+    'var/state/supervisor': 'managed',
+    'var/state/recovery': 'managed',
+    'var/state/copilot': 'excluded',
+    'var/state/navigation': 'excluded',
+    'var/state/event-solver': 'excluded',
+    'var/battle-solver': 'excluded',
+    'var/state/preserved-worktrees': 'excluded',
+    'var/cache': 'excluded',
+    'var/data': 'excluded',
+}
+
+
+@dataclass
+class RetentionPlan:
+    deletions: list[Path]
+    rotations: list[Path]
+    retained_runs: dict[str, list[str]]
+    stale_recoveries: list[str]
 
 
 def regular_files(path: Path):
@@ -41,7 +64,7 @@ def strings(value):
             yield from strings(child)
 
 
-def plan(root: Path, now: float) -> tuple[list[Path], list[Path]]:
+def plan(root: Path, now: float) -> RetentionPlan:
     """Keep live state, referenced evidence and complete parent/child run chains."""
     state = root / 'var/state'
     cutoff = now - RETENTION_SECONDS
@@ -51,7 +74,12 @@ def plan(root: Path, now: float) -> tuple[list[Path], list[Path]]:
             raise ValueError(f'retention directory must not traverse symlinks: {area}')
     runs = {}
     bundles = {}
-    keep = set()
+    keep = {}
+    stale_recoveries = []
+
+    def preserve(rid: str, reason: str):
+        keep.setdefault(rid, set()).add(reason)
+
     protected = set()
     values = []
     for area in ('planner', 'supervisor'):
@@ -67,28 +95,36 @@ def plan(root: Path, now: float) -> tuple[list[Path], list[Path]]:
         files = list(regular_files(directory)) + list(regular_files(recovery))
         bundles[directory.name] = files
         types = {e['event_type'] for e in events}
+        recent = max(p.stat().st_mtime for p in files) >= cutoff
         # Do not prune while a recovery controller may be between adapter calls.
         if 'recovery-started' in types and 'recovery-finished' not in types:
-            raise ValueError('unfinished recovery; retention deferred')
-        if (max(p.stat().st_mtime for p in files) >= cutoff
-                or 'run-finished' not in types
-                or (recovery / 'repair-worktree').exists()):
-            keep.add(directory.name)
+            if recent:
+                raise ValueError(f'unfinished recovery; retention deferred: {directory.name}')
+            # Controllers have a nine-hour budget. With no bundle writes for
+            # seven days this is historical, but its audit/evidence still stay.
+            preserve(directory.name, 'unfinished-recovery')
+            stale_recoveries.append(directory.name)
+        if recent:
+            preserve(directory.name, 'recent')
+        if 'run-finished' not in types:
+            preserve(directory.name, 'unfinished-run')
+        if (recovery / 'repair-worktree').exists():
+            preserve(directory.name, 'repair-worktree')
     successes = [rid for rid, events in runs.items()
                  if events[0]['payload'].get('mode') == 'full'
                  and any(e['event_type'] == 'run-finished' and e['payload'].get('status') == 'success' for e in events)]
     if successes:
-        keep.add(max(successes))  # Recovery's last successful full-run baseline.
+        preserve(max(successes), 'latest-full-success')
     expanded = set()
-    while values or keep - expanded:
-        for rid in keep - expanded:
+    while values or keep.keys() - expanded:
+        for rid in keep.keys() - expanded:
             values.extend(runs[rid])
             expanded.add(rid)
         pending, values = values, []
         for value in pending:
             for raw in strings(value):
-                if raw in runs:
-                    keep.add(raw)
+                if raw in runs and raw not in keep:
+                    preserve(raw, 'referenced')
                 relative = raw.removeprefix(str(root) + '/')
                 if not relative.startswith('var/state/'):
                     continue
@@ -97,8 +133,9 @@ def plan(root: Path, now: float) -> tuple[list[Path], list[Path]]:
                     continue
                 protected.add(path)
                 parts = Path(relative).parts
-                if len(parts) > 4 and parts[2:4] == ('supervisor', 'runs') and parts[4] in runs:
-                    keep.add(parts[4])
+                if (len(parts) > 4 and parts[2:4] == ('supervisor', 'runs')
+                        and parts[4] in runs and parts[4] not in keep):
+                    preserve(parts[4], 'referenced')
     for rid in keep:
         protected.update(bundles[rid])
     deletions = []
@@ -120,7 +157,32 @@ def plan(root: Path, now: float) -> tuple[list[Path], list[Path]]:
     rotations = [p for name in ('asst.log', 'asst.bak.log')
                  for p in regular_files(state / 'debug' / name)
                  if p not in deletions and p not in protected and p.stat().st_size]
-    return sorted(deletions), rotations
+    return RetentionPlan(sorted(deletions), rotations,
+                         {rid: sorted(reasons) for rid, reasons in sorted(keep.items())},
+                         sorted(stale_recoveries))
+
+
+def summarize(root: Path, planned: RetentionPlan) -> dict:
+    """Count bytes before mutation; rotations preserve bytes rather than reclaim them."""
+    expired = {p for item in planned.deletions for p in regular_files(item)}
+    rotated = set(planned.rotations)
+    result = {}
+    for relative, policy in REPORT_AREAS.items():
+        row = {'policy': policy, 'files': 0, 'bytes': 0,
+               'expired_files': 0, 'bytes_expired': 0,
+               'rotated_files': 0, 'bytes_rotated': 0}
+        for path in regular_files(root / relative):
+            size = path.stat().st_size
+            row['files'] += 1
+            row['bytes'] += size
+            if path in expired:
+                row['expired_files'] += 1
+                row['bytes_expired'] += size
+            if path in rotated:
+                row['rotated_files'] += 1
+                row['bytes_rotated'] += size
+        result[relative] = row
+    return result
 
 
 def retain(root: Path, *, dry_run: bool = False, now: float | None = None) -> dict:
@@ -135,11 +197,13 @@ def retain(root: Path, *, dry_run: bool = False, now: float | None = None) -> di
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                return {'status': 'busy', 'deleted': [], 'rotated': []}
+                return {'status': 'busy', 'busy_lock': name, 'deleted': [], 'rotated': []}
         try:
-            deletions, rotations = plan(root, now)
+            planned = plan(root, now)
         except (ValueError, SupervisorError) as exc:
             return {'status': 'deferred', 'reason': str(exc), 'deleted': [], 'rotated': []}
+        deletions, rotations = planned.deletions, planned.rotations
+        summary = summarize(root, planned)
         reclaimed = sum(p.stat().st_size for item in deletions for p in regular_files(item))
         if not dry_run:
             for path in deletions:
@@ -158,19 +222,29 @@ def retain(root: Path, *, dry_run: bool = False, now: float | None = None) -> di
                 path.unlink()
         return {'status': 'dry-run' if dry_run else 'ok', 'retention_days': 7,
                 'bytes_expired': reclaimed,
+                'summary': summary, 'retained_runs': planned.retained_runs,
+                'stale_recoveries': planned.stale_recoveries,
                 'deleted': [str(p.relative_to(root)) for p in deletions],
                 'rotated': [str(p.relative_to(root)) for p in rotations]}
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project-root', type=Path, required=True)
     parser.add_argument('--dry-run', action='store_true')
-    args = parser.parse_args()
+    parser.add_argument('--summary', action='store_true', help='show category totals instead of file lists')
+    args = parser.parse_args(argv)
     result = retain(args.project_root, dry_run=args.dry_run)
-    if not args.dry_run:
+    if not args.dry_run or args.summary:
         result['deleted_entries'] = len(result.pop('deleted'))
-    print(json.dumps(result, ensure_ascii=False))
+    if args.summary:
+        result['rotated_entries'] = len(result.pop('rotated'))
+        kept = result.pop('retained_runs', {})
+        result['retained_runs'] = len(kept)
+        result['retained_run_reasons'] = {
+            reason: sum(reason in reasons for reasons in kept.values())
+            for reason in sorted({r for reasons in kept.values() for r in reasons})}
+    print(json.dumps(result, ensure_ascii=False, indent=2 if args.summary else None))
 
 
 if __name__ == '__main__':
