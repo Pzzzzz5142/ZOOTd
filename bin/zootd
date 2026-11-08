@@ -326,7 +326,8 @@ Commands:
   bark-notify morning|evening|attendance|test
                         Send a service result or test notification to local Bark settings
   status                Show Waydroid and systemd timer status
-  log-cleanup [--dry-run] Rotate logs and expire project history older than seven days
+  log-cleanup [--dry-run] [--summary]
+                        Rotate seven-day logs; preview category totals with both flags
   logs                  Follow logs from the user service
 EOF
 }
