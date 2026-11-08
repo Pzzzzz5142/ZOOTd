@@ -191,6 +191,8 @@ Core 和资源按完整代际验证、原子提升或回滚，详见[运行时�
 
 ## 日志保留
 
+跨周的持续故障统计另见[自动 fallback 改进](fallback-maintenance.md)。`zootd-fallback-monitor.timer` 每天 04:05 在空闲时归档精简故障原因并评估未来修复效果，合格的新规则会自动测试、通过 PR squash 上线并 Bark 通知；每周最多一次维护模型调用。通过 `./scripts/install-systemd.sh --enable` 部署。预览用 `./bin/zootd fallback-monitor --dry-run`，不调用模型或改动策略。
+
 项目日志按最近修改时间滚动保留 7×24 小时。`zootd-log-cleanup.timer` 每天 04:30（Asia/Shanghai）清理，关机错过后补跑；运行、更新或恢复忙时跳过，下次再试。通过 `./scripts/install-systemd.sh --enable` 安装并启用。
 
 清理范围包括 `host/` 日志、`debug/` 日志与截图、历史规划和探针，以及已结束的 supervisor run 和对应 recovery 目录。审计按整轮删除，不截断或改写单条事件。持续追加的 `asst.log` / `asst.bak.log` 在空闲时移入 `debug/archive/`，保留原始内容和修改时间，下次 MAA 运行重新创建日志；归档同样按 7 天过期。刚启用时，已有聚合日志内部可能包含更早的行，随整个文件过期清除。

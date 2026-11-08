@@ -1,0 +1,11 @@
+[Unit]
+Description=Monitor recurring ZOOTd failures and validate conservative fallback rules
+ConditionPathExists=%h/Projects/zootd/bin/zootd
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/zootd
+ExecStart=%h/Projects/zootd/bin/zootd fallback-monitor --improve
+TimeoutStartSec=20m
+Nice=10
+IOSchedulingClass=idle

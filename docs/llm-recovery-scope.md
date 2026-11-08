@@ -1,6 +1,6 @@
 # ZOOTd unattended recovery scope
 
-Version: 15
+Version: 16
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -85,6 +85,12 @@ game day within the 24-hour freshness limit. The 18:00 slot and all recovery
 replays also prefer that valid snapshot. If it is missing, invalid, stale,
 account-mismatched, or lacks Pure Gold, the supplied launcher takes at most one
 fresh Depot scan before daily, including at night, and reuses it for farming.
+For a normal (non-recovery) launcher run only, a separately approved recurring
+fault rule may restart its owned Waydroid session and replace one failed Depot
+startup attempt when fresh native ANR evidence exists and no valid scan has
+completed. It shares the run's one learned-repair budget with daily; it never
+authorizes an additional farming-stage scan. Recovery child runs do not activate
+these learned repairs. Do not imitate this exception with manual extra scans.
 Use that managed path rather than scanning separately or editing inventory.
 Do not alter snapshot timestamps or fabricate inventory. A failed replacement
 scan remains a failed phase, not a success proof.

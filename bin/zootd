@@ -328,6 +328,8 @@ Commands:
   status                Show Waydroid and systemd timer status
   log-cleanup [--dry-run] [--summary]
                         Rotate seven-day logs; preview category totals with both flags
+  fallback-monitor [--dry-run] [--improve]
+                        Track recurring failures, repair trials and automatic rule releases
   logs                  Follow logs from the user service
 EOF
 }
@@ -441,6 +443,12 @@ case "${command_name}" in
     log-cleanup)
         shift
         exec "${project_root}/scripts/cleanup-logs.sh" "$@"
+        ;;
+    fallback-monitor)
+        shift
+        export PYTHONPATH="${project_root}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec "${project_root}/.venv/bin/python" -m maa_planner.auto_fallback \
+            --project-root "${project_root}" monitor "$@"
         ;;
     logs)
         exec journalctl \

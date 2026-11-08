@@ -16,6 +16,8 @@ install -m 0644 -- "${project_root}/systemd/zootd-codex-update.service" "${unit_
 install -m 0644 -- "${project_root}/systemd/zootd-codex-update.timer" "${unit_dir}/zootd-codex-update.timer"
 install -m 0644 -- "${project_root}/systemd/zootd-log-cleanup.service" "${unit_dir}/zootd-log-cleanup.service"
 install -m 0644 -- "${project_root}/systemd/zootd-log-cleanup.timer" "${unit_dir}/zootd-log-cleanup.timer"
+install -m 0644 -- "${project_root}/systemd/zootd-fallback-monitor.service" "${unit_dir}/zootd-fallback-monitor.service"
+install -m 0644 -- "${project_root}/systemd/zootd-fallback-monitor.timer" "${unit_dir}/zootd-fallback-monitor.timer"
 install -m 0644 -- "${project_root}/systemd/zootd-dashboard.service" "${unit_dir}/zootd-dashboard.service"
 install -m 0644 -- "${project_root}/systemd/zootd-skland-sign.service" "${unit_dir}/zootd-skland-sign.service"
 systemctl --user daemon-reload
@@ -36,12 +38,12 @@ if [[ "${1:-}" == --enable ]]; then
         exit 1
     }
     systemctl --user enable --now \
-        zootd-log-cleanup.timer zootd-codex-update.timer zootd-runtime-update.timer \
+        zootd-fallback-monitor.timer zootd-log-cleanup.timer zootd-codex-update.timer zootd-runtime-update.timer \
         zootd-prereset.timer zootd.timer
     systemctl --user list-timers \
-        zootd-log-cleanup.timer zootd-codex-update.timer zootd-runtime-update.timer \
+        zootd-fallback-monitor.timer zootd-log-cleanup.timer zootd-codex-update.timer zootd-runtime-update.timer \
         zootd-prereset.timer zootd.timer --no-pager
 else
     printf 'Existing timer enablement is unchanged. Enable timers after a successful manual run with:\n'
-    printf '  systemctl --user enable --now zootd-log-cleanup.timer zootd-codex-update.timer zootd-runtime-update.timer zootd-prereset.timer zootd.timer\n'
+    printf '  systemctl --user enable --now zootd-fallback-monitor.timer zootd-log-cleanup.timer zootd-codex-update.timer zootd-runtime-update.timer zootd-prereset.timer zootd.timer\n'
 fi

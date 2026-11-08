@@ -10,6 +10,7 @@
 | [开发指南](development.md) | 代码目录、战术求解与 PRTS 作业修改边界、测试、Git 约定与运行证据 |
 | [工程设计指南](engineering-guidelines.md) | 每次开发必读：模块边界、数据维护、前向兼容、历史依据与工程投入 |
 | [LLM 诊断与整轮恢复](recovery.md) | adapter 职责、恢复验证、连通性探针与 SDK 更新 |
+| [持续故障与自动 fallback 改进](fallback-maintenance.md) | 跨日期故障统计、保守规则自动发布、未来效果跟踪与停用 |
 | [恢复 scope 与 FAQ](llm-recovery-scope.md) | 恢复代理实际读取的版本化操作契约 |
 | [历史事故与验收记录](history.md) | 旧实现的事故、修复背景与当时验收结果 |
 | [Copilot 实验路线图与进度](copilot/README.md) | 显式实验命令的分阶段任务、依赖和验收进度 |
