@@ -10,7 +10,10 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from maa_planner import bark, skland_attendance as sign
-from maa_planner.supervisor import RUN_MODES, finish_run, record_phase, start_run
+from maa_planner.supervisor import (
+    RUN_MODES, finish_run, load_run_events, record_phase, record_recovery_report,
+    record_recovery_started, start_run,
+)
 from maa_planner.util import atomic_write_json
 
 
@@ -128,6 +131,147 @@ class BarkTests(unittest.TestCase):
         self.assertFalse(bark.daily_result(self.root, INVOCATION)[0])
         self.run_record(mode="dry-run")
         self.assertFalse(bark.daily_result(self.root, INVOCATION)[0])
+
+    def recovery_record(self, *, status="recovered", child=True, finish=True,
+                        attempt_matches=True, proof_matches=True, report=True,
+                        inherit_invocation=False, summary=None, actions=None,
+                        audit_version=1, report_version=2, repair=None):
+        parent = self.run_record(result="failed")
+        attempt = {"attempt_id": "a" * 32, "slot": "morning"}
+        record_recovery_started(self.root, parent, {"recovery_attempt": attempt})
+        child_id = None
+        proof = {}
+        if child:
+            with patch.dict(os.environ, {
+                "INVOCATION_ID": INVOCATION if inherit_invocation else "",
+                "MAA_RECOVERY_ACTIVE": "true", "MAA_RECOVERY_PARENT_RUN_ID": parent,
+                "MAA_RECOVERY_ATTEMPT_ID": ("a" if attempt_matches else "b") * 32,
+                "MAA_RECOVERY_SLOT": "morning",
+            }):
+                child_id = self.run_record(result="succeeded" if status == "recovered" else "failed")
+            events = load_run_events(self.root, child_id)
+            proof = {"successful_run_id": child_id,
+                     "event_sha256": events[-1]["event_sha256"] if proof_matches else "0" * 64}
+        if finish:
+            agent = {"report": {
+                "schema_version": report_version,
+                "summary": summary or "客户端无响应；Android ANR 与启动日志一致。",
+                "actions_taken": actions or ["重建 Waydroid 会话并重启客户端，保留游戏数据。", "重新执行完整日常。"],
+                "scope_blocker": "manual-login" if status == "scope-blocked" else "none",
+            }} if report else {"error": "adapter timed out"}
+            record_recovery_report(self.root, parent, {
+                "schema_version": audit_version, "status": status, "agent": agent,
+                "controller_verification": {
+                    "status": {"recovered": "success", "scope-blocked": "scope-accepted",
+                               "failed": "rejected"}[status],
+                    "run": proof,
+                    "code_repair": repair or {"status": "not-needed"},
+                },
+            })
+        return parent, child_id
+
+    def test_service_settlement_posts_agent_diagnosis_and_fix_with_linked_child_proof(self):
+        for inherited in (False, True):
+            with self.subTest(inherit_invocation=inherited):
+                parent, child = self.recovery_record(inherit_invocation=inherited)
+                accepted, body = bark.daily_result(self.root, INVOCATION)
+                self.assertTrue(accepted)
+                self.assertIn("Android ANR", body)
+                self.assertIn("重建 Waydroid 会话", body)
+                self.assertIn("9 阶段及清理通过独立验收", body)
+                self.assertIn(child, body)
+                self.assertIn(parent + "/events/", body)
+                opener = self.response()
+                with patch.dict(os.environ, {"ZOOTD_BARK_URL": "https://example.invalid/key", "SERVICE_RESULT": "exit-code"}), \
+                     patch.object(bark, "build_opener", return_value=opener), \
+                     contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(bark.main(["--project-root", str(self.root), "morning"]), 0)
+                payload = json.loads(opener.open.call_args.args[0].data)
+                self.assertIn("异常", payload["title"])  # Original service failure remains visible.
+                self.assertIn(body, payload["body"])
+                self.assertNotIn("缺少与本次执行匹配", payload["body"])
+
+    def test_failed_blocked_pending_or_missing_reports_never_claim_recovery(self):
+        for status in ("failed", "scope-blocked"):
+            for child in (False, True):
+                with self.subTest(status=status, child=child):
+                    self.recovery_record(status=status, child=child)
+                    accepted, body = bark.daily_result(self.root, INVOCATION)
+                    self.assertFalse(accepted)
+                    self.assertIn("Android ANR", body)
+                    self.assertIn("重建 Waydroid 会话", body)
+                    self.assertIn("需要手动登录" if status == "scope-blocked" else "恢复未通过验收", body)
+        self.recovery_record(finish=False)
+        accepted, body = bark.daily_result(self.root, INVOCATION)
+        self.assertFalse(accepted)
+        self.assertIn("尚无终态报告", body)
+        self.recovery_record(status="failed", report=False)
+        accepted, body = bark.daily_result(self.root, INVOCATION)
+        self.assertFalse(accepted)
+        self.assertIn("未提交有效诊断报告", body)
+        self.assertIn("adapter timed out", body)
+
+    def test_recovery_settlement_rejects_wrong_invocation_attempt_proof_and_newer_run(self):
+        self.recovery_record()
+        accepted, body = bark.daily_result(self.root, "b" * 32)
+        self.assertFalse(accepted)
+        self.assertNotIn("Android ANR", body)
+        self.recovery_record(attempt_matches=False)
+        title, body = bark.notification(self.root, "morning", self.env)
+        self.assertTrue(title.endswith("异常"))
+        self.assertIn("证据无法读取", body)
+        self.recovery_record(proof_matches=False)
+        accepted, body = bark.daily_result(self.root, INVOCATION)
+        self.assertFalse(accepted)
+        self.assertIn("证据不符", body)
+        self.assertNotIn("通过独立验收", body)
+        self.run_record(complete=False)
+        accepted, body = bark.daily_result(self.root, INVOCATION)
+        self.assertFalse(accepted)
+        self.assertNotIn("Android ANR", body)
+        _, child = self.recovery_record()
+        event = next((self.root / "var/state/supervisor/runs" / child / "events").glob("*run-finished.json"))
+        event.write_text(event.read_text().replace('"success"', '"failed"'))
+        self.assertFalse(bark.daily_result(self.root, INVOCATION)[0])
+
+    def test_future_recovery_formats_do_not_become_success(self):
+        for versions in ({"audit_version": 2}, {"report_version": 3}):
+            with self.subTest(versions=versions):
+                self.recovery_record(**versions)
+                accepted, body = bark.daily_result(self.root, INVOCATION)
+                self.assertFalse(accepted)
+                self.assertIn("版本不受支持", body)
+
+    def test_code_repair_keeps_verified_pr_and_application_status(self):
+        for verified in (True, False):
+            with self.subTest(verified=verified):
+                self.recovery_record(repair={
+                    "status": "pr-opened", "commit": "a" * 40,
+                    "pull_request_url": "https://github.com/example/repo/pull/7",
+                    "pull_request_verification": {"status": "verified" if verified else "unverified"},
+                    "applied_to_runtime": False,
+                })
+                accepted, body = bark.daily_result(self.root, INVOCATION)
+                self.assertTrue(accepted)
+                self.assertIn("本轮未应用", body)
+                if verified:
+                    self.assertIn("https://github.com/example/repo/pull/7", body)
+                else:
+                    self.assertNotIn("https://github.com", body)
+                    self.assertIn("PR 未发布或未核验", body)
+
+    def test_long_reports_keep_fix_verdict_audit_and_timestamp_within_post_budget(self):
+        self.recovery_record(summary="诊断信息" * 1800,
+                             actions=[f"修复步骤{i}：" + "操作结果" * 100 for i in range(8)])
+        _, body = bark.notification(self.root, "morning", self.env)
+        self.assertLessEqual(len(body.encode()), 3000)
+        self.assertIn("诊断（agent）：", body)
+        self.assertIn("修复步骤0", body)
+        self.assertIn("修复步骤5", body)
+        self.assertIn("另 2 项见审计", body)
+        self.assertIn("通过独立验收", body)
+        self.assertIn("recovery-finished.json", body)
+        self.assertIn("北京时间", body)
 
     def attendance(self):
         signer = lambda credentials, target: {"status": "succeeded", "rewards": [{"name": "龙门币", "count": 500}], "error": None}

@@ -780,7 +780,7 @@ def _incident_evidence(
         "scope": {
             "path": "docs/llm-recovery-scope.md",
             "sha256": sha256_bytes(scope_bytes),
-            "version": 14,
+            "version": 15,
         },
         "controller_repository": controller_repository,
         "repair_policy": {
