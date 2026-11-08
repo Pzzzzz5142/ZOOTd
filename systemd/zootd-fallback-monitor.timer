@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily ZOOTd recurring-failure and fallback outcome review
+
+[Timer]
+OnCalendar=*-*-* 04:05:00 Asia/Shanghai
+Persistent=true
+AccuracySec=1m
+Unit=zootd-fallback-monitor.service
+
+[Install]
+WantedBy=timers.target

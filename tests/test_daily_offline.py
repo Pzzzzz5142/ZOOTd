@@ -109,6 +109,8 @@ info() { :; }
 die() { exit 1; }
 server_game_day_now() { echo 2026-09-21; }
 render_runtime_task() { :; }
+request_learned_restart() { return 1; }
+finish_learned_restart() { :; }
 daily_log_is_complete() { grep -q success "$1"; }
 attempts=0
 run_daily_attempt() {

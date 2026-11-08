@@ -1,0 +1,10 @@
+{
+  "positive": [{"startup_failed": true, "fresh_official_input_anr": true, "game_offline": false, "native_motion_timeout": true}],
+  "negative": [
+    {"startup_failed": true, "fresh_official_input_anr": false, "game_offline": false},
+    {"startup_failed": true, "fresh_official_input_anr": null, "game_offline": false},
+    {"startup_failed": false, "fresh_official_input_anr": true, "game_offline": false},
+    {"startup_failed": true, "game_offline": false},
+    {"startup_failed": true, "fresh_official_input_anr": true, "game_offline": true}
+  ]
+}

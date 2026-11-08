@@ -783,13 +783,13 @@ run_daily_attempt() {
 
 restart_waydroid_after_game_offline() {
     local attempt
-    info "GameOffline in this daily attempt; rebuilding Waydroid once before the daily retry"
+    info "confirmed startup fault; rebuilding Waydroid once before the replacement attempt"
     if [[ -n "${waydroid_serial}" ]]; then
         timeout --signal=TERM --kill-after=2s 10s \
             adb -s "${waydroid_serial}" shell am force-stop "${official_package}" || true
     fi
     timeout --signal=TERM --kill-after=5s 20s waydroid session stop ||
-        die "could not stop Waydroid for the GameOffline retry"
+        die "could not stop Waydroid for the startup fault retry"
     if waydroid_session_is_running; then
         die "Waydroid is still running after the GameOffline session stop"
     fi
@@ -820,7 +820,7 @@ restart_waydroid_after_game_offline() {
     waydroid_serial=""
     session_started_by_launcher=false
     prepare_waydroid_device
-    info "Waydroid rebuilt; the daily retry will relaunch the existing official game account"
+    info "Waydroid rebuilt; the replacement attempt will relaunch the existing official game account"
 }
 
 run_with_timeout() {
@@ -888,38 +888,68 @@ run_farming_soft_with_timeout() {
     run_soft_with_timeout "${duration_seconds}s" "$@"
 }
 
-scan_depot_inventory_once() {
-    local log_file="$1"
-    local command_succeeded=false
+request_learned_restart() {
+    local log_file="$1" phase="$2"
+    local -a owned_args=()
+    [[ -n "${supervisor_run_id:-}" ]] || return 1
+    if [[ "${session_started_by_launcher:-false}" == true ]]; then
+        owned_args=(--owned-session)
+    fi
+    PYTHONPATH="${project_root}" python3 -m maa_planner.auto_fallback \
+        --project-root "${project_root}" probe --run-id "${supervisor_run_id}" \
+        --log "${log_file}" --phase "${phase}" "${owned_args[@]}" 8>&- 9>&-
+}
 
-    depot_evidence_log="${log_file}"
-    supervisor_active_evidence="${log_file}"
+finish_learned_restart() {
+    local log_file="$1" accepted="$2"
+    local -a result_args=()
+    if [[ "${accepted}" == true ]]; then result_args=(--accepted); fi
+    PYTHONPATH="${project_root}" python3 -m maa_planner.auto_fallback \
+        --project-root "${project_root}" finish --run-id "${supervisor_run_id}" \
+        --log "${log_file}" "${result_args[@]}" 8>&- 9>&- || true
+}
+
+scan_depot_inventory_once() {
+    local log_file="$1" first_log="$1" attempt
+    local command_succeeded=false learned_restart=false
     if [[ "${depot_scan_attempted}" == true ]]; then
         info "refusing a second Depot scan in the same launcher run"
         return 1
     fi
 
     depot_scan_attempted=true
-    depot_scan_outcome=scan-failed
-    if run_farming_soft_with_timeout 1800 "${maa}" --batch --log-file="${log_file}" \
-        run depot --profile "${MAA_HOST_PROFILE}"; then
-        command_succeeded=true
-    fi
-
-    if [[ "${command_succeeded}" != true ]]; then
-        info "combined startup and Depot task failed before producing a valid snapshot"
-        return 1
-    fi
-
-    depot_scan_outcome=snapshot-invalid
-    if ! run_farming_soft_with_timeout 60 "${planner}" inventory-from-log \
-        --log "${log_file}"; then
-        info "Depot task completed but produced no valid inventory snapshot"
-        return 1
-    fi
-
-    depot_scan_outcome=ready
-    inventory_snapshot_ready=true
+    for attempt in 1 2; do
+        depot_evidence_log="${log_file}"
+        supervisor_active_evidence="${log_file}"
+        command_succeeded=false
+        depot_scan_outcome=scan-failed
+        if run_farming_soft_with_timeout 1800 "${maa}" --batch --log-file="${log_file}" \
+            run depot --profile "${MAA_HOST_PROFILE}"; then
+            command_succeeded=true
+        fi
+        if [[ "${command_succeeded}" != true ]]; then
+            info "combined startup and Depot task failed before producing a valid snapshot"
+        else
+            depot_scan_outcome=snapshot-invalid
+            if run_farming_soft_with_timeout 60 "${planner}" inventory-from-log --log "${log_file}"; then
+                depot_scan_outcome=ready
+                inventory_snapshot_ready=true
+                if [[ "${learned_restart}" == true ]]; then finish_learned_restart "${log_file}" true; fi
+                return 0
+            fi
+            info "Depot task completed but produced no valid inventory snapshot"
+        fi
+        # Only a precise approved startup fault before a valid scan allows the
+        # one replacement attempt. Farming cannot call this scan again later.
+        if (( attempt == 1 )) && request_learned_restart "${log_file}" depot; then
+            learned_restart=true
+            restart_waydroid_after_game_offline
+            log_file="${first_log%.log}-anr-retry.log"
+        else
+            if [[ "${learned_restart}" == true ]]; then finish_learned_restart "${log_file}" false; fi
+            return 1
+        fi
+    done
 }
 
 proxy_preflight_log_is_complete() {
@@ -1121,6 +1151,7 @@ server_game_day_now() {
 run_daily_routine() {
     local daily_stamp daily_log retry_log
     local started_game_day completed_game_day
+    local learned_restart=false
 
     started_game_day="$(server_game_day_now)"
     info "running the daily routine for game day ${started_game_day} (04:00 reset)"
@@ -1135,7 +1166,10 @@ run_daily_routine() {
        daily_log_is_complete "${daily_log}"; then
         info "daily first attempt has complete protected task-chain evidence"
     else
-        if daily_log_has_game_offline "${daily_log}"; then
+        if request_learned_restart "${daily_log}" daily; then
+            learned_restart=true
+        fi
+        if daily_log_has_game_offline "${daily_log}" || [[ "${learned_restart}" == true ]]; then
             restart_waydroid_after_game_offline
         fi
         retry_log="${project_root}/var/state/host/${daily_stamp}-daily-retry.log"
@@ -1144,10 +1178,16 @@ run_daily_routine() {
         supervisor_active_evidence="${retry_log}"
         info "daily is reentrant; retrying the complete managed stage once"
         info "MAA retry log: ${retry_log}"
-        run_daily_attempt "${daily_attempt_timeout}" "${retry_log}" ||
+        if run_daily_attempt "${daily_attempt_timeout}" "${retry_log}" && daily_log_is_complete "${retry_log}"; then
+            if [[ "${learned_restart}" == true ]]; then
+                finish_learned_restart "${retry_log}" true
+            fi
+        else
+            if [[ "${learned_restart}" == true ]]; then
+                finish_learned_restart "${retry_log}" false
+            fi
             die "daily retry failed after the bounded local recovery; inspect ${retry_log}"
-        daily_log_is_complete "${retry_log}" ||
-            die "daily retry returned without complete task-chain evidence; inspect ${retry_log}"
+        fi
     fi
 
     completed_game_day="$(server_game_day_now)"

@@ -25,6 +25,7 @@ REPORT_AREAS = {
     'var/state/event-solver': 'excluded',
     'var/battle-solver': 'excluded',
     'var/state/preserved-worktrees': 'excluded',
+    'var/state/fallback': 'excluded',
     'var/cache': 'excluded',
     'var/data': 'excluded',
 }
