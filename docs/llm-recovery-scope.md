@@ -1,6 +1,6 @@
 # ZOOTd unattended recovery scope
 
-Version: 14
+Version: 15
 
 This file is the operational contract and FAQ for the Codex recovery agent. It
 is tracked in Git, its SHA-256 is included in every recovery incident, and the
@@ -379,6 +379,23 @@ Use this ladder, checking fresh evidence after each step:
 7. Run the supplied full launcher command. If it fails, inspect that new run's
    fresh evidence and continue the ladder. Never treat a partial MAA success as
    completion.
+
+## Terminal report for the operator
+
+The service's final Bark settlement displays `summary` and `actions_taken` from
+this report alongside the controller's independent verdict and audit location.
+Write these fields in concise Chinese, preserving the cause, decisive observed
+evidence (log error, UI state, or checked file), actual repair, and any unresolved
+issue or required human action. Distinguish a suspected cause from a confirmed
+one; never invent evidence. Put the effective repair first in `actions_taken`,
+followed by other material changes and their results. Omit routine contract
+reading and repeated checks; aim for one or two short sentences in `summary`
+and at most four short actions. If no repair succeeded, say so and include the
+next required step in `summary`. Keep credentials, account identifiers, raw
+logs, and notification device URLs out of these fields. Full verification
+identities and code publication details still belong in their existing fields.
+The controller sends notifications; do not send an additional settlement from
+the recovery thread.
 
 ## Success proof
 

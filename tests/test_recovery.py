@@ -234,7 +234,7 @@ class RecoveryTests(unittest.TestCase):
                 "scope": {
                     "path": "docs/llm-recovery-scope.md",
                     "sha256": sha256_bytes(scope),
-                    "version": 14,
+                    "version": 15,
                 },
             }
             seen: dict[str, object] = {}
@@ -399,7 +399,7 @@ class RecoveryTests(unittest.TestCase):
                 evidence = json.loads(kwargs["input"])
                 seen.update(evidence)
                 self.assertEqual(evidence["retry_argv"], ["./bin/zootd", "run", "--evening-slot"])
-                self.assertEqual(evidence["scope"]["version"], 14)
+                self.assertEqual(evidence["scope"]["version"], 15)
                 backup = evidence["controller_repository"]["worktree_backup"]
                 archive = repo / backup["files"]["untracked.tar"]["path"]
                 with tarfile.open(archive) as stream:
@@ -424,7 +424,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual((repo / "var/preserved-install-arch.sh").read_bytes(), original)
             events = load_run_events(repo, failed)
             self.assertEqual(events[-3]["payload"]["status"], "failed")
-            self.assertEqual(events[-2]["payload"]["scope"]["version"], 14)
+            self.assertEqual(events[-2]["payload"]["scope"]["version"], 15)
             self.assertTrue(events[-2]["payload"]["controller_repository"]["worktree_backup"])
             self.assertEqual(seen["recovery_attempt"]["slot"], "evening")
 

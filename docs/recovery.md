@@ -45,6 +45,8 @@
 
 启用 Bark 后，controller 自动发送恢复 agent 进场与退出状态；退出消息以 controller 验收和终态审计为准，内部续跑不重复发送。推送由 controller 完成，不依赖模型执行通知命令，也不改变恢复 scope；配置、状态含义与送达边界见[运维手册](operations.md#bark-结果推送)。
 
+恢复后的 service 结算另从本次父 run 的终态审计读取 agent `summary` 与 `actions_taken`，压缩展示诊断、关键证据和修复方法，并附独立验收结论与审计路径。报告继续使用 schema v2，旧报告也能展示；新报告的中文简写与证据信息要求见版本化契约。子运行与本次 service 通过恢复身份关联，不要求 SDK 传递 systemd 环境变量；agent 不自行追加结算推送。
+
 恢复 Codex 没有 sandbox：模型生成的 shell 在当前用户权限下可直接访问文件系统和网络，也不会遇到 Codex 命令审批；它不会凭空获得 root，但已经存在的 `sudo -n` 能力可用于有证据、可回滚的临时网络修复。允许动作和停止条件由版本化的 [恢复 scope 与 FAQ](llm-recovery-scope.md) 定义，其中明确覆盖“正在获取更新”、游戏 ANR、DNS/CDN 差异、游戏内资源更新、从鹰角官方下载官服 APK 并保留数据覆盖安装、点 `Wait`、重启 Waydroid、受管 runtime 回滚，以及临时网络变更。若需永久修复，agent 可自选本地 repair branch，提交、验证、push 并向默认分支发 PR，但不能直接提交 base、force-push 或 merge。当前事故只允许 controller 应用既有、声明式的 `config/tasks/*.toml` 修复；修改 Python、Shell、执行入口、安全策略或审计生产者的 commit 可以发 PR，但不能用来证明当前事故已恢复。GitHub PR 还会通过 `gh pr view` 校验 open 状态、head branch/commit、base 和仓库归属；不可验证的 PR 会显著记录，却不抹掉已独立证明的运行恢复。它仍禁止无人值守登录/验证码/六星公招确认、清空游戏数据、购买、绕过签名校验、强制降级、切换客户端渠道、持久宿主网络策略改动和修改当前 scope/审计。
 
 所有受管阶段都按可重入处理，包括 daily：无论父 run 已进入或完成基建、公招、商店，恢复代理都可重新执行一轮完整 launcher；`unsafe-stateful-replay` 不再是 blocker。每个 agent 内部子 run 失败后仍由同一恢复会话继续分析和整轮重试。
